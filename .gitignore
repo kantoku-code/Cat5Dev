@@ -1,0 +1,32 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VS Code Extension build output
+out/
+dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# VS Code workspace
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Package locks (必要に応じて)
+package-lock.json
+yarn.lock
+
+*.vsix
+/temp
+/out
+/test
+/modules
+/catia-vba.json
+/.catia-vba-push-cache.json
+

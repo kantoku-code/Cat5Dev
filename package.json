@@ -1,0 +1,113 @@
+{
+    "name": "cat5dev",
+    "displayName": "Cat5Dev",
+    "description": "We provide support for CATIA V5 VBA macro development",
+    "version": "0.1.0",
+    "activationEvents": [
+        "onCommand:cat5dev.pullFromCatia",
+        "onCommand:cat5dev.pushToCatia",
+        "onCommand:cat5dev.selectProject",
+        "onView:catiaVbaModules"
+    ],
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "catiaVbaContainer",
+                    "title": "CATIA V5 VBA",
+                    "icon": "resources/catia-icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "catiaVbaContainer": [
+                {
+                    "id": "catiaVbaModules",
+                    "name": "Modules"
+                }
+            ]
+        },
+        "menus": {
+            "view/title": [
+                {
+                    "command": "cat5dev.pullFromCatia",
+                    "when": "view == catiaVbaModules",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "cat5dev.pushToCatia",
+                    "when": "view == catiaVbaModules",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "cat5dev.selectProject",
+                    "when": "view == catiaVbaModules",
+                    "group": "navigation@3"
+                },
+                {
+                    "command": "cat5dev.refreshTree",
+                    "when": "view == catiaVbaModules",
+                    "group": "navigation@4"
+                }
+            ]
+        },
+        "languages": [
+            {
+                "id": "vb",
+                "extensions": [
+                    ".bas_utf",
+                    ".cls_utf",
+                    ".frm_utf"
+                ]
+            }
+        ],
+        "commands": [
+            {
+                "command": "cat5dev.pullFromCatia",
+                "title": "CATIA: Pull VBA Modules",
+                "icon": "$(cloud-download)"
+            },
+            {
+                "command": "cat5dev.pushToCatia",
+                "title": "CATIA: Push VBA Modules",
+                "icon": "$(cloud-upload)"
+            },
+            {
+                "command": "cat5dev.selectProject",
+                "title": "CATIA: Select Target Project",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "cat5dev.refreshTree",
+                "title": "Refresh Modules",
+                "icon": "$(refresh)"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile && npm run lint",
+        "lint": "eslint src --ext ts"
+    },
+    "devDependencies": {
+        "@types/node": "18.x",
+        "@types/vscode": "^1.85.0",
+        "@typescript-eslint/eslint-plugin": "^6.13.1",
+        "@typescript-eslint/parser": "^6.13.1",
+        "eslint": "^8.54.0",
+        "typescript": "^5.3.3"
+    },
+    "dependencies": {
+        "@types/iconv-lite": "^0.0.1",
+        "iconv-lite": "^0.6.3"
+    }
+}
