@@ -1,6 +1,6 @@
 # Cat5Dev
 
-A VSCode extension for synchronizing VBA modules between VSCode and CATIA V5.
+Cat5Dev is a VSCode extension that syncs VBA modules between VSCode and CATIA V5.
 
 ---
 
@@ -114,6 +114,165 @@ VSCode (edit) → Push → Save in CATIA's VBA Editor ✅
 
 ---
 
+## Why VBA?
+
+I’ve experimented with CATIA V5 macro development in several languages, but there are a few reasons why I ultimately returned to VBA:
+
+- **Native support** — VBA is built directly into CATIA V5
+- **Best development environment** — The VBE is still the most complete and stable option
+- **Surprisingly fast** — In many cases, VBA outperformed alternatives
+- **Compact distribution** — No external runtimes or dependencies required
+
+Do I *like* VBA as a language?  
+Well… that’s a different question entirely.
+
+---
+
+## Notes on Encoding (Please Help)
+
+I have only ever used the Japanese version of CATIA V5, so I am familiar only with files exported from the VBA Editor being saved in Shift‑JIS. Because this was quite inconvenient, Cat5Dev automatically converts the encoding to UTF‑8 during the Pull/Push process.
+
+If you encounter garbled characters when using this extension in your environment, you may need to adjust the encoding settings. Unfortunately, I have no way to verify its behavior outside of a Japanese environment.
+
+If you run into any issues, please feel free to let me know.
+
+---
+
 ## License
+
+MIT
+
+---
+---
+Cat5Dev は、VSCode と CATIA V5 の間で VBA モジュールを同期する VSCode 拡張機能です。
+
+---
+
+## 機能
+
+### VBA モジュールの Pull / Push
+CATIA V5 とローカルワークスペース間で VBA モジュールを同期します。
+
+- **Pull** — 対象 CATIA プロジェクトからすべての VBA モジュールをローカルの `modules/` フォルダにエクスポート
+- **Push** — ローカルの VBA モジュールを CATIA にインポート（変更されたファイルのみ転送し、未変更のモジュールはスキップして高速化）
+
+### 対象プロジェクトの選択
+クイックピックダイアログから同期する CATIA VBA プロジェクトを選択できます。
+選択したプロジェクト名は `catia-vba.json` に保存され、セッションをまたいで維持されます。
+
+### モジュールツリービュー
+アクティビティバーに専用パネルを表示し、ワークスペースの現在の状態を確認できます。
+
+- 対象プロジェクト名を表示
+- モジュールはタイプ別にグループ化：
+  - **標準モジュール** (`.bas_utf`)
+  - **クラスモジュール** (`.cls_utf`)
+  - **ユーザーフォーム** (`.frm_utf`)
+- モジュールをクリックするとエディタで開く
+- 対象プロジェクトを変更するとツリーが自動更新
+
+### ツールバーボタン
+パネルタイトルバーにクイックアクセスボタンが表示されます：
+
+| アイコン | 操作 |
+|----------|------|
+| ☁️↓ | CATIA から Pull |
+| ☁️↑ | CATIA へ Push |
+| ⚙️ | 対象プロジェクトを選択 |
+| 🔄 | モジュール一覧を更新 |
+
+### シンボルナビゲーション
+VBA シンボルが認識され、VSCode のナビゲーション機能に公開されます：
+
+- **ブレッドクラム** — カーソル位置の `Sub` / `Function` / `Property` 名を表示
+- **アウトラインビュー** — 現在のファイルのすべてのプロシージャとプロパティを一覧表示
+- **シンボルへ移動** (`Ctrl+Shift+O`) — 任意のプロシージャに直接ジャンプ
+
+認識されるシンボルタイプ： `Sub`、`Function`、`Property Get/Let/Set`、`Type`、`Enum`
+
+---
+
+## 要件
+
+- CATIA V5 が起動しており、VBA プロジェクトが開いていること
+- Windows（`cscript.exe` 経由の COM オートメーションを使用）
+
+---
+
+## ファイル構成
+
+```
+<workspace>/
+├── catia-vba.json                  # 対象プロジェクト設定
+├── .catia-vba-push-cache.json      # Push 最適化キャッシュ（自動生成）
+└── modules/
+    ├── MyModule.bas_utf            # 標準モジュール
+    ├── MyClass.cls_utf             # クラスモジュール
+    └── MyForm.frm_utf              # ユーザーフォーム
+```
+
+> `.catia-vba-push-cache.json` と `modules/` は初回使用時に自動的に `.gitignore` に追加されます。
+
+---
+
+## はじめに
+
+1. 拡張機能をインストール
+2. VSCode でワークスペースフォルダを開く
+3. アクティビティバーの **Cat5Dev** アイコンをクリック
+4. ⚙️ をクリックして対象の CATIA VBA プロジェクトを選択
+5. ☁️↓ **Pull** をクリックして CATIA からモジュールを `modules/` フォルダにインポート
+6. VSCode で VBA コードを編集
+7. ☁️↑ **Push** をクリックして変更を CATIA に同期
+
+---
+
+## Push 最適化（キャッシュ）
+
+Push のたびに各モジュールのハッシュが計算され、`.catia-vba-push-cache.json` に保存されます。
+次回以降の Push では、内容が変更されていないモジュールは自動的にスキップされるため、大規模なプロジェクトでも同期時間を大幅に短縮できます。
+
+キャッシュはプロジェクト名ごとに管理されているため、**対象プロジェクトの選択**で別のプロジェクトに切り替えると、新しいプロジェクトに対して常にフル Push が実行されます。
+
+---
+
+## 重要：Push 後は CATIA の VBA エディタで保存してください
+
+VSCode から Push した後は、**CATIA の VBA エディタでプロジェクトを保存**してください（VBA エディタ内で ツール > 保存 または `Ctrl+S`）。
+
+Push は CATIA のインメモリ VBE にモジュールコードを書き込みます。保存せずに CATIA を閉じると、Push した変更はすべて失われます。
+
+```
+VSCode（編集）→ Push → CATIA の VBA エディタで保存 ✅
+                              ↓
+                        変更が CATIA ドキュメントに永続化される
+```
+
+---
+
+## 注意事項
+
+- VBA ファイルは UTF-8 エンコーディングで保存され、CATIA のネイティブな Shift-JIS エクスポートと区別するために `_utf` サフィックスが付きます
+- 本拡張機能は COM（`MSAPC.Apc`）経由で CATIA V5 の VBE（Visual Basic エディタ）を操作します
+- VSCode 内でのデバッグ実行は現在サポートされていません。デバッグには CATIA 付属の VBA IDE をご利用ください
+
+---
+
+## なぜ VBA なのか
+
+CATIA V5 のマクロ開発をいくつかの言語で試してきましたが、最終的に VBA に戻ってきた理由がいくつかあります：
+
+- **ネイティブサポート** — VBA は CATIA V5 に直接組み込まれています
+- **最良の開発環境** — VBE は今でも最も充実した安定した選択肢です
+- **驚くほど速い** — 多くのケースで VBA が他の選択肢を上回りました
+- **コンパクトな配布** — 外部ランタイムや依存関係が不要です
+
+VBA という言語が好きかどうか？
+それはまた別の話です。
+
+---
+
+
+## ライセンス
 
 MIT
