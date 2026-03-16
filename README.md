@@ -26,6 +26,10 @@ A dedicated panel in the Activity Bar shows the current state of your workspace.
   - **UserForms** (`.frm_utf`)
 - Click any module to open it in the editor
 - The tree updates automatically when the target project is changed
+- Right-click any module to access context menu options:
+  - **Rename** — Rename the module file
+  - **Delete** — Delete the module file (with confirmation)
+  - **Copy Path** — Copy the full file path to clipboard
 
 ### Toolbar Buttons
 Quick-access buttons are available in the panel title bar:
@@ -36,6 +40,14 @@ Quick-access buttons are available in the panel title bar:
 | ☁️↑ | Push to CATIA |
 | ⚙️ | Select target project |
 | 🔄 | Refresh module list |
+| 🌐 | Switch language |
+
+### Multi-Language Support
+The extension supports both **Japanese (日本語)** and **English**.
+- Click the 🌐 button in the panel title bar to switch languages
+- The language preference is saved in `.vscode/settings.json`
+- All UI messages, TreeView labels, and tooltips will be translated
+- A reload of VSCode is required to apply the new language setting
 
 ### Symbol Navigation
 VBA symbols are recognized and exposed to VSCode's navigation features:
@@ -59,7 +71,9 @@ Recognized symbol types: `Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enu
 
 ```
 <workspace>/
-├── catia-vba.json                  # Target project settings
+├── .vscode/
+│   └── settings.json               # Target project & language settings
+├── .gitignore                      # Auto-generated to exclude cache
 ├── .catia-vba-push-cache.json      # Push optimization cache (auto-generated)
 └── modules/
     ├── MyModule.bas_utf            # Standard Module
@@ -67,7 +81,10 @@ Recognized symbol types: `Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enu
     └── MyForm.frm_utf              # UserForm
 ```
 
-> Both `.catia-vba-push-cache.json` and `modules/` are automatically added to `.gitignore` on first use.
+> The `.catia-vba-push-cache.json` entry is automatically added to `.gitignore` on first use (pull, push, or project selection).
+> Settings are stored in `.vscode/settings.json` with keys:
+> - `targetProject` — The name of the target CATIA VBA project
+> - `language` — `"ja"` for Japanese, `"en"` for English (default: `"ja"`)
 
 ---
 
@@ -170,6 +187,10 @@ CATIA V5 とローカルワークスペース間で VBA モジュールを同期
   - **ユーザーフォーム** (`.frm_utf`)
 - モジュールをクリックするとエディタで開く
 - 対象プロジェクトを変更するとツリーが自動更新
+- モジュール上で右クリックするとコンテキストメニューが表示：
+  - **名前変更** — モジュールファイルの名前を変更
+  - **削除** — モジュールファイルを削除（確認あり）
+  - **パスをコピー** — ファイルの完全パスをクリップボードにコピー
 
 ### ツールバーボタン
 パネルタイトルバーにクイックアクセスボタンが表示されます：
@@ -180,6 +201,14 @@ CATIA V5 とローカルワークスペース間で VBA モジュールを同期
 | ☁️↑ | CATIA へ Push |
 | ⚙️ | 対象プロジェクトを選択 |
 | 🔄 | モジュール一覧を更新 |
+| 🌐 | 言語を切り替え |
+
+### 多言語対応
+拡張機能は**日本語（日本語）**と**英語（English）**に対応しています。
+- パネルタイトルバーの 🌐 ボタンをクリックして言語を切り替え
+- 言語設定は `.vscode/settings.json` に保存されます
+- すべての UI メッセージ、TreeView ラベル、ツールチップが翻訳されます
+- 新しい言語設定を適用するには VSCode の再読み込みが必要です
 
 ### シンボルナビゲーション
 VBA シンボルが認識され、VSCode のナビゲーション機能に公開されます：
@@ -203,7 +232,9 @@ VBA シンボルが認識され、VSCode のナビゲーション機能に公開
 
 ```
 <workspace>/
-├── catia-vba.json                  # 対象プロジェクト設定
+├── .vscode/
+│   └── settings.json               # 対象プロジェクトと言語の設定
+├── .gitignore                      # キャッシュを除外するよう自動生成
 ├── .catia-vba-push-cache.json      # Push 最適化キャッシュ（自動生成）
 └── modules/
     ├── MyModule.bas_utf            # 標準モジュール
@@ -211,7 +242,10 @@ VBA シンボルが認識され、VSCode のナビゲーション機能に公開
     └── MyForm.frm_utf              # ユーザーフォーム
 ```
 
-> `.catia-vba-push-cache.json` と `modules/` は初回使用時に自動的に `.gitignore` に追加されます。
+> `.catia-vba-push-cache.json` は、初回使用時（pull、push、またはプロジェクト選択）に自動的に `.gitignore` に追加されます。
+> 設定は `.vscode/settings.json` に以下のキーで保存されます：
+> - `targetProject` — 対象 CATIA VBA プロジェクトの名前
+> - `language` — `"ja"` は日本語、`"en"` は英語（デフォルト：`"ja"`）
 
 ---
 
