@@ -55,6 +55,28 @@
                     "command": "cat5dev.refreshTree",
                     "when": "view == catiaVbaModules",
                     "group": "navigation@4"
+                },
+                {
+                    "command": "cat5dev.switchLanguage",
+                    "when": "view == catiaVbaModules",
+                    "group": "navigation@5"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "cat5dev.renameFile",
+                    "when": "view == catiaVbaModules && viewItem == catiaModule",
+                    "group": "1@1"
+                },
+                {
+                    "command": "cat5dev.deleteFile",
+                    "when": "view == catiaVbaModules && viewItem == catiaModule",
+                    "group": "1@2"
+                },
+                {
+                    "command": "cat5dev.copyPath",
+                    "when": "view == catiaVbaModules && viewItem == catiaModule",
+                    "group": "1@3"
                 }
             ]
         },
@@ -88,9 +110,43 @@
                 "command": "cat5dev.refreshTree",
                 "title": "Refresh Modules",
                 "icon": "$(refresh)"
+            },
+            {
+                "command": "cat5dev.switchLanguage",
+                "title": "CATIA: Switch Language",
+                "icon": "$(globe)"
+            },
+            {
+                "command": "cat5dev.renameFile",
+                "title": "Rename"
+            },
+            {
+                "command": "cat5dev.deleteFile",
+                "title": "Delete"
+            },
+            {
+                "command": "cat5dev.copyPath",
+                "title": "Copy Path"
             }
         ]
     },
+    "configuration": [
+        {
+            "title": "CATIA VBA Sync",
+            "properties": {
+                "cat5dev.language": {
+                    "type": "string",
+                    "enum": ["ja", "en"],
+                    "enumDescriptions": [
+                        "日本語",
+                        "English"
+                    ],
+                    "default": "ja",
+                    "description": "Language for CATIA VBA Sync extension (日本語 or English)"
+                }
+            }
+        }
+    ],
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",

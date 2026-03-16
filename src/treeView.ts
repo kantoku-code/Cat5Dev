@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { t } from './i18n';
 
 export class CatiaTreeNode extends vscode.TreeItem {
     constructor(
@@ -15,7 +16,7 @@ export class CatiaTreeNode extends vscode.TreeItem {
         if (nodeType === 'project') {
             this.contextValue = 'catiaProject';
             this.iconPath = new vscode.ThemeIcon('folder-library');
-            this.tooltip = 'Target CATIA VBA Project';
+            this.tooltip = t('treeview.targetProject');
         } else if (nodeType === 'category') {
             this.contextValue = 'catiaCategory';
             this.iconPath = new vscode.ThemeIcon('folder');
@@ -41,11 +42,13 @@ export class CatiaTreeNode extends vscode.TreeItem {
     }
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-    '1': 'Modules',
-    '2': 'Class Modules',
-    '3': 'Forms',
-};
+function getCategoryLabels(): Record<string, string> {
+    return {
+        '1': t('treeview.modules'),
+        '2': t('treeview.classModules'),
+        '3': t('treeview.forms'),
+    };
+}
 
 const CATEGORY_ORDER: Record<string, number> = {
     '3': 0,
@@ -81,12 +84,12 @@ export class CatiaVbaTreeProvider implements vscode.TreeDataProvider<CatiaTreeNo
         if (!workspaceFolders) return [];
         const rootPath = workspaceFolders[0].uri.fsPath;
 
-        const configPath = path.join(rootPath, 'catia-vba.json');
+        const settingsPath = path.join(rootPath, '.vscode', 'settings.json');
         let targetProject = '';
-        if (fs.existsSync(configPath)) {
+        if (fs.existsSync(settingsPath)) {
             try {
-                const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-                if (config.targetProject) { targetProject = config.targetProject; }
+                const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+                if (settings.targetProject) { targetProject = settings.targetProject; }
             } catch (e) { }
         }
 
@@ -104,8 +107,9 @@ export class CatiaVbaTreeProvider implements vscode.TreeDataProvider<CatiaTreeNo
                 this.cachedProject = targetProject;
             }
             const types = [...new Set(this.cachedModules.map(m => m.compType))].sort((a, b) => (CATEGORY_ORDER[a] ?? 99) - (CATEGORY_ORDER[b] ?? 99));
+            const categoryLabels = getCategoryLabels();
             return types.map(t => new CatiaTreeNode(
-                CATEGORY_LABELS[t] ?? `Type ${t}`,
+                categoryLabels[t] ?? `Type ${t}`,
                 'category',
                 t,
                 vscode.TreeItemCollapsibleState.Expanded

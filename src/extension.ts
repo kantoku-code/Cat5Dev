@@ -7,8 +7,25 @@ import { exec } from 'child_process';
 import * as iconv from 'iconv-lite';
 import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
+import { t, getLanguage, setLanguage } from './i18n';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
+
+function ensureGitignore(rootPath: string): void {
+    const gitignorePath = path.join(rootPath, '.gitignore');
+    const cacheEntry = '.catia-vba-push-cache.json';
+
+    if (!fs.existsSync(gitignorePath)) {
+        fs.writeFileSync(gitignorePath, `${cacheEntry}\n`, 'utf-8');
+        return;
+    }
+
+    const content = fs.readFileSync(gitignorePath, 'utf-8');
+    if (!content.includes(cacheEntry)) {
+        const sep = content.endsWith('\n') ? '' : '\n';
+        fs.appendFileSync(gitignorePath, `${sep}${cacheEntry}\n`, 'utf-8');
+    }
+}
 
 export function activate(context: vscode.ExtensionContext) {
     let pullCmd = vscode.commands.registerCommand('cat5dev.pullFromCatia', () => {
@@ -23,55 +40,124 @@ export function activate(context: vscode.ExtensionContext) {
         executeSelectProject(context);
     });
 
+    let switchLanguageCmd = vscode.commands.registerCommand('cat5dev.switchLanguage', async () => {
+        const currentLang = getLanguage();
+        const selected = await vscode.window.showQuickPick(
+            [
+                { label: t('language.japanese'), description: 'Current language', value: 'ja' },
+                { label: t('language.english'), description: 'Current language', value: 'en' }
+            ],
+            { placeHolder: t('language.title') }
+        );
+        if (selected && selected.value !== currentLang) {
+            setLanguage(selected.value as 'ja' | 'en');
+            vscode.window.showInformationMessage('Please reload VSCode to apply language changes.');
+        }
+    });
+
+    let renameFileCmd = vscode.commands.registerCommand('cat5dev.renameFile', async (fileUri: vscode.Uri) => {
+        const filePath = fileUri.fsPath;
+        const fileName = path.basename(filePath);
+        const newName = await vscode.window.showInputBox({
+            prompt: t('file.rename'),
+            value: fileName
+        });
+        if (newName && newName !== fileName) {
+            const newPath = path.join(path.dirname(filePath), newName);
+            fs.renameSync(filePath, newPath);
+            vscode.commands.executeCommand('cat5dev.refreshTree');
+        }
+    });
+
+    let deleteFileCmd = vscode.commands.registerCommand('cat5dev.deleteFile', async (fileUri: vscode.Uri) => {
+        const filePath = fileUri.fsPath;
+        const fileName = path.basename(filePath);
+        const confirmed = await vscode.window.showWarningMessage(
+            `Delete ${fileName}?`,
+            { modal: true },
+            'Delete'
+        );
+        if (confirmed === 'Delete') {
+            fs.unlinkSync(filePath);
+            vscode.commands.executeCommand('cat5dev.refreshTree');
+        }
+    });
+
+    let copyPathCmd = vscode.commands.registerCommand('cat5dev.copyPath', async (fileUri: vscode.Uri) => {
+        const filePath = fileUri.fsPath;
+        await vscode.env.clipboard.writeText(filePath);
+        vscode.window.showInformationMessage(`Path copied: ${filePath}`);
+    });
+
     const VBA_SELECTOR = ['bas_utf', 'cls_utf', 'frm_utf'].map(l => ({ language: 'vb', pattern: `**/*.${l}` }));
     context.subscriptions.push(
         vscode.languages.registerDocumentSymbolProvider(VBA_SELECTOR, new VbaDocumentSymbolProvider())
     );
 
     const treeProvider = new CatiaVbaTreeProvider(context);
-    vscode.window.registerTreeDataProvider('catiaVbaModules', treeProvider);
+    const treeView = vscode.window.createTreeView('catiaVbaModules', {
+        treeDataProvider: treeProvider
+    });
     vscode.commands.registerCommand('cat5dev.refreshTree', () => treeProvider.refresh());
 
-    // Auto-refresh tree when catia-vba.json changes (e.g. after selectProject)
+    // Auto-refresh tree when sidebar becomes visible
+    treeView.onDidChangeVisibility(e => {
+        if (e.visible) treeProvider.refresh();
+    });
+
+    // Auto-refresh tree when .vscode/settings.json changes (e.g. after selectProject)
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders) {
         const configWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(workspaceFolders[0], 'catia-vba.json')
+            new vscode.RelativePattern(workspaceFolders[0], '.vscode/settings.json')
         );
         configWatcher.onDidChange(() => treeProvider.refresh());
         configWatcher.onDidCreate(() => treeProvider.refresh());
         context.subscriptions.push(configWatcher);
+
+        // Auto-refresh tree when modules folder changes
+        const modulesWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(workspaceFolders[0], 'modules/**')
+        );
+        modulesWatcher.onDidChange(() => treeProvider.refresh());
+        modulesWatcher.onDidCreate(() => treeProvider.refresh());
+        modulesWatcher.onDidDelete(() => treeProvider.refresh());
+        context.subscriptions.push(modulesWatcher);
     }
 
-    context.subscriptions.push(pullCmd, pushCmd, selectCmd);
+    context.subscriptions.push(treeView);
+
+    context.subscriptions.push(pullCmd, pushCmd, selectCmd, switchLanguageCmd, renameFileCmd, deleteFileCmd, copyPathCmd);
 }
 
 export function deactivate() { }
 
 async function getTargetProject(context: vscode.ExtensionContext, rootPath: string): Promise<string | undefined> {
-    const configPath = path.join(rootPath, 'catia-vba.json');
-    if (fs.existsSync(configPath)) {
+    const settingsPath = path.join(rootPath, '.vscode', 'settings.json');
+    if (fs.existsSync(settingsPath)) {
         try {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-            if (config.targetProject) {
-                return config.targetProject;
+            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+            if (settings.targetProject) {
+                return settings.targetProject;
             }
         } catch (e) { }
     }
 
     // Auto-prompt if empty
-    return await executeSelectProject(context, rootPath);
+    return await executeSelectProject(context, rootPath) as string | undefined;
 }
 
 async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?: string): Promise<string | undefined> {
     if (!rootPath) {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
-            vscode.window.showErrorMessage('CATIA VBA同期設定を行うには、ワークスペースフォルダを開いてください。');
+            vscode.window.showErrorMessage(t('error.noWorkspace'));
             return undefined;
         }
         rootPath = workspaceFolders[0].uri.fsPath;
     }
+
+    ensureGitignore(rootPath);
 
     const tempDir = path.join(os.tmpdir(), 'cat5dev');
     if (fs.existsSync(tempDir)) {
@@ -153,7 +239,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "list_projects.catvbs", "CATMain", ag_args
                 outputChannel.appendLine(`STDERR: ${stderr}`);
                 outputChannel.show(true);
 
-                vscode.window.showErrorMessage(`CATIAからVBAプロジェクトを取得できませんでした。\n詳細 Output を確認してください。`);
+                vscode.window.showErrorMessage(t('error.selectFailed'));
                 return resolve(undefined);
             }
 
@@ -164,18 +250,32 @@ ag_sys.ExecuteScript "${tempDir}", 1, "list_projects.catvbs", "CATMain", ag_args
             fs.unlinkSync(outTxtPath);
 
             if (projects.length === 0) {
-                vscode.window.showInformationMessage('CATIA内にVBAプロジェクトが見つかりませんでした。');
+                vscode.window.showInformationMessage(t('info.projectNotFound'));
                 return resolve(undefined);
             }
 
             const selected = await vscode.window.showQuickPick(projects, {
-                placeHolder: '同期対象のCATIA VBAプロジェクトを選択してください'
+                placeHolder: t('select.placeholder')
             });
 
             if (selected) {
-                const configPath = path.join(rootPath!, 'catia-vba.json');
-                fs.writeFileSync(configPath, JSON.stringify({ targetProject: selected }, null, 4), 'utf-8');
-                vscode.window.showInformationMessage(`ターゲットVBAプロジェクトを ${selected} に設定しました。`);
+                const vscodePath = path.join(rootPath!, '.vscode');
+                const settingsPath = path.join(vscodePath, 'settings.json');
+
+                if (!fs.existsSync(vscodePath)) {
+                    fs.mkdirSync(vscodePath, { recursive: true });
+                }
+
+                let settings: any = {};
+                if (fs.existsSync(settingsPath)) {
+                    try {
+                        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+                    } catch (e) { }
+                }
+
+                settings.targetProject = selected;
+                fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 4), 'utf-8');
+                vscode.window.showInformationMessage(t('info.projectSelected', selected));
             }
             resolve(selected);
         });
@@ -185,10 +285,13 @@ ag_sys.ExecuteScript "${tempDir}", 1, "list_projects.catvbs", "CATMain", ag_args
 async function executeCatiaPull(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('CATIA VBAモジュールをプルするには、ワークスペースフォルダを開いてください。');
+        vscode.window.showErrorMessage(t('error.noWorkspace'));
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+
+    ensureGitignore(rootPath);
+
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
         fs.mkdirSync(modulesDir);
@@ -304,7 +407,7 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
 
     vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `CATIAからVBAをプルしています (${targetProject})...`,
+        title: t('progress.pull', targetProject),
         cancellable: false
     }, async (progress) => {
         return new Promise<void>((resolve, reject) => {
@@ -317,7 +420,7 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
                     outputChannel.appendLine(`STDOUT: ${stdout}`);
                     outputChannel.appendLine(`STDERR: ${stderr}`);
                     outputChannel.show(true);
-                    vscode.window.showErrorMessage(`プルに失敗しました。詳細 Output を確認してください。`);
+                    vscode.window.showErrorMessage(t('error.pullFailed'));
                     return reject();
                 }
 
@@ -349,7 +452,8 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
                     }
                 }
 
-                vscode.window.showInformationMessage(`CATIAから ${count} 個のモジュールを正常にプルしました。`);
+                vscode.window.showInformationMessage(t('info.pullSuccess', String(count)));
+                vscode.commands.executeCommand('cat5dev.refreshTree');
                 resolve();
             });
         });
@@ -359,13 +463,16 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
 async function executeCatiaPush(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
-        vscode.window.showErrorMessage('CATIA VBAモジュールをプッシュするには、ワークスペースフォルダを開いてください。');
+        vscode.window.showErrorMessage(t('error.noWorkspace'));
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+
+    ensureGitignore(rootPath);
+
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
-        vscode.window.showInformationMessage('プッシュ対象の modules ディレクトリがワークスペース内に見つかりません。');
+        vscode.window.showInformationMessage(t('error.noModulesDir'));
         return;
     }
 
@@ -433,12 +540,12 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     }
 
     if (count === 0 && skippedCount > 0) {
-        vscode.window.showInformationMessage(`すべてのモジュール (${skippedCount} 個) は前回のプッシュから変更されていません。プッシュをスキップしました。`);
+        vscode.window.showInformationMessage(t('info.noChanges', String(skippedCount)));
         return;
     }
 
     if (count === 0) {
-        vscode.window.showInformationMessage('ワークスペース内にプッシュ対象のVBAファイル (.bas_utf, .cls_utf, .frm_utf) が見つかりませんでした。');
+        vscode.window.showInformationMessage(t('error.noModuleFiles'));
         return;
     }
 
@@ -543,16 +650,16 @@ ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
 
     if (toDelete.length > 0) {
         const resp = await vscode.window.showWarningMessage(
-            `以下のモジュールはCATIA側に存在しますが、VSCode側には存在しません:\n${toDelete.join(', ')}\n\nこれらをCATIAから削除して完全に同期しますか？`,
+            t('warning.deleteModules', toDelete.join(', ')),
             { modal: true },
-            'はい（削除する）', 'いいえ（残す）'
+            t('dialog.delete'), t('dialog.keep')
         );
         if (resp === undefined) {
             // Abort push if they cancelled modal
-            vscode.window.showInformationMessage('プッシュを中止しました。');
+            vscode.window.showInformationMessage(t('info.pushCancelled'));
             return;
         }
-        if (resp === 'はい（削除する）') {
+        if (resp === t('dialog.delete')) {
             performDelete = true;
             const delListShiftJis = iconv.encode(toDelete.join('\r\n'), 'shift_jis');
             fs.writeFileSync(path.join(tempDir, 'delete_list.txt'), delListShiftJis);
@@ -563,7 +670,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
     const newForms = files.filter(f => f.endsWith('.frm_utf')).map(f => f.substring(0, f.lastIndexOf('.'))).filter(name => !remoteCompNames.includes(name));
     if (newForms.length > 0) {
         vscode.window.showWarningMessage(
-            `以下のUserFormはCATIA側に存在しないため新規作成できません。CATIA側で空の同名UserFormを事前に作成してください。これらのファイルはスキップされます:\n${newForms.join(', ')}`
+            t('warning.newUserForms', newForms.join(', '))
         );
         // Remove from tempDir so they are not pushed
         for (const name of newForms) {
@@ -575,7 +682,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
             }
         }
         if (count === 0) {
-            vscode.window.showInformationMessage('プッシュ対象のファイルがなくなったため、処理を終了します。');
+            vscode.window.showInformationMessage(t('warning.noMoreFiles'));
             return;
         }
     }
@@ -720,7 +827,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "push_macro.catvbs", "CATMain", ag_args
 
     vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `CATIAへVBAをプッシュしています (${targetProject})...`,
+        title: t('progress.push', targetProject),
         cancellable: false
     }, async (progress) => {
         return new Promise<void>((resolve, reject) => {
@@ -733,7 +840,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "push_macro.catvbs", "CATMain", ag_args
                     outputChannel.appendLine(`STDOUT: ${stdout}`);
                     outputChannel.appendLine(`STDERR: ${stderr}`);
                     outputChannel.show(true);
-                    vscode.window.showErrorMessage(`プッシュに失敗しました。詳細 Output を確認してください。`);
+                    vscode.window.showErrorMessage(t('error.pushFailed'));
                     return reject();
                 }
                 // Update push cache with successfully pushed modules (scoped to targetProject)
@@ -755,7 +862,9 @@ ag_sys.ExecuteScript "${tempDir}", 1, "push_macro.catvbs", "CATMain", ag_args
                 }
 
                 const skipMsg = skippedCount > 0 ? `（変更なしスキップ: ${skippedCount} 個）` : '';
-                vscode.window.showInformationMessage(`${count} 個のモジュールをプッシュしました。${skipMsg}` + (performDelete ? '（削除同期を含む）' : ''));
+                const deleteMsg = performDelete ? '（削除同期を含む）' : '';
+                vscode.window.showInformationMessage(t('info.pushSuccess', String(count), skipMsg, deleteMsg));
+                vscode.commands.executeCommand('cat5dev.refreshTree');
                 resolve();
             });
         });
