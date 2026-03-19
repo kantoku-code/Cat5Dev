@@ -27,6 +27,20 @@ function ensureGitignore(rootPath: string): void {
     }
 }
 
+/** CATScriptのエラーログファイルを読み込み、OutputChannelに出力する */
+function flushCatScriptErrors(tempDir: string): void {
+    const errLogPath = path.join(tempDir, 'c5d_err.log');
+    if (!fs.existsSync(errLogPath)) { return; }
+    try {
+        const content = fs.readFileSync(errLogPath, 'utf-8').trim();
+        if (content) {
+            outputChannel.appendLine(`[CATScript Errors]\n${content}`);
+            outputChannel.show(true);
+        }
+    } catch (e) { }
+    try { fs.unlinkSync(errLogPath); } catch (e) { }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     let pullCmd = vscode.commands.registerCommand('cat5dev.pullFromCatia', () => {
         executeCatiaPull(context);
@@ -165,52 +179,56 @@ async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?
     }
     fs.mkdirSync(tempDir);
 
-    const catScriptPath = path.join(tempDir, 'list_projects.catvbs');
-    const vbsScriptPath = path.join(tempDir, 'run_list_ag.vbs');
+    const catScriptPath = path.join(tempDir, 'c5d_list.catvbs');
+    const vbsScriptPath = path.join(tempDir, 'c5d_run_list.vbs');
     const outTxtPath = path.join(tempDir, 'projects.txt');
 
     const catScriptContent = `
 Sub CATMain()
     On Error Resume Next
     Dim ag_fso, ag_apc, ag_vbe, ag_i, ag_outStr, ag_tmpProj, ag_px, ag_jx, ag_cx, ag_cName
-    
+    Dim ag_errPath, ag_ef
+
     Set ag_fso = CreateObject("Scripting.FileSystemObject")
+    ag_errPath = "${tempDir}\\c5d_err.log"
+
     Set ag_apc = CreateObject("MSAPC.Apc.7.1")
     If ag_apc Is Nothing Then Set ag_apc = CreateObject("MSAPC.Apc")
     Set ag_vbe = ag_apc.VBE
-    
+
     If Err.Number <> 0 Then Exit Sub
-    
+
     Set ag_outStr = CreateObject("ADODB.Stream")
     ag_outStr.Type = 2
     ag_outStr.Charset = "shift_jis"
     ag_outStr.Open
-    
+
     For ag_i = 1 To ag_vbe.VBProjects.Count
         ag_outStr.WriteText ag_vbe.VBProjects.Item(ag_i).Name & vbCrLf
     Next
-    
+
     ag_outStr.SaveToFile "${outTxtPath}", 2
     ag_outStr.Close
-    
-    ' --- CLEANUP INJECTED MACROS (Optimized) ---
+
+    ' --- CLEANUP INJECTED MACROS ---
     For ag_px = 1 To ag_vbe.VBProjects.Count
         Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
         For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
             ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If ag_cName = "PUSH_MACRO" Or ag_cName = "PULL_MACRO" Or ag_cName = "CHECK_COMPS" Or _
-               ag_cName = "RUN_CHECK" Or ag_cName = "RUN_PUSH" Or ag_cName = "RUN_PULL" Or _
-               ag_cName = "RUN_CHECK_RUNNER" Or ag_cName = "RUN_PUSH_RUNNER" Or ag_cName = "RUN_PULL_RUNNER" Or _
-               ag_cName = "RUN_LIST_RUNNER" Or ag_cName = "LIST_PROJECTS" Or ag_cName = "LIST_MODULE_TREE" Or _
-               ag_cName = "RUN_LIST" Or ag_cName = "RUN_TREE" Or ag_cName = "RUN_TREE_RUNNER" Or _
-               ag_cName = "RUN_LIST_AG" Or ag_cName = "RUN_PULL_AG" Or ag_cName = "RUN_CHECK_AG" Or ag_cName = "RUN_PUSH_AG" Then
+            If Left(ag_cName, 4) = "C5D_" Then
                 On Error Resume Next
                 ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
+                If Err.Number <> 0 Then
+                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
+                    ag_ef.WriteLine "[List.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
+                    ag_ef.Close
+                    Err.Clear
+                End If
                 On Error GoTo 0
             End If
         Next
     Next
-    ' -------------------------------------------
+    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
@@ -222,7 +240,7 @@ Set ag_catia = GetObject(, "CATIA.Application")
 If Err.Number <> 0 Then WScript.Quit 1
 Set ag_sys = ag_catia.SystemService
 If Err.Number <> 0 Or ag_sys Is Nothing Then WScript.Quit 1
-ag_sys.ExecuteScript "${tempDir}", 1, "list_projects.catvbs", "CATMain", ag_args
+ag_sys.ExecuteScript "${tempDir}", 1, "c5d_list.catvbs", "CATMain", ag_args
 `;
     fs.writeFileSync(vbsScriptPath, vbsContent, 'utf-8');
 
@@ -230,6 +248,8 @@ ag_sys.ExecuteScript "${tempDir}", 1, "list_projects.catvbs", "CATMain", ag_args
         exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${vbsScriptPath}"`, async (error, stdout, stderr) => {
             if (fs.existsSync(vbsScriptPath)) fs.unlinkSync(vbsScriptPath);
             if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
+
+            flushCatScriptErrors(tempDir);
 
             if (error || !fs.existsSync(outTxtPath)) {
                 const detail = stdout || stderr || (error ? error.message : 'Unknown error');
@@ -315,23 +335,26 @@ async function executeCatiaPull(context: vscode.ExtensionContext) {
     }
     fs.mkdirSync(tempDir);
 
-    const catScriptPath = path.join(tempDir, 'pull_macro.catvbs');
-    const vbsScriptPath = path.join(tempDir, 'run_pull_ag.vbs');
+    const catScriptPath = path.join(tempDir, 'c5d_pull.catvbs');
+    const vbsScriptPath = path.join(tempDir, 'c5d_run_pull.vbs');
 
     // CATScript to extract all modules and write their code to temp files
     const catScriptContent = `
 Sub CATMain()
     On Error Resume Next
     Dim ag_fso, ag_apc, ag_vbe, ag_i, ag_j, ag_proj, ag_comp, ag_codeMod, ag_lineCount, ag_outPath, ag_outStr, ag_devProj, ag_tmpProj, ag_px, ag_cx, ag_cName
-    
+    Dim ag_errPath, ag_ef
+
     Dim targetProjName
     targetProjName = "${targetProject}"
-    
+
     Set ag_fso = CreateObject("Scripting.FileSystemObject")
+    ag_errPath = "${tempDir}\\c5d_err.log"
+
     Set ag_apc = CreateObject("MSAPC.Apc.7.1")
     If ag_apc Is Nothing Then Set ag_apc = CreateObject("MSAPC.Apc")
     Set ag_vbe = ag_apc.VBE
-    
+
     If Err.Number <> 0 Then
         ' Write error log
         Set ag_outStr = CreateObject("ADODB.Stream")
@@ -343,7 +366,7 @@ Sub CATMain()
         ag_outStr.Close
         Exit Sub
     End If
-    
+
     Set ag_devProj = Nothing
     For ag_i = 1 To ag_vbe.VBProjects.Count
         Set ag_proj = ag_vbe.VBProjects.Item(ag_i)
@@ -352,14 +375,14 @@ Sub CATMain()
             Exit For
         End If
     Next
-    
+
     If ag_devProj Is Nothing Then Exit Sub
-    
+
     For ag_j = 1 To ag_devProj.VBComponents.Count
         Set ag_comp = ag_devProj.VBComponents.Item(ag_j)
         Set ag_codeMod = ag_comp.CodeModule
         ag_lineCount = ag_codeMod.CountOfLines
-        
+
         If ag_lineCount > 0 Then
             ag_outPath = "${tempDir}\\" & ag_comp.Name & "_TYPE_" & ag_comp.Type & ".txt"
             Set ag_outStr = CreateObject("ADODB.Stream")
@@ -371,25 +394,26 @@ Sub CATMain()
             ag_outStr.Close
         End If
     Next
-    
-    ' --- CLEANUP INJECTED MACROS (Optimized) ---
+
+    ' --- CLEANUP INJECTED MACROS ---
     For ag_px = 1 To ag_vbe.VBProjects.Count
         Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
         For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
             ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If ag_cName = "PUSH_MACRO" Or ag_cName = "PULL_MACRO" Or ag_cName = "CHECK_COMPS" Or _
-               ag_cName = "RUN_CHECK" Or ag_cName = "RUN_PUSH" Or ag_cName = "RUN_PULL" Or _
-               ag_cName = "RUN_CHECK_RUNNER" Or ag_cName = "RUN_PUSH_RUNNER" Or ag_cName = "RUN_PULL_RUNNER" Or _
-               ag_cName = "RUN_LIST_RUNNER" Or ag_cName = "LIST_PROJECTS" Or ag_cName = "LIST_MODULE_TREE" Or _
-               ag_cName = "RUN_LIST" Or ag_cName = "RUN_TREE" Or ag_cName = "RUN_TREE_RUNNER" Or _
-               ag_cName = "RUN_LIST_AG" Or ag_cName = "RUN_PULL_AG" Or ag_cName = "RUN_CHECK_AG" Or ag_cName = "RUN_PUSH_AG" Then
+            If Left(ag_cName, 4) = "C5D_" Then
                 On Error Resume Next
                 ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
+                If Err.Number <> 0 Then
+                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
+                    ag_ef.WriteLine "[Pull.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
+                    ag_ef.Close
+                    Err.Clear
+                End If
                 On Error GoTo 0
             End If
         Next
     Next
-    ' -------------------------------------------
+    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
@@ -401,7 +425,7 @@ Set catia = GetObject(, "CATIA.Application")
 If Err.Number <> 0 Then WScript.Quit 1
 Set sys = catia.SystemService
 If Err.Number <> 0 Or sys Is Nothing Then WScript.Quit 1
-sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
+sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
 `;
     fs.writeFileSync(vbsScriptPath, vbsContent, 'utf-8');
 
@@ -414,6 +438,9 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
             exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${vbsScriptPath}"`, (error, stdout, stderr) => {
                 if (fs.existsSync(vbsScriptPath)) fs.unlinkSync(vbsScriptPath);
                 if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
+
+                flushCatScriptErrors(tempDir);
+
                 if (error) {
                     outputChannel.appendLine(`[Pull Error]`);
                     outputChannel.appendLine(`Error: ${error.message}`);
@@ -439,7 +466,7 @@ sys.ExecuteScript "${tempDir}", 1, "pull_macro.catvbs", "CATMain", args
 
                         const shiftJisBuffer = fs.readFileSync(path.join(tempDir, file));
                         const utf8String = iconv.decode(shiftJisBuffer, 'shift_jis');
-                        
+
                         // Normalize newlines: Remove all trailing newlines/spaces and ensure exactly one LF
                         const normalized = utf8String.replace(/\r/g, '').trimEnd() + '\n';
 
@@ -555,13 +582,16 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
 Sub CATMain()
     On Error Resume Next
     Dim ag_fso, ag_apc, ag_vbe, ag_i, ag_j, ag_comp, ag_outStr, ag_devProj, ag_tmpProj, ag_px, ag_cx, ag_cName
+    Dim ag_errPath, ag_ef
     Set ag_fso = CreateObject("Scripting.FileSystemObject")
+    ag_errPath = "${tempDir}\\c5d_err.log"
+
     Set ag_apc = CreateObject("MSAPC.Apc.7.1")
     If ag_apc Is Nothing Then Set ag_apc = CreateObject("MSAPC.Apc")
     Set ag_vbe = ag_apc.VBE
-    
+
     If Err.Number <> 0 Then Exit Sub
-    
+
     Set ag_devProj = Nothing
     For ag_i = 1 To ag_vbe.VBProjects.Count
         If ag_vbe.VBProjects.Item(ag_i).Name = "${targetProject}" Then
@@ -570,45 +600,46 @@ Sub CATMain()
         End If
     Next
     If ag_devProj Is Nothing Then Exit Sub
-    
+
     Set ag_outStr = CreateObject("ADODB.Stream")
     ag_outStr.Type = 2
     ag_outStr.Charset = "shift_jis"
     ag_outStr.Open
-    
+
     For ag_j = 1 To ag_devProj.VBComponents.Count
         Set ag_comp = ag_devProj.VBComponents.Item(ag_j)
         If ag_comp.Type = 1 Or ag_comp.Type = 2 Or ag_comp.Type = 3 Then
             ag_outStr.WriteText ag_comp.Name & vbCrLf
         End If
     Next
-    
+
     ag_outStr.SaveToFile "${remoteCompsFile}", 2
     ag_outStr.Close
-    
-    ' --- CLEANUP INJECTED MACROS (Optimized) ---
+
+    ' --- CLEANUP INJECTED MACROS ---
     For ag_px = 1 To ag_vbe.VBProjects.Count
         Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
         For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
             ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If ag_cName = "PUSH_MACRO" Or ag_cName = "PULL_MACRO" Or ag_cName = "CHECK_COMPS" Or _
-               ag_cName = "RUN_CHECK" Or ag_cName = "RUN_PUSH" Or ag_cName = "RUN_PULL" Or _
-               ag_cName = "RUN_CHECK_RUNNER" Or ag_cName = "RUN_PUSH_RUNNER" Or ag_cName = "RUN_PULL_RUNNER" Or _
-               ag_cName = "RUN_LIST_RUNNER" Or ag_cName = "LIST_PROJECTS" Or ag_cName = "LIST_MODULE_TREE" Or _
-               ag_cName = "RUN_LIST" Or ag_cName = "RUN_TREE" Or ag_cName = "RUN_TREE_RUNNER" Or _
-               ag_cName = "RUN_LIST_AG" Or ag_cName = "RUN_PULL_AG" Or ag_cName = "RUN_CHECK_AG" Or ag_cName = "RUN_PUSH_AG" Then
+            If Left(ag_cName, 4) = "C5D_" Then
                 On Error Resume Next
                 ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
+                If Err.Number <> 0 Then
+                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
+                    ag_ef.WriteLine "[Check.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
+                    ag_ef.Close
+                    Err.Clear
+                End If
                 On Error GoTo 0
             End If
         Next
     Next
-    ' -------------------------------------------
+    ' --------------------------------
 End Sub
 `;
-    fs.writeFileSync(path.join(tempDir, 'check_comps.catvbs'), checkCatScript, 'utf-8');
+    fs.writeFileSync(path.join(tempDir, 'c5d_check.catvbs'), checkCatScript, 'utf-8');
 
-    const checkVbsPath = path.join(tempDir, 'run_check_ag.vbs');
+    const checkVbsPath = path.join(tempDir, 'c5d_run_check.vbs');
     const checkVbsScript = `
 On Error Resume Next
 Dim ag_catia, ag_sys, ag_args()
@@ -616,7 +647,7 @@ Set ag_catia = GetObject(, "CATIA.Application")
 If Err.Number <> 0 Then WScript.Quit 1
 Set ag_sys = ag_catia.SystemService
 If Err.Number <> 0 Or ag_sys Is Nothing Then WScript.Quit 1
-ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
+ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
 `;
     fs.writeFileSync(checkVbsPath, checkVbsScript, 'utf-8');
 
@@ -631,7 +662,9 @@ ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
                 outputChannel.show(true);
             }
             if (fs.existsSync(checkVbsPath)) fs.unlinkSync(checkVbsPath);
-            if (fs.existsSync(path.join(tempDir, 'check_comps.catvbs'))) fs.unlinkSync(path.join(tempDir, 'check_comps.catvbs'));
+            if (fs.existsSync(path.join(tempDir, 'c5d_check.catvbs'))) fs.unlinkSync(path.join(tempDir, 'c5d_check.catvbs'));
+
+            flushCatScriptErrors(tempDir);
             resolve();
         });
     });
@@ -687,9 +720,9 @@ ag_sys.ExecuteScript "${tempDir}", 1, "check_comps.catvbs", "CATMain", ag_args
         }
     }
 
-    // 4. Exeute Push
-    const catScriptPath = path.join(tempDir, 'push_macro.catvbs');
-    const vbsScriptPath = path.join(tempDir, 'run_push.vbs');
+    // 4. Execute Push
+    const catScriptPath = path.join(tempDir, 'c5d_push.catvbs');
+    const pushVbsPath = path.join(tempDir, 'c5d_run_push.vbs');
 
     // CATScript to read txt files and push them into target project modules
     const catScriptContent = `
@@ -697,18 +730,21 @@ Sub CATMain()
     On Error Resume Next
     Dim fso, apc, vbe, i, j, proj, comp, codeMod, inPath, inStr, newContent, devProj
     Dim targetProjName, folder, fileItem, parts, compName, compType
-    
+    Dim errPath, ef
+
     targetProjName = "${targetProject}"
 
     Set fso = CreateObject("Scripting.FileSystemObject")
+    errPath = "${tempDir}\\c5d_err.log"
+
     Set apc = CreateObject("MSAPC.Apc.7.1")
     If apc Is Nothing Then Set apc = CreateObject("MSAPC.Apc")
     Set vbe = apc.VBE
-    
+
     If Err.Number <> 0 Then
         Exit Sub
     End If
-    
+
     Set devProj = Nothing
     For i = 1 To vbe.VBProjects.Count
         Set proj = vbe.VBProjects.Item(i)
@@ -717,9 +753,9 @@ Sub CATMain()
             Exit For
         End If
     Next
-    
+
     If devProj Is Nothing Then Exit Sub
-    
+
     ' Perform Deletions
     If fso.FileExists("${tempDir}\\delete_list.txt") Then
         Set inStr = CreateObject("ADODB.Stream")
@@ -727,11 +763,11 @@ Sub CATMain()
         inStr.Charset = "shift_jis"
         inStr.Open
         inStr.LoadFromFile "${tempDir}\\delete_list.txt"
-        
+
         Dim delNames, d, k
         delNames = Split(inStr.ReadText, vbCrLf)
         inStr.Close
-        
+
         For Each d In delNames
             If Trim(d) <> "" Then
                 Set comp = Nothing
@@ -741,9 +777,17 @@ Sub CATMain()
                         Exit For
                     End If
                 Next
-                
+
                 If Not comp Is Nothing Then
+                    On Error Resume Next
                     devProj.VBComponents.Remove comp
+                    If Err.Number <> 0 Then
+                        Set ef = fso.OpenTextFile(errPath, 8, True)
+                        ef.WriteLine "[Push.Delete] Remove '" & Trim(d) & "' Err=" & Err.Number & ": " & Err.Description
+                        ef.Close
+                        Err.Clear
+                    End If
+                    On Error GoTo 0
                 End If
             End If
         Next
@@ -751,13 +795,13 @@ Sub CATMain()
     End If
 
     Set folder = fso.GetFolder("${tempDir}")
-    
+
     For Each fileItem In folder.Files
         If UCase(fso.GetExtensionName(fileItem.Path)) = "TXT" And InStr(fileItem.Name, "_TYPE_") > 0 Then
             parts = Split(fso.GetBaseName(fileItem.Path), "_TYPE_")
             compName = parts(0)
             compType = CInt(parts(1))
-            
+
             Set comp = Nothing
             For k = 1 To devProj.VBComponents.Count
                 If UCase(devProj.VBComponents.Item(k).Name) = UCase(compName) Then
@@ -765,55 +809,83 @@ Sub CATMain()
                     Exit For
                 End If
             Next
-            
+
             If comp Is Nothing Then
+                On Error Resume Next
                 Set comp = devProj.VBComponents.Add(compType)
-                comp.Name = compName
+                If Err.Number <> 0 Then
+                    Set ef = fso.OpenTextFile(errPath, 8, True)
+                    ef.WriteLine "[Push.Add] Add '" & compName & "' (Type=" & compType & ") Err=" & Err.Number & ": " & Err.Description
+                    ef.Close
+                    Err.Clear
+                End If
+                On Error GoTo 0
+                If Not comp Is Nothing Then comp.Name = compName
             End If
-            
-            Set inStr = CreateObject("ADODB.Stream")
-            inStr.Type = 2
-            inStr.Charset = "shift_jis"
-            inStr.Open
-            inStr.LoadFromFile fileItem.Path
-            newContent = inStr.ReadText
-            inStr.Close
-            
-            Set codeMod = comp.CodeModule
-            If codeMod.CountOfLines > 0 Then
-                codeMod.DeleteLines 1, codeMod.CountOfLines
+
+            If comp Is Nothing Then
+                Set ef = fso.OpenTextFile(errPath, 8, True)
+                ef.WriteLine "[Push.Add] Component '" & compName & "' could not be created or found. Skipped."
+                ef.Close
+            Else
+                Set inStr = CreateObject("ADODB.Stream")
+                inStr.Type = 2
+                inStr.Charset = "shift_jis"
+                inStr.Open
+                inStr.LoadFromFile fileItem.Path
+                newContent = inStr.ReadText
+                inStr.Close
+
+                Set codeMod = comp.CodeModule
+                On Error Resume Next
+                If codeMod.CountOfLines > 0 Then
+                    codeMod.DeleteLines 1, codeMod.CountOfLines
+                    If Err.Number <> 0 Then
+                        Set ef = fso.OpenTextFile(errPath, 8, True)
+                        ef.WriteLine "[Push.DeleteLines] '" & compName & "' Err=" & Err.Number & ": " & Err.Description
+                        ef.Close
+                        Err.Clear
+                    End If
+                End If
+
+                codeMod.AddFromString newContent
+                If Err.Number <> 0 Then
+                    Set ef = fso.OpenTextFile(errPath, 8, True)
+                    ef.WriteLine "[Push.AddFromString] '" & compName & "' Err=" & Err.Number & ": " & Err.Description
+                    ef.Close
+                    Err.Clear
+                End If
+                On Error GoTo 0
             End If
-            
-            codeMod.AddFromString newContent
-            
+
             fso.DeleteFile fileItem.Path
         End If
     Next
-    
-    ' --- CLEANUP INJECTED MACROS (Optimized) ---
-    Dim px, cx, cName
+
+    ' --- CLEANUP INJECTED MACROS ---
+    Dim px, cx, cName, tmpProj
     For px = 1 To vbe.VBProjects.Count
         Set tmpProj = vbe.VBProjects.Item(px)
         For cx = tmpProj.VBComponents.Count To 1 Step -1
             cName = UCase(tmpProj.VBComponents.Item(cx).Name)
-            If cName = "PUSH_MACRO" Or cName = "PULL_MACRO" Or cName = "CHECK_COMPS" Or _
-               cName = "RUN_CHECK" Or cName = "RUN_PUSH" Or cName = "RUN_PULL" Or _
-               cName = "RUN_CHECK_RUNNER" Or cName = "RUN_PUSH_RUNNER" Or cName = "RUN_PULL_RUNNER" Or _
-               cName = "RUN_LIST_RUNNER" Or cName = "LIST_PROJECTS" Or cName = "LIST_MODULE_TREE" Or _
-               cName = "RUN_LIST" Or cName = "RUN_TREE" Or cName = "RUN_TREE_RUNNER" Or _
-               cName = "RUN_LIST_AG" Or cName = "RUN_PULL_AG" Or cName = "RUN_CHECK_AG" Or cName = "RUN_PUSH_AG" Then
+            If Left(cName, 4) = "C5D_" Then
                 On Error Resume Next
                 tmpProj.VBComponents.Remove tmpProj.VBComponents.Item(cx)
+                If Err.Number <> 0 Then
+                    Set ef = fso.OpenTextFile(errPath, 8, True)
+                    ef.WriteLine "[Push.Cleanup] Remove '" & cName & "' Err=" & Err.Number & ": " & Err.Description
+                    ef.Close
+                    Err.Clear
+                End If
                 On Error GoTo 0
             End If
         Next
     Next
-    ' -------------------------------------------
+    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
 
-    const pushVbsPath = path.join(tempDir, 'run_push_ag.vbs');
     const pushVbsScript = `
 On Error Resume Next
 Dim ag_catia, ag_sys, ag_args()
@@ -821,7 +893,7 @@ Set ag_catia = GetObject(, "CATIA.Application")
 If Err.Number <> 0 Then WScript.Quit 1
 Set ag_sys = ag_catia.SystemService
 If Err.Number <> 0 Or ag_sys Is Nothing Then WScript.Quit 1
-ag_sys.ExecuteScript "${tempDir}", 1, "push_macro.catvbs", "CATMain", ag_args
+ag_sys.ExecuteScript "${tempDir}", 1, "c5d_push.catvbs", "CATMain", ag_args
 `;
     fs.writeFileSync(pushVbsPath, pushVbsScript, 'utf-8');
 
@@ -834,6 +906,9 @@ ag_sys.ExecuteScript "${tempDir}", 1, "push_macro.catvbs", "CATMain", ag_args
             exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${pushVbsPath}"`, (error, stdout, stderr) => {
                 if (fs.existsSync(pushVbsPath)) fs.unlinkSync(pushVbsPath);
                 if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
+
+                flushCatScriptErrors(tempDir);
+
                 if (error) {
                     outputChannel.appendLine(`[Push Error]`);
                     outputChannel.appendLine(`Error: ${error.message}`);
