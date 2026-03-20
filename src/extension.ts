@@ -745,27 +745,6 @@ Sub CATMain()
         Exit Sub
     End If
 
-    ' --- CLEANUP INJECTED MACROS FROM PREVIOUS RUN ---
-    Dim px, cx, cName, tmpProj
-    For px = 1 To vbe.VBProjects.Count
-        Set tmpProj = vbe.VBProjects.Item(px)
-        For cx = tmpProj.VBComponents.Count To 1 Step -1
-            cName = UCase(tmpProj.VBComponents.Item(cx).Name)
-            If Left(cName, 4) = "C5D_" Then
-                On Error Resume Next
-                tmpProj.VBComponents.Remove tmpProj.VBComponents.Item(cx)
-                If Err.Number <> 0 Then
-                    Set ef = fso.OpenTextFile(errPath, 8, True)
-                    ef.WriteLine "[Push.Cleanup] Remove '" & cName & "' Err=" & Err.Number & ": " & Err.Description
-                    ef.Close
-                    Err.Clear
-                End If
-                On Error GoTo 0
-            End If
-        Next
-    Next
-    ' --------------------------------
-
     Set devProj = Nothing
     For i = 1 To vbe.VBProjects.Count
         Set proj = vbe.VBProjects.Item(i)
@@ -822,6 +801,11 @@ Sub CATMain()
             parts = Split(fso.GetBaseName(fileItem.Path), "_TYPE_")
             compName = parts(0)
             compType = CInt(parts(1))
+
+            ' C5D_内部ファイルや無効なTypeはスキップして削除
+            If Left(UCase(compName), 4) = "C5D_" Or compType < 1 Or compType > 3 Then
+                fso.DeleteFile fileItem.Path
+            Else
 
             Set comp = Nothing
             For k = 1 To devProj.VBComponents.Count
@@ -880,6 +864,7 @@ Sub CATMain()
             End If
 
             fso.DeleteFile fileItem.Path
+            End If
         End If
     Next
 
