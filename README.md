@@ -67,7 +67,7 @@ A built-in VBA code formatter runs automatically on save (or via `Shift+Alt+F`).
 - Indentation correction (blocks: `Sub`, `If`, `For`, `With`, `Select Case`, etc.)
 - Trailing whitespace removal
 - Space before continuation marker (`Show(_` → `Show( _`)
-- Continuation line indentation (`_` lines get +1 extra indent)
+- Continuation line indentation (`_` lines get +1 extra indent; closing-only lines like `)` are exempt)
 - Blank line normalization (max 2 consecutive blank lines; blank line guaranteed between procedures)
 
 **Optional formatting (disabled by default):**
@@ -252,7 +252,7 @@ VBA シンボルが認識され、VSCode のナビゲーション機能に公開
 - インデント修正（`Sub`、`If`、`For`、`With`、`Select Case` などのブロック）
 - 行末スペース除去
 - 継続行マーカー前スペース追加（`Show(_` → `Show( _`）
-- 継続行インデント（`_` で終わる行の次行は +1 インデント）
+- 継続行インデント（`_` で終わる行の次行は +1 インデント、ただし `)` のみの行は除外）
 - 空行正規化（連続2行まで・プロシージャ間に空行1行を保証）
 
 **オプション（デフォルト無効）：**
