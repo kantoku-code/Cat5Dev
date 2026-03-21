@@ -7,6 +7,7 @@ import { exec } from 'child_process';
 import * as iconv from 'iconv-lite';
 import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
+import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from './formatter';
 import { t, getLanguage, setLanguage } from './i18n';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
@@ -106,6 +107,12 @@ export function activate(context: vscode.ExtensionContext) {
     const VBA_SELECTOR = ['bas_utf', 'cls_utf', 'frm_utf'].map(l => ({ language: 'vb', pattern: `**/*.${l}` }));
     context.subscriptions.push(
         vscode.languages.registerDocumentSymbolProvider(VBA_SELECTOR, new VbaDocumentSymbolProvider())
+    );
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider(VBA_SELECTOR, new VbaDocumentFormatter(context, outputChannel))
+    );
+    context.subscriptions.push(
+        registerFormatOnSave(context, outputChannel, VBA_SELECTOR)
     );
 
     const treeProvider = new CatiaVbaTreeProvider(context);
@@ -435,7 +442,7 @@ sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
         cancellable: false
     }, async (progress) => {
         return new Promise<void>((resolve, reject) => {
-            exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${vbsScriptPath}"`, (error, stdout, stderr) => {
+            exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${vbsScriptPath}"`, async (error, stdout, stderr) => {
                 if (fs.existsSync(vbsScriptPath)) fs.unlinkSync(vbsScriptPath);
                 if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
 
@@ -470,8 +477,18 @@ sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
                         // Normalize newlines: Remove all trailing newlines/spaces and ensure exactly one LF
                         const normalized = utf8String.replace(/\r/g, '').trimEnd() + '\n';
 
+                        // formatOnPull が有効な場合はフォーマットしてから保存
+                        const fmtConfig = vscode.workspace.getConfiguration('cat5dev.formatter');
+                        let saveContent = normalized;
+                        if (fmtConfig.get<boolean>('formatOnPull', false)) {
+                            const formatted = await formatVbaDocument(normalized, context, outputChannel);
+                            if (formatted !== null) {
+                                saveContent = formatted;
+                            }
+                        }
+
                         // Save to modules directory
-                        fs.writeFileSync(path.join(modulesDir, compName + ext), normalized, 'utf-8');
+                        fs.writeFileSync(path.join(modulesDir, compName + ext), saveContent, 'utf-8');
                         count++;
 
                         // Cleanup

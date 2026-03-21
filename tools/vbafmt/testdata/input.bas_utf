@@ -1,0 +1,40 @@
+Attribute VB_Name = "Module1"
+option explicit
+
+public sub HelloWorld()
+dim msg as string
+if true then
+msg = "Hello, World!"
+msgbox msg
+end if
+end sub
+
+public function AddNumbers(byval a as long, byval b as long) as long
+dim result as long
+result = a + b
+AddNumbers = result
+end function
+
+public sub SelectExample(byval x as integer)
+select case x
+case 1
+msgbox "one"
+case 2
+msgbox "two"
+case else
+msgbox "other"
+end select
+end sub
+
+public sub WithExample()
+with ActiveDocument
+.name = "test"
+.value = 1
+end with
+end sub
+
+type MyPoint
+x as double
+y as double
+z as double
+end type

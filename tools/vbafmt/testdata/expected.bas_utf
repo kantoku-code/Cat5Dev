@@ -1,0 +1,40 @@
+Attribute VB_Name = "Module1"
+Option Explicit
+
+Public Sub HelloWorld()
+    Dim msg As String
+    If True Then
+        msg = "Hello, World!"
+        MsgBox msg
+    End If
+End Sub
+
+Public Function AddNumbers(ByVal a As Long, ByVal b As Long) As Long
+    Dim result As Long
+    result = a + b
+    AddNumbers = result
+End Function
+
+Public Sub SelectExample(ByVal x As Integer)
+    Select Case x
+        Case 1
+            MsgBox "one"
+        Case 2
+            MsgBox "two"
+        Case Else
+            MsgBox "other"
+    End Select
+End Sub
+
+Public Sub WithExample()
+    With ActiveDocument
+        .name = "test"
+        .value = 1
+    End With
+End Sub
+
+Type MyPoint
+    x As Double
+    y As Double
+    z As Double
+End Type
