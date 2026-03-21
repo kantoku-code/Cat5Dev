@@ -2,7 +2,7 @@
     "name": "cat5dev",
     "displayName": "Cat5Dev",
     "description": "We provide support for CATIA V5 VBA macro development",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "activationEvents": [
         "onStartupFinished"
     ],
