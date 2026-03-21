@@ -2,15 +2,30 @@ package main
 
 import (
 	"strings"
-	"unicode"
 )
 
 // Options はフォーマットオプション
 type Options struct {
-	IndentSize          int
-	CapitalizeKeywords  bool
-	FixIndentation      bool
-	LineEndings         string // "CRLF" or "LF"
+	IndentSize         int
+	CapitalizeKeywords bool
+	FixIndentation     bool
+	LineEndings        string // "CRLF" or "LF"
+
+	// 高優先度
+	NormalizeOperatorSpacing bool
+	TrimTrailingSpace        bool
+	IndentContinuationLines  bool
+	MaxBlankLines            int // 0=無効
+
+	// 中優先度
+	NormalizeCommaSpacing   bool
+	SplitColonStatements    bool
+	NormalizeThenPlacement  bool
+	NormalizeCommentSpace   bool
+
+	// 低優先度
+	ExpandTypeSuffixes bool
+	NormalizeOnError   bool
 }
 
 // DefaultOptions はデフォルトオプション
@@ -20,6 +35,19 @@ func DefaultOptions() Options {
 		CapitalizeKeywords: true,
 		FixIndentation:     true,
 		LineEndings:        "CRLF",
+
+		NormalizeOperatorSpacing: false,
+		TrimTrailingSpace:        true,
+		IndentContinuationLines:  true,
+		MaxBlankLines:            2,
+
+		NormalizeCommaSpacing:  false,
+		SplitColonStatements:   false,
+		NormalizeThenPlacement: false,
+		NormalizeCommentSpace:  false,
+
+		ExpandTypeSuffixes: false,
+		NormalizeOnError:   false,
 	}
 }
 
@@ -27,11 +55,36 @@ func DefaultOptions() Options {
 func Format(input string, opts Options) string {
 	lines := splitLines(input)
 
+	if opts.NormalizeThenPlacement {
+		lines = normalizeThenPlacement(lines)
+	}
+	if opts.SplitColonStatements {
+		lines = splitColonStatements(lines)
+	}
+	if opts.TrimTrailingSpace {
+		lines = trimTrailingSpace(lines)
+	}
 	if opts.CapitalizeKeywords {
 		lines = capitalizeKeywords(lines)
 	}
+	if opts.ExpandTypeSuffixes {
+		lines = expandTypeSuffixes(lines)
+	}
+	if opts.NormalizeOperatorSpacing {
+		lines = normalizeOperatorSpacing(lines)
+	}
+	if opts.NormalizeCommaSpacing {
+		lines = normalizeCommaSpacing(lines)
+	}
+	if opts.NormalizeCommentSpace {
+		lines = normalizeCommentSpace(lines)
+	}
+	// NormalizeOnError: 将来実装予定（現在はスタブ）
 	if opts.FixIndentation {
-		lines = fixIndentation(lines, opts.IndentSize)
+		lines = fixIndentation(lines, opts.IndentSize, opts.IndentContinuationLines)
+	}
+	if opts.MaxBlankLines > 0 {
+		lines = normalizeBlankLines(lines, opts.MaxBlankLines)
 	}
 
 	sep := "\n"
@@ -54,151 +107,6 @@ func splitLines(input string) []string {
 	return strings.Split(input, "\n")
 }
 
-// ---------- Stage 2: キーワード大文字化 ----------
-
-// capitalizeKeywords は各行のキーワードを正規ケースに変換する
-func capitalizeKeywords(lines []string) []string {
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		result[i] = capitalizeLine(line)
-	}
-	return result
-}
-
-// capitalizeLine は1行のキーワードを変換する
-func capitalizeLine(line string) string {
-	var out strings.Builder
-	inString := false
-	i := 0
-	for i < len(line) {
-		ch := line[i]
-
-		// 文字列リテラル内
-		if inString {
-			out.WriteByte(ch)
-			if ch == '"' {
-				inString = false
-			}
-			i++
-			continue
-		}
-
-		// 文字列開始
-		if ch == '"' {
-			inString = true
-			out.WriteByte(ch)
-			i++
-			continue
-		}
-
-		// コメント: ' 以降はそのまま出力
-		if ch == '\'' {
-			out.WriteString(line[i:])
-			return out.String()
-		}
-
-		// 識別子 (キーワード候補)
-		if isIdentStart(rune(ch)) {
-			j := i + 1
-			for j < len(line) && isIdentPart(rune(line[j])) {
-				j++
-			}
-			word := line[i:j]
-			lower := strings.ToLower(word)
-
-			// 2トークン複合キーワードの先読み
-			// "end if/for/with/select/function/sub/property/type/enum/class"
-			// "select case", "option explicit/base/compare"
-			// "for each", "property get/let/set", "exit sub/function/for/do/while"
-			if canonical, ok := Keywords[lower]; ok {
-				// 次のトークンと合わせて複合チェック
-				rest := line[j:]
-				nextWord, nextEnd := peekNextWord(rest)
-				compound := lower + " " + strings.ToLower(nextWord)
-				switch compound {
-				case "end if", "end for", "end with", "end select",
-					"end function", "end sub", "end property",
-					"end type", "end enum", "end class":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "select case":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "option explicit", "option base", "option compare":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "for each":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "property get", "property let", "property set":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "exit sub", "exit function", "exit for", "exit do", "exit while":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "do while", "do until":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "loop while", "loop until":
-					out.WriteString(canonical + " " + capitalize(nextWord))
-					i = j + nextEnd
-					continue
-				case "elseif": // すでに単一トークンの場合は不要だが念のため
-				}
-				out.WriteString(canonical)
-			} else {
-				out.WriteString(word)
-			}
-			i = j
-			continue
-		}
-
-		out.WriteByte(ch)
-		i++
-	}
-	return out.String()
-}
-
-// peekNextWord は文字列の先頭の空白をスキップして最初の単語と、
-// その単語が終わった位置 (空白含む) を返す
-func peekNextWord(s string) (word string, consumed int) {
-	i := 0
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-		i++
-	}
-	start := i
-	for i < len(s) && isIdentPart(rune(s[i])) {
-		i++
-	}
-	return s[start:i], i
-}
-
-func capitalize(word string) string {
-	if word == "" {
-		return ""
-	}
-	lower := strings.ToLower(word)
-	if canonical, ok := Keywords[lower]; ok {
-		return canonical
-	}
-	return word
-}
-
-func isIdentStart(r rune) bool {
-	return unicode.IsLetter(r) || r == '_'
-}
-
-func isIdentPart(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-}
-
 // ---------- Stage 4: インデント修正 ----------
 
 type lineKind int
@@ -214,19 +122,27 @@ const (
 	kindBlank                  // 空行
 )
 
-func fixIndentation(lines []string, indentSize int) []string {
+func fixIndentation(lines []string, indentSize int, indentContinuation bool) []string {
 	result := make([]string, 0, len(lines))
 	depth := 0
+	prevWasContinuation := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		if trimmed == "" {
 			result = append(result, "")
+			prevWasContinuation = false
 			continue
 		}
 
 		kind := classifyLine(trimmed)
+
+		// 継続行のインデント調整
+		extraIndent := 0
+		if indentContinuation && prevWasContinuation {
+			extraIndent = 1
+		}
 
 		switch kind {
 		case kindHeader:
@@ -237,34 +153,37 @@ func fixIndentation(lines []string, indentSize int) []string {
 			if depth < 0 {
 				depth = 0
 			}
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 
 		case kindEndSelect:
 			depth -= 2
 			if depth < 0 {
 				depth = 0
 			}
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 
 		case kindElseCase:
 			depth--
 			if depth < 0 {
 				depth = 0
 			}
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 			depth++
 
 		case kindStarter:
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 			depth++
 
 		case kindSelectStarter:
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 			depth += 2
 
 		default: // kindNormal
-			result = append(result, indent(trimmed, depth, indentSize))
+			result = append(result, indent(trimmed, depth+extraIndent, indentSize))
 		}
+
+		// 継続行フラグ更新（コード末尾が _ かどうか）
+		prevWasContinuation = indentContinuation && isContinuationLine(trimmed)
 	}
 
 	return result
@@ -285,9 +204,6 @@ func classifyLine(trimmed string) lineKind {
 	// 先頭トークンを取得
 	first, rest := firstToken(trimmed)
 	firstLow := strings.ToLower(first)
-
-	// 継続行 (前の行が _ で終わる場合はここでは判定できないが、
-	// 本行が _ で終わっても分類は通常通り行う)
 
 	// Attribute, BEGIN, VERSION → header
 	switch firstLow {
@@ -316,7 +232,6 @@ func classifyLine(trimmed string) lineKind {
 	}
 
 	// Case → elseCase (Select Case ブロック内)
-	// ただし "Case" で始まる行のみ (Select Case 自体は starter)
 	if firstLow == "case" {
 		return kindElseCase
 	}
@@ -372,8 +287,6 @@ func classifyLine(trimmed string) lineKind {
 	}
 
 	// If ... Then → starter か normal かを判定
-	// 単行 If: "If <expr> Then <stmt>" → normal
-	// ブロック If: "If <expr> Then" (Then が行末) → starter
 	if firstLow == "if" {
 		if isSingleLineIf(trimmed) {
 			return kindNormal
@@ -385,17 +298,13 @@ func classifyLine(trimmed string) lineKind {
 }
 
 // isSingleLineIf は "If ... Then <stmt>" 形式かどうかを判定する
-// Then の後にコメント以外のトークンがあれば単行 If
 func isSingleLineIf(line string) bool {
-	// Then を探す (文字列・コメント考慮の簡易版)
 	lower := strings.ToLower(line)
 	idx := strings.LastIndex(lower, "then")
 	if idx < 0 {
 		return false
 	}
-	// Then の後の文字列
 	after := strings.TrimSpace(line[idx+4:])
-	// コメントまたは空なら ブロック If
 	if after == "" || strings.HasPrefix(after, "'") {
 		return false
 	}

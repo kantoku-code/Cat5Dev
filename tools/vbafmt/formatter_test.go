@@ -224,7 +224,7 @@ func TestFixIndentation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lines := splitLines(tt.input)
-			got := strings.Join(fixIndentation(lines, opts.IndentSize), "\n")
+			got := strings.Join(fixIndentation(lines, opts.IndentSize, false), "\n")
 			want := tt.want
 			if got != want {
 				t.Errorf("\ngot:\n%s\nwant:\n%s", got, want)
@@ -259,6 +259,253 @@ func TestFormatIntegration(t *testing.T) {
 		if len(gotLines) != len(expLines) {
 			t.Errorf("行数が異なります: got %d, want %d", len(gotLines), len(expLines))
 		}
+	}
+}
+
+func TestTrimTrailingSpace(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"x = 1   ", "x = 1"},
+		{"x = 1\t\t", "x = 1"},
+		{"x = 1", "x = 1"},
+		{"", ""},
+		{"x = 1 _", "x = 1 _"}, // 継続行の _ は保持
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := trimTrailingSpace([]string{tt.input})
+			if got[0] != tt.want {
+				t.Errorf("got %q want %q", got[0], tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCommaSpacing(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"foo(a,b,c)", "foo(a, b, c)"},
+		{"foo(a, b, c)", "foo(a, b, c)"},
+		{`foo("a,b",c)`, `foo("a,b", c)`}, // 文字列内のカンマは変換しない
+		{"foo(a,b) ' x,y", "foo(a, b) ' x,y"}, // コメント内は変換しない
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeCommaLine(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCommentSpace(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"'comment", "' comment"},
+		{"' comment", "' comment"}, // 既にスペースあり
+		{"x = 1 'note", "x = 1 ' note"},
+		{"''special", "''special"}, // '' は変換しない
+		{`x = "'" & y 'test`, `x = "'" & y ' test`}, // 文字列内の ' はコメントでない
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeCommentSpaceLine(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeOperatorSpacing(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"x=1", "x = 1"},
+		{"x=1+2", "x = 1 + 2"},
+		{"x = 1 + 2", "x = 1 + 2"}, // 既にスペースあり
+		{"x=-1", "x = -1"},          // 単項マイナス
+		{"x=(-1)", "x = (-1)"},      // 括弧内単項マイナス
+		{"If x<>0 Then", "If x <> 0 Then"},
+		{"If x<=10 Then", "If x <= 10 Then"},
+		{"If x>=10 Then", "If x >= 10 Then"},
+		{`x = &H1F`, `x = &H1F`},                      // 16進リテラルの & はスキップ
+		{`x = "a=b" & y`, `x = "a=b" & y`},            // 文字列内は変換しない（& は演算子）
+		{"x=1 ' a=b", "x = 1 ' a=b"},                  // コメント内は変換しない
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeOperatorLine(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandTypeSuffixes(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Dim x%", "Dim x As Integer"},
+		{"Dim x&", "Dim x As Long"},
+		{"Dim x!", "Dim x As Single"},
+		{"Dim x#", "Dim x As Double"},
+		{"Dim x@", "Dim x As Currency"},
+		{"Dim x$", "Dim x As String"},
+		{"Dim x%, y&", "Dim x As Integer, y As Long"},
+		{"Dim x As Integer", "Dim x As Integer"}, // 既に As Type あり
+		{"Dim x As Integer, y&", "Dim x As Integer, y As Long"}, // 混在
+		{"x% = 10", "x% = 10"}, // Dim 文脈外は変換しない
+		{"Private x%", "Private x As Integer"},
+		{"Dim x%(10)", "Dim x(10) As Integer"}, // 配列
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := expandTypeSuffixLine(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeBlankLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		max   int
+		input string
+		want  string
+	}{
+		{
+			name:  "連続3空行→2行",
+			max:   2,
+			input: joinLF("a", "", "", "", "b"),
+			want:  joinLF("a", "", "", "b"),
+		},
+		{
+			name:  "プロシージャ間空行保証",
+			max:   2,
+			input: joinLF("End Sub", "Sub Foo()"),
+			want:  joinLF("End Sub", "", "Sub Foo()"),
+		},
+		{
+			name:  "プロシージャ間に既に空行あり",
+			max:   2,
+			input: joinLF("End Sub", "", "Sub Foo()"),
+			want:  joinLF("End Sub", "", "Sub Foo()"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := splitLines(tt.input)
+			got := strings.Join(normalizeBlankLines(lines, tt.max), "\n")
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitColonStatements(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"Dim x: x = 1", []string{"Dim x", "x = 1"}},
+		{"    Dim x: x = 1", []string{"    Dim x", "    x = 1"}}, // インデント維持
+		{"Label:", []string{"Label:"}},                            // ラベルは分割しない
+		{`x = "a:b": y = 1`, []string{`x = "a:b"`, "y = 1"}},    // 文字列内コロンは分割しない
+		{"x = 1", []string{"x = 1"}},                             // コロンなし
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := splitColonLine(tt.input)
+			if len(got) != len(tt.want) {
+				t.Errorf("len=%d want %d: %v", len(got), len(tt.want), got)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("[%d] got %q want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeThenPlacement(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "継続行Then同行化",
+			input: joinLF("If x > 0 _", "    Then"),
+			want:  joinLF("If x > 0 Then"),
+		},
+		{
+			name:  "通常のIfは変換しない",
+			input: joinLF("If x > 0 Then", "    y = 1"),
+			want:  joinLF("If x > 0 Then", "    y = 1"),
+		},
+		{
+			name:  "継続行でもThenでなければ変換しない",
+			input: joinLF("x = 1 _", "    + 2"),
+			want:  joinLF("x = 1 _", "    + 2"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := splitLines(tt.input)
+			got := strings.Join(normalizeThenPlacement(lines), "\n")
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIndentContinuationLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name: "継続行の次行が+1インデント",
+			input: joinLF(
+				"Sub Test()",
+				"x = 1 _",
+				"+ 2",
+				"End Sub",
+			),
+			want: joinLF(
+				"Sub Test()",
+				"    x = 1 _",
+				"        + 2",
+				"End Sub",
+			),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := splitLines(tt.input)
+			got := strings.Join(fixIndentation(lines, 4, true), "\n")
+			if got != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
 	}
 }
 
