@@ -125,50 +125,50 @@
                 "command": "cat5dev.copyPath",
                 "title": "Copy Path"
             }
-        ]
-    },
-    "configuration": [
-        {
-            "title": "CATIA VBA Sync",
-            "properties": {
-                "cat5dev.language": {
-                    "type": "string",
-                    "enum": ["ja", "en"],
-                    "enumDescriptions": [
-                        "日本語",
-                        "English"
-                    ],
-                    "default": "ja",
-                    "description": "Language for CATIA VBA Sync extension (日本語 or English)"
-                },
-                "cat5dev.formatter.indentSize": {
-                    "type": "number",
-                    "default": 4,
-                    "description": "VBAフォーマッタのインデントサイズ"
-                },
-                "cat5dev.formatter.capitalizeKeywords": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "VBAキーワードを正規ケースに変換する"
-                },
-                "cat5dev.formatter.fixIndentation": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "インデントを自動修正する"
-                },
-                "cat5dev.formatter.formatOnSave": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "保存時に自動フォーマットする"
-                },
-                "cat5dev.formatter.formatOnPull": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "CATIAからPull後に自動フォーマットする"
+        ],
+        "configuration": [
+            {
+                "title": "CATIA VBA Sync",
+                "properties": {
+                    "cat5dev.language": {
+                        "type": "string",
+                        "enum": ["ja", "en"],
+                        "enumDescriptions": [
+                            "日本語",
+                            "English"
+                        ],
+                        "default": "ja",
+                        "description": "Language for CATIA VBA Sync extension (日本語 or English)"
+                    },
+                    "cat5dev.formatter.indentSize": {
+                        "type": "number",
+                        "default": 4,
+                        "description": "VBAフォーマッタのインデントサイズ"
+                    },
+                    "cat5dev.formatter.capitalizeKeywords": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "VBAキーワードを正規ケースに変換する"
+                    },
+                    "cat5dev.formatter.fixIndentation": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "インデントを自動修正する"
+                    },
+                    "cat5dev.formatter.formatOnSave": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "保存時に自動フォーマットする"
+                    },
+                    "cat5dev.formatter.formatOnPull": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "CATIAからPull後に自動フォーマットする"
+                    }
                 }
             }
-        }
-    ],
+        ]
+    },
     "scripts": {
         "compile:go": "cd tools/vbafmt && go build -ldflags=\"-s -w\" -o ../../bin/vbafmt.exe .",
         "vscode:prepublish": "npm run compile:go && npm run compile",
