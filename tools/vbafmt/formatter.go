@@ -12,10 +12,11 @@ type Options struct {
 	LineEndings        string // "CRLF" or "LF"
 
 	// 高優先度
-	NormalizeOperatorSpacing bool
-	TrimTrailingSpace        bool
-	IndentContinuationLines  bool
-	MaxBlankLines            int // 0=無効
+	NormalizeOperatorSpacing  bool
+	TrimTrailingSpace         bool
+	EnsureContinuationSpace   bool
+	IndentContinuationLines   bool
+	MaxBlankLines             int // 0=無効
 
 	// 中優先度
 	NormalizeCommaSpacing   bool
@@ -38,6 +39,7 @@ func DefaultOptions() Options {
 
 		NormalizeOperatorSpacing: false,
 		TrimTrailingSpace:        true,
+		EnsureContinuationSpace:  true,
 		IndentContinuationLines:  true,
 		MaxBlankLines:            2,
 
@@ -63,6 +65,9 @@ func Format(input string, opts Options) string {
 	}
 	if opts.TrimTrailingSpace {
 		lines = trimTrailingSpace(lines)
+	}
+	if opts.EnsureContinuationSpace {
+		lines = ensureContinuationSpace(lines)
 	}
 	if opts.CapitalizeKeywords {
 		lines = capitalizeKeywords(lines)
@@ -139,8 +144,9 @@ func fixIndentation(lines []string, indentSize int, indentContinuation bool) []s
 		kind := classifyLine(trimmed)
 
 		// 継続行のインデント調整
+		// ただし閉じ括弧のみの行（")" や "]" など）は +1 しない
 		extraIndent := 0
-		if indentContinuation && prevWasContinuation {
+		if indentContinuation && prevWasContinuation && !isClosingOnly(trimmed) {
 			extraIndent = 1
 		}
 
@@ -322,6 +328,28 @@ func firstToken(line string) (token string, rest string) {
 		return "", line
 	}
 	return line[:i], line[i:]
+}
+
+// isClosingOnly は行が閉じ括弧・角括弧のみで構成されているかを返す
+// ")"、"]"、"))" などが対象。コメント除去後のコードで判定する。
+func isClosingOnly(trimmed string) bool {
+	segs := parseSegments(trimmed)
+	var codeBuf strings.Builder
+	for _, seg := range segs {
+		if seg.kind == segCode {
+			codeBuf.WriteString(seg.text)
+		}
+	}
+	s := strings.TrimSpace(codeBuf.String())
+	if s == "" {
+		return false
+	}
+	for _, ch := range s {
+		if ch != ')' && ch != ']' {
+			return false
+		}
+	}
+	return true
 }
 
 // indent はインデントを付与した文字列を返す

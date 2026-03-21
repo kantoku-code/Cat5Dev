@@ -76,6 +76,40 @@ func normalizeCommentSpaceLine(line string) string {
 	return out.String()
 }
 
+// ensureContinuationSpace は継続行マーカー `_` の直前にスペースがない場合にスペースを追加する
+// "Show(_" → "Show( _"  ただし文字列・コメント内の _ はスキップ
+func ensureContinuationSpace(lines []string) []string {
+	result := make([]string, len(lines))
+	for i, line := range lines {
+		result[i] = ensureContinuationSpaceLine(line)
+	}
+	return result
+}
+
+func ensureContinuationSpaceLine(line string) string {
+	segs := parseSegments(line)
+	if len(segs) == 0 {
+		return line
+	}
+	// 末尾セグメントがコードで、末尾が "_" であることを確認
+	last := segs[len(segs)-1]
+	if last.kind != segCode {
+		return line
+	}
+	trimmed := strings.TrimRight(last.text, " \t")
+	if !strings.HasSuffix(trimmed, "_") {
+		return line
+	}
+	// "_" の直前がスペースかどうか確認
+	base := trimmed[:len(trimmed)-1]
+	if len(base) == 0 || base[len(base)-1] == ' ' || base[len(base)-1] == '\t' {
+		return line // 既にスペースあり
+	}
+	// スペースを挿入: last.text を書き換え
+	segs[len(segs)-1].text = base + " _"
+	return rebuildFromSegments(segs)
+}
+
 // normalizeOperatorSpacing は演算子前後にスペースを付与する（文字列・コメント内を除く）
 // 対象: = + - * / \ ^ & < > <= >= <>
 // 単項マイナス（直前が演算子/(/行頭）はスキップ

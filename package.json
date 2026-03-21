@@ -164,6 +164,46 @@
                         "type": "boolean",
                         "default": false,
                         "description": "CATIAからPull後に自動フォーマットする"
+                    },
+                    "cat5dev.formatter.trimTrailingSpace": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "行末の空白を除去する"
+                    },
+                    "cat5dev.formatter.ensureContinuationSpace": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "継続行マーカー _ の前にスペースを追加する (Show(_ → Show( _)"
+                    },
+                    "cat5dev.formatter.indentContinuationLines": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "継続行の次の行を +1 インデントする"
+                    },
+                    "cat5dev.formatter.maxBlankLines": {
+                        "type": "number",
+                        "default": 2,
+                        "description": "連続する空行の最大数 (0=無効)"
+                    },
+                    "cat5dev.formatter.normalizeOperatorSpacing": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "演算子前後のスペースを統一する (x=1+2 → x = 1 + 2)"
+                    },
+                    "cat5dev.formatter.normalizeCommaSpacing": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "コンマ後のスペースを統一する (foo(a,b) → foo(a, b))"
+                    },
+                    "cat5dev.formatter.normalizeCommentSpace": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "コメント記号後にスペースを追加する ('comment → ' comment)"
+                    },
+                    "cat5dev.formatter.expandTypeSuffixes": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "型接尾辞を展開する (Dim x% → Dim x As Integer)"
                     }
                 }
             }

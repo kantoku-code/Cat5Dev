@@ -58,6 +58,30 @@ VBA symbols are recognized and exposed to VSCode's navigation features:
 
 Recognized symbol types: `Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enum`
 
+### VBA Formatter (on save / `Shift+Alt+F`)
+
+A built-in VBA code formatter runs automatically on save (or via `Shift+Alt+F`).
+
+**Default formatting:**
+- Keyword capitalization (`dim` → `Dim`, `end if` → `End If`, etc.)
+- Indentation correction (blocks: `Sub`, `If`, `For`, `With`, `Select Case`, etc.)
+- Trailing whitespace removal
+- Space before continuation marker (`Show(_` → `Show( _`)
+- Continuation line indentation (`_` lines get +1 extra indent)
+- Blank line normalization (max 2 consecutive blank lines; blank line guaranteed between procedures)
+
+**Optional formatting (disabled by default):**
+
+| Option flag | Description |
+|-------------|-------------|
+| `-normalize-operator-spacing` | `x=1+2` → `x = 1 + 2` |
+| `-normalize-comma-spacing` | `foo(a,b)` → `foo(a, b)` |
+| `-normalize-comment-space` | `'comment` → `' comment` |
+| `-normalize-then-placement` | `If x _\n    Then` → `If x Then` |
+| `-split-colon-statements` | `Dim x: x = 1` → two lines |
+| `-expand-type-suffixes` | `Dim x%` → `Dim x As Integer` |
+| `-normalize-on-error` | On Error style normalization |
+
 ---
 
 ## Requirements
@@ -218,6 +242,30 @@ VBA シンボルが認識され、VSCode のナビゲーション機能に公開
 - **シンボルへ移動** (`Ctrl+Shift+O`) — 任意のプロシージャに直接ジャンプ
 
 認識されるシンボルタイプ： `Sub`、`Function`、`Property Get/Let/Set`、`Type`、`Enum`
+
+### VBA フォーマッタ（保存時 / `Shift+Alt+F`）
+
+保存時または `Shift+Alt+F` で VBA コードフォーマッタが自動実行されます。
+
+**デフォルトで有効な処理：**
+- キーワード大文字化（`dim` → `Dim`、`end if` → `End If` など）
+- インデント修正（`Sub`、`If`、`For`、`With`、`Select Case` などのブロック）
+- 行末スペース除去
+- 継続行マーカー前スペース追加（`Show(_` → `Show( _`）
+- 継続行インデント（`_` で終わる行の次行は +1 インデント）
+- 空行正規化（連続2行まで・プロシージャ間に空行1行を保証）
+
+**オプション（デフォルト無効）：**
+
+| オプションフラグ | 説明 |
+|----------------|------|
+| `-normalize-operator-spacing` | `x=1+2` → `x = 1 + 2` |
+| `-normalize-comma-spacing` | `foo(a,b)` → `foo(a, b)` |
+| `-normalize-comment-space` | `'comment` → `' comment` |
+| `-normalize-then-placement` | `If x _\n    Then` → `If x Then` |
+| `-split-colon-statements` | `Dim x: x = 1` → 2行に分割 |
+| `-expand-type-suffixes` | `Dim x%` → `Dim x As Integer` |
+| `-normalize-on-error` | On Error スタイル統一 |
 
 ---
 

@@ -24,12 +24,28 @@ export async function formatVbaDocument(
     const indentSize: number = config.get('indentSize', 4);
     const capitalizeKeywords: boolean = config.get('capitalizeKeywords', true);
     const fixIndentation: boolean = config.get('fixIndentation', true);
+    const trimTrailingSpace: boolean = config.get('trimTrailingSpace', true);
+    const ensureContinuationSpace: boolean = config.get('ensureContinuationSpace', true);
+    const indentContinuationLines: boolean = config.get('indentContinuationLines', true);
+    const maxBlankLines: number = config.get('maxBlankLines', 2);
+    const normalizeOperatorSpacing: boolean = config.get('normalizeOperatorSpacing', false);
+    const normalizeCommaSpacing: boolean = config.get('normalizeCommaSpacing', false);
+    const normalizeCommentSpace: boolean = config.get('normalizeCommentSpace', false);
+    const expandTypeSuffixes: boolean = config.get('expandTypeSuffixes', false);
 
     const args: string[] = [
         `--indent-size=${indentSize}`,
         `--capitalize-keywords=${capitalizeKeywords}`,
         `--fix-indentation=${fixIndentation}`,
         '--line-endings=CRLF',
+        `--trim-trailing-space=${trimTrailingSpace}`,
+        `--ensure-continuation-space=${ensureContinuationSpace}`,
+        `--indent-continuation-lines=${indentContinuationLines}`,
+        `--max-blank-lines=${maxBlankLines}`,
+        `--normalize-operator-spacing=${normalizeOperatorSpacing}`,
+        `--normalize-comma-spacing=${normalizeCommaSpacing}`,
+        `--normalize-comment-space=${normalizeCommentSpace}`,
+        `--expand-type-suffixes=${expandTypeSuffixes}`,
     ];
 
     return new Promise((resolve) => {

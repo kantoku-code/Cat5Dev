@@ -262,6 +262,29 @@ func TestFormatIntegration(t *testing.T) {
 	}
 }
 
+func TestEnsureContinuationSpace(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Call foo(_", "Call foo( _"},          // _ 直前にスペースなし → 追加
+		{"Call foo( _", "Call foo( _"},         // 既にスペースあり → そのまま
+		{"x = 1 _", "x = 1 _"},                // 既にスペースあり → そのまま
+		{"x = 1_", "x = 1 _"},                 // スペースなし → 追加
+		{`x = "abc_"`, `x = "abc_"`},          // 文字列内の _ はスキップ
+		{"x = 1 ' abc_", "x = 1 ' abc_"},      // コメント内の _ はスキップ
+		{"x = 1", "x = 1"},                    // 継続行でない → そのまま
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := ensureContinuationSpaceLine(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTrimTrailingSpace(t *testing.T) {
 	tests := []struct {
 		input string
@@ -482,6 +505,23 @@ func TestIndentContinuationLines(t *testing.T) {
 		input string
 		want  string
 	}{
+		{
+			name: "継続行後の閉じ括弧はインデントしない",
+			input: joinLF(
+				"Sub Test()",
+				"Call foo(_",
+				"vbModeless_",
+				")",
+				"End Sub",
+			),
+			want: joinLF(
+				"Sub Test()",
+				"    Call foo(_",
+				"        vbModeless_",
+				"    )",
+				"End Sub",
+			),
+		},
 		{
 			name: "継続行の次行が+1インデント",
 			input: joinLF(

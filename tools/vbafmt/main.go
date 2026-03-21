@@ -16,6 +16,7 @@ func main() {
 	// 高優先度
 	normalizeOperatorSpacing := flag.Bool("normalize-operator-spacing", false, "演算子前後のスペース統一")
 	trimTrailingSpace := flag.Bool("trim-trailing-space", true, "行末スペースの除去")
+	ensureContinuationSpace := flag.Bool("ensure-continuation-space", true, "継続行マーカー _ の前にスペースを追加")
 	indentContinuationLines := flag.Bool("indent-continuation-lines", true, "継続行のインデント (+1)")
 	maxBlankLines := flag.Int("max-blank-lines", 2, "最大連続空行数 (0=無効)")
 	// 中優先度
@@ -35,6 +36,7 @@ func main() {
 		LineEndings:              *lineEndings,
 		NormalizeOperatorSpacing: *normalizeOperatorSpacing,
 		TrimTrailingSpace:        *trimTrailingSpace,
+		EnsureContinuationSpace:  *ensureContinuationSpace,
 		IndentContinuationLines:  *indentContinuationLines,
 		MaxBlankLines:            *maxBlankLines,
 		NormalizeCommaSpacing:    *normalizeCommaSpacing,

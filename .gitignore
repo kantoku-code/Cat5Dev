@@ -18,6 +18,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Go
+*.exe
+tools/vbafmt/vbafmt.exe
+
 # Package locks (必要に応じて)
 package-lock.json
 yarn.lock
