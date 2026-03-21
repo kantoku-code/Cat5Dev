@@ -4,10 +4,7 @@
     "description": "We provide support for CATIA V5 VBA macro development",
     "version": "0.1.4",
     "activationEvents": [
-        "onCommand:cat5dev.pullFromCatia",
-        "onCommand:cat5dev.pushToCatia",
-        "onCommand:cat5dev.selectProject",
-        "onView:catiaVbaModules"
+        "onStartupFinished"
     ],
     "engines": {
         "vscode": "^1.85.0"
@@ -143,12 +140,38 @@
                     ],
                     "default": "ja",
                     "description": "Language for CATIA VBA Sync extension (日本語 or English)"
+                },
+                "cat5dev.formatter.indentSize": {
+                    "type": "number",
+                    "default": 4,
+                    "description": "VBAフォーマッタのインデントサイズ"
+                },
+                "cat5dev.formatter.capitalizeKeywords": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "VBAキーワードを正規ケースに変換する"
+                },
+                "cat5dev.formatter.fixIndentation": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "インデントを自動修正する"
+                },
+                "cat5dev.formatter.formatOnSave": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "保存時に自動フォーマットする"
+                },
+                "cat5dev.formatter.formatOnPull": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "CATIAからPull後に自動フォーマットする"
                 }
             }
         }
     ],
     "scripts": {
-        "vscode:prepublish": "npm run compile",
+        "compile:go": "cd tools/vbafmt && go build -ldflags=\"-s -w\" -o ../../bin/vbafmt.exe .",
+        "vscode:prepublish": "npm run compile:go && npm run compile",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "pretest": "npm run compile && npm run lint",

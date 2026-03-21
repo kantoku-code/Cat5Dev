@@ -204,12 +204,14 @@ func isIdentPart(r rune) bool {
 type lineKind int
 
 const (
-	kindNormal    lineKind = iota
-	kindStarter            // インデント増加
-	kindEnder              // インデント減少 (Else/Case は減少後増加)
-	kindElseCase           // 減少→増加 (Else, ElseIf, Case)
-	kindHeader             // 常にカラム0
-	kindBlank              // 空行
+	kindNormal        lineKind = iota
+	kindStarter                // インデント増加 (+1)
+	kindSelectStarter          // Select Case: +2 (Case が -1 するため)
+	kindEnder                  // インデント減少 (-1)
+	kindEndSelect              // End Select: -2
+	kindElseCase               // 減少→増加 (Else, ElseIf, Case): -1 then +1
+	kindHeader                 // 常にカラム0
+	kindBlank                  // 空行
 )
 
 func fixIndentation(lines []string, indentSize int) []string {
@@ -237,6 +239,13 @@ func fixIndentation(lines []string, indentSize int) []string {
 			}
 			result = append(result, indent(trimmed, depth, indentSize))
 
+		case kindEndSelect:
+			depth -= 2
+			if depth < 0 {
+				depth = 0
+			}
+			result = append(result, indent(trimmed, depth, indentSize))
+
 		case kindElseCase:
 			depth--
 			if depth < 0 {
@@ -248,6 +257,10 @@ func fixIndentation(lines []string, indentSize int) []string {
 		case kindStarter:
 			result = append(result, indent(trimmed, depth, indentSize))
 			depth++
+
+		case kindSelectStarter:
+			result = append(result, indent(trimmed, depth, indentSize))
+			depth += 2
 
 		default: // kindNormal
 			result = append(result, indent(trimmed, depth, indentSize))
@@ -282,8 +295,13 @@ func classifyLine(trimmed string) lineKind {
 		return kindHeader
 	}
 
-	// End 系 → ender
+	// End 系
 	if firstLow == "end" {
+		// End Select は -2
+		nextTok, _ := firstToken(strings.TrimSpace(rest))
+		if strings.ToLower(nextTok) == "select" {
+			return kindEndSelect
+		}
 		return kindEnder
 	}
 
@@ -303,9 +321,9 @@ func classifyLine(trimmed string) lineKind {
 		return kindElseCase
 	}
 
-	// Select Case → starter
+	// Select Case → selectStarter (+2)
 	if firstLow == "select" {
-		return kindStarter
+		return kindSelectStarter
 	}
 
 	// For, For Each → starter

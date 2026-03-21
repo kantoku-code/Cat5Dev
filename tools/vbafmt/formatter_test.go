@@ -244,6 +244,7 @@ func TestFormatIntegration(t *testing.T) {
 	}
 
 	opts := DefaultOptions()
+	opts.LineEndings = "LF" // テスト用: expected ファイルは LF
 	got := Format(string(input), opts)
 
 	if got != string(expected) {
