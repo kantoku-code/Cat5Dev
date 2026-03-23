@@ -128,7 +128,7 @@
         ],
         "configuration": [
             {
-                "title": "CATIA VBA Sync",
+                "title": "Cat5Dev",
                 "properties": {
                     "cat5dev.language": {
                         "type": "string",
@@ -138,7 +138,7 @@
                             "English"
                         ],
                         "default": "ja",
-                        "description": "Language for CATIA VBA Sync extension (日本語 or English)"
+                        "description": "Language for Cat5Dev extension (日本語 or English)"
                     },
                     "cat5dev.formatter.indentSize": {
                         "type": "number",
