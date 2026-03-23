@@ -201,10 +201,17 @@ func processOperatorSpacing(code string) string {
 			}
 		}
 
-		// 単項マイナスの判定（- のみ）
-		if ch == '-' && opLen == 1 {
+		// 単項 +/- または指数表記の判定
+		if (ch == '-' || ch == '+') && opLen == 1 {
 			prev := lastNonSpace(out.String())
-			if isUnaryContext(prev) {
+			// 指数表記: 1E+30, 2.5E-10 → スペース挿入しない
+			if prev == 'E' || prev == 'e' {
+				out.WriteByte(ch)
+				i++
+				continue
+			}
+			// 単項マイナスの判定（- のみ）
+			if ch == '-' && isUnaryContext(prev) {
 				out.WriteByte(ch)
 				i++
 				continue

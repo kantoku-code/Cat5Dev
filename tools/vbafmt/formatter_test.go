@@ -363,6 +363,10 @@ func TestNormalizeOperatorSpacing(t *testing.T) {
 		{`x = &H1F`, `x = &H1F`},                      // 16進リテラルの & はスキップ
 		{`x = "a=b" & y`, `x = "a=b" & y`},            // 文字列内は変換しない（& は演算子）
 		{"x=1 ' a=b", "x = 1 ' a=b"},                  // コメント内は変換しない
+		{"1E+30", "1E+30"},                             // 指数表記: + はスペースなし
+		{"1E-10", "1E-10"},                             // 指数表記: - はスペースなし
+		{"x = 2.5E+6 + 1", "x = 2.5E+6 + 1"},         // 指数表記と通常演算子の混在
+		{"dMin1 = 1E+30", "dMin1 = 1E+30"},            // ユーザー報告のケース
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
