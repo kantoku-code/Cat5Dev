@@ -1,94 +1,61 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
-import { spawn } from 'child_process';
+import { VbaServer, httpPost } from './vbaServer';
 
 const FORMATTER_TIMEOUT_MS = 10000;
 
-/** VBA ファイルをフォーマットする (vbafmt バイナリを呼び出す) */
+/** VBA ファイルをフォーマットする (vbafmt HTTP サーバーを呼び出す) */
 export async function formatVbaDocument(
     text: string,
-    context: vscode.ExtensionContext,
+    server: VbaServer,
     outputChannel: vscode.OutputChannel
 ): Promise<string | null> {
-    const binaryName = process.platform === 'win32' ? 'vbafmt.exe' : 'vbafmt';
-    const binaryPath = path.join(context.extensionPath, 'bin', binaryName);
-
-    if (!fs.existsSync(binaryPath)) {
-        outputChannel.appendLine(`[vbafmt] バイナリが見つかりません: ${binaryPath}`);
-        outputChannel.appendLine('[vbafmt] npm run compile:go を実行してバイナリをビルドしてください');
+    const baseUrl = server.getBaseUrl();
+    if (baseUrl === null) {
+        outputChannel.appendLine('[vbafmt] サーバーが起動していません');
         return null;
     }
 
     const config = vscode.workspace.getConfiguration('cat5dev.formatter');
-    const indentSize: number = config.get('indentSize', 4);
-    const capitalizeKeywords: boolean = config.get('capitalizeKeywords', true);
-    const fixIndentation: boolean = config.get('fixIndentation', true);
-    const trimTrailingSpace: boolean = config.get('trimTrailingSpace', true);
-    const ensureContinuationSpace: boolean = config.get('ensureContinuationSpace', true);
-    const indentContinuationLines: boolean = config.get('indentContinuationLines', true);
-    const maxBlankLines: number = config.get('maxBlankLines', 2);
-    const normalizeOperatorSpacing: boolean = config.get('normalizeOperatorSpacing', false);
-    const normalizeCommaSpacing: boolean = config.get('normalizeCommaSpacing', false);
-    const normalizeCommentSpace: boolean = config.get('normalizeCommentSpace', false);
-    const expandTypeSuffixes: boolean = config.get('expandTypeSuffixes', false);
 
-    const args: string[] = [
-        `--indent-size=${indentSize}`,
-        `--capitalize-keywords=${capitalizeKeywords}`,
-        `--fix-indentation=${fixIndentation}`,
-        '--line-endings=CRLF',
-        `--trim-trailing-space=${trimTrailingSpace}`,
-        `--ensure-continuation-space=${ensureContinuationSpace}`,
-        `--indent-continuation-lines=${indentContinuationLines}`,
-        `--max-blank-lines=${maxBlankLines}`,
-        `--normalize-operator-spacing=${normalizeOperatorSpacing}`,
-        `--normalize-comma-spacing=${normalizeCommaSpacing}`,
-        `--normalize-comment-space=${normalizeCommentSpace}`,
-        `--expand-type-suffixes=${expandTypeSuffixes}`,
-    ];
-
-    return new Promise((resolve) => {
-        const proc = spawn(binaryPath, args);
-        let stdout = '';
-        let stderr = '';
-
-        const timer = setTimeout(() => {
-            proc.kill();
-            outputChannel.appendLine('[vbafmt] タイムアウト (10秒)');
-            resolve(null);
-        }, FORMATTER_TIMEOUT_MS);
-
-        proc.stdout.on('data', (data: Buffer) => {
-            stdout += data.toString('utf8');
-        });
-        proc.stderr.on('data', (data: Buffer) => {
-            stderr += data.toString('utf8');
-        });
-        proc.on('close', (code: number) => {
-            clearTimeout(timer);
-            if (code !== 0 || stderr) {
-                outputChannel.appendLine(`[vbafmt] エラー (exit ${code}): ${stderr}`);
-                resolve(null);
-                return;
-            }
-            resolve(stdout);
-        });
-        proc.on('error', (err: Error) => {
-            clearTimeout(timer);
-            outputChannel.appendLine(`[vbafmt] プロセス起動エラー: ${err.message}`);
-            resolve(null);
-        });
-
-        proc.stdin.write(text, 'utf8');
-        proc.stdin.end();
+    const requestBody = JSON.stringify({
+        code: text,
+        options: {
+            indent_size: config.get<number>('indentSize', 4),
+            capitalize_keywords: config.get<boolean>('capitalizeKeywords', true),
+            fix_indentation: config.get<boolean>('fixIndentation', true),
+            line_endings: 'CRLF',
+            trim_trailing_space: config.get<boolean>('trimTrailingSpace', true),
+            ensure_continuation_space: config.get<boolean>('ensureContinuationSpace', true),
+            indent_continuation_lines: config.get<boolean>('indentContinuationLines', true),
+            max_blank_lines: config.get<number>('maxBlankLines', 2),
+            normalize_operator_spacing: config.get<boolean>('normalizeOperatorSpacing', false),
+            normalize_comma_spacing: config.get<boolean>('normalizeCommaSpacing', false),
+            normalize_comment_space: config.get<boolean>('normalizeCommentSpace', false),
+            expand_type_suffixes: config.get<boolean>('expandTypeSuffixes', false),
+            split_colon_statements: false,
+            normalize_then_placement: false,
+            normalize_on_error: false,
+        }
     });
+
+    try {
+        const responseText = await httpPost(`${baseUrl}/format`, requestBody, FORMATTER_TIMEOUT_MS);
+        const response = JSON.parse(responseText) as { result: string; error: string };
+        if (response.error) {
+            outputChannel.appendLine(`[vbafmt] エラー: ${response.error}`);
+            return null;
+        }
+        return response.result;
+    } catch (err) {
+        outputChannel.appendLine(`[vbafmt] リクエストエラー: ${err}`);
+        return null;
+    }
 }
 
 /** DocumentFormattingEditProvider 実装 */
 export class VbaDocumentFormatter implements vscode.DocumentFormattingEditProvider {
     constructor(
-        private readonly context: vscode.ExtensionContext,
+        private readonly server: VbaServer,
         private readonly outputChannel: vscode.OutputChannel
     ) {}
 
@@ -99,7 +66,7 @@ export class VbaDocumentFormatter implements vscode.DocumentFormattingEditProvid
     ): Promise<vscode.TextEdit[]> {
         const formatted = await formatVbaDocument(
             document.getText(),
-            this.context,
+            this.server,
             this.outputChannel
         );
         if (formatted === null) {
@@ -115,7 +82,7 @@ export class VbaDocumentFormatter implements vscode.DocumentFormattingEditProvid
 
 /** formatOnSave ハンドラを登録する */
 export function registerFormatOnSave(
-    context: vscode.ExtensionContext,
+    server: VbaServer,
     outputChannel: vscode.OutputChannel,
     selector: vscode.DocumentSelector
 ): vscode.Disposable {
@@ -125,14 +92,13 @@ export function registerFormatOnSave(
             return;
         }
 
-        // selector に一致するドキュメントのみ
         if (!vscode.languages.match(selector, event.document)) {
             return;
         }
 
         const formatPromise = formatVbaDocument(
             event.document.getText(),
-            context,
+            server,
             outputChannel
         ).then((formatted) => {
             if (formatted === null) {

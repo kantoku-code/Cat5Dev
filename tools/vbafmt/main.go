@@ -8,6 +8,8 @@ import (
 )
 
 func main() {
+	serverMode := flag.Bool("server", false, "HTTPサーバーモードで起動")
+	serverPort := flag.Int("port", 0, "サーバーのポート番号 (0=OS自動割り当て)")
 	indentSize := flag.Int("indent-size", 4, "インデントサイズ")
 	capitalizeKeywords := flag.Bool("capitalize-keywords", true, "キーワードの大文字化")
 	fixIndentation := flag.Bool("fix-indentation", true, "インデント修正")
@@ -28,6 +30,11 @@ func main() {
 	expandTypeSuffixes := flag.Bool("expand-type-suffixes", false, "型接尾辞の展開 (Dim x% → Dim x As Integer)")
 	normalizeOnError := flag.Bool("normalize-on-error", false, "On Error スタイル統一")
 	flag.Parse()
+
+	if *serverMode {
+		startServer(*serverPort)
+		return
+	}
 
 	opts := Options{
 		IndentSize:               *indentSize,
