@@ -63,17 +63,11 @@ func normalizeCommentSpaceLine(line string) string {
 			out.WriteString(seg.text)
 			continue
 		}
-		// 行頭コメント判定: 前のセグメントがすべて空白のみなら挿入しない
-		isLineStart := true
-		for _, prev := range segs[:idx] {
-			if prev.kind == segCode && strings.TrimSpace(prev.text) != "" {
-				isLineStart = false
-				break
-			}
-		}
-		// "'" の直後が非スペースかつインラインコメントならスペースを挿入
+		// 列0コメント判定: セグメントが先頭（インデントなし）ならスペース挿入しない
+		isColumnZero := idx == 0
+		// "'" の直後が非スペースかつ列0でなければスペースを挿入
 		s := seg.text
-		if !isLineStart && len(s) >= 2 && s[0] == '\'' && s[1] != ' ' && s[1] != '\'' {
+		if !isColumnZero && len(s) >= 2 && s[0] == '\'' && s[1] != ' ' && s[1] != '\'' {
 			out.WriteByte('\'')
 			out.WriteByte(' ')
 			out.WriteString(s[1:])
