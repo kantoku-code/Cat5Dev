@@ -6,27 +6,27 @@ import (
 
 // Options はフォーマットオプション
 type Options struct {
-	IndentSize         int
-	CapitalizeKeywords bool
-	FixIndentation     bool
-	LineEndings        string // "CRLF" or "LF"
+	IndentSize         int    `json:"indent_size"`
+	CapitalizeKeywords bool   `json:"capitalize_keywords"`
+	FixIndentation     bool   `json:"fix_indentation"`
+	LineEndings        string `json:"line_endings"` // "CRLF" or "LF"
 
 	// 高優先度
-	NormalizeOperatorSpacing  bool
-	TrimTrailingSpace         bool
-	EnsureContinuationSpace   bool
-	IndentContinuationLines   bool
-	MaxBlankLines             int // 0=無効
+	NormalizeOperatorSpacing  bool `json:"normalize_operator_spacing"`
+	TrimTrailingSpace         bool `json:"trim_trailing_space"`
+	EnsureContinuationSpace   bool `json:"ensure_continuation_space"`
+	IndentContinuationLines   bool `json:"indent_continuation_lines"`
+	MaxBlankLines             int  `json:"max_blank_lines"` // 0=無効
 
 	// 中優先度
-	NormalizeCommaSpacing   bool
-	SplitColonStatements    bool
-	NormalizeThenPlacement  bool
-	NormalizeCommentSpace   bool
+	NormalizeCommaSpacing   bool `json:"normalize_comma_spacing"`
+	SplitColonStatements    bool `json:"split_colon_statements"`
+	NormalizeThenPlacement  bool `json:"normalize_then_placement"`
+	NormalizeCommentSpace   bool `json:"normalize_comment_space"`
 
 	// 低優先度
-	ExpandTypeSuffixes bool
-	NormalizeOnError   bool
+	ExpandTypeSuffixes bool `json:"expand_type_suffixes"`
+	NormalizeOnError   bool `json:"normalize_on_error"`
 }
 
 // DefaultOptions はデフォルトオプション

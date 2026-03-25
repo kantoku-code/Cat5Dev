@@ -331,7 +331,7 @@ func TestNormalizeCommentSpace(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"'comment", "' comment"},
+		{"'comment", "'comment"},    // 列0コメントはスペース挿入しない
 		{"' comment", "' comment"}, // 既にスペースあり
 		{"x = 1 'note", "x = 1 ' note"},
 		{"''special", "''special"}, // '' は変換しない

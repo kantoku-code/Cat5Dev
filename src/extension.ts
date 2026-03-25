@@ -8,6 +8,7 @@ import * as iconv from 'iconv-lite';
 import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
 import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from './formatter';
+import { VbaServer } from './vbaServer';
 import { t, getLanguage, setLanguage } from './i18n';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
@@ -43,8 +44,12 @@ function flushCatScriptErrors(tempDir: string): void {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+    const vbaServer = new VbaServer(context, outputChannel);
+    context.subscriptions.push(vbaServer);
+    vbaServer.start();
+
     let pullCmd = vscode.commands.registerCommand('cat5dev.pullFromCatia', () => {
-        executeCatiaPull(context);
+        executeCatiaPull(context, vbaServer);
     });
 
     let pushCmd = vscode.commands.registerCommand('cat5dev.pushToCatia', () => {
@@ -109,10 +114,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerDocumentSymbolProvider(VBA_SELECTOR, new VbaDocumentSymbolProvider())
     );
     context.subscriptions.push(
-        vscode.languages.registerDocumentFormattingEditProvider(VBA_SELECTOR, new VbaDocumentFormatter(context, outputChannel))
+        vscode.languages.registerDocumentFormattingEditProvider(VBA_SELECTOR, new VbaDocumentFormatter(vbaServer, outputChannel))
     );
     context.subscriptions.push(
-        registerFormatOnSave(context, outputChannel, VBA_SELECTOR)
+        registerFormatOnSave(vbaServer, outputChannel, VBA_SELECTOR)
     );
 
     const treeProvider = new CatiaVbaTreeProvider(context);
@@ -309,7 +314,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_list.catvbs", "CATMain", ag_args
     });
 }
 
-async function executeCatiaPull(context: vscode.ExtensionContext) {
+async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: VbaServer) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage(t('error.noWorkspace'));
@@ -481,7 +486,7 @@ sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
                         const fmtConfig = vscode.workspace.getConfiguration('cat5dev.formatter');
                         let saveContent = normalized;
                         if (fmtConfig.get<boolean>('formatOnPull', false)) {
-                            const formatted = await formatVbaDocument(normalized, context, outputChannel);
+                            const formatted = await formatVbaDocument(normalized, vbaServer, outputChannel);
                             if (formatted !== null) {
                                 saveContent = formatted;
                             }
