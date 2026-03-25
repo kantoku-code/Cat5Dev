@@ -88,6 +88,7 @@ export const messages = {
         // Dialog options
         'dialog.delete': 'はい（削除する）',
         'dialog.keep': 'いいえ（残す）',
+        'dialog.continue': '続行',
 
         // Progress titles
         'progress.pull': 'CATIAからVBAをプルしています ({0})...',
@@ -149,6 +150,7 @@ export const messages = {
         // Dialog options
         'dialog.delete': 'Yes (Delete)',
         'dialog.keep': 'No (Keep)',
+        'dialog.continue': 'Proceed',
 
         // Progress titles
         'progress.pull': 'Pulling VBA from CATIA ({0})...',

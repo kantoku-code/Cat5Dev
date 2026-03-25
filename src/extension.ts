@@ -552,11 +552,16 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     let count = 0;
     let skippedCount = 0;
     const localCompNames: string[] = [];
+    const localContents: Record<string, string> = {};
+    const localCompTypes: Record<string, string> = {};
+    const longNames: string[] = [];
 
     for (const file of files) {
         if (file.endsWith('.bas_utf') || file.endsWith('.cls_utf') || file.endsWith('.frm_utf')) {
             const compName = file.substring(0, file.lastIndexOf('.')); // Strip extension
             localCompNames.push(compName);
+
+            if (compName.length > 31) { longNames.push(compName); }
 
             let compType = '1';
             if (file.endsWith('.cls_utf')) compType = '2';
@@ -570,11 +575,26 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
             // Normalize for CATIA: Remove trailing newlines to prevent multiplication via AddFromString
             const trimmed = utf8String.trimEnd();
 
+            localContents[compName] = trimmed;
+            localCompTypes[compName] = compType;
+
             const shiftJisBuffer = iconv.encode(trimmed, 'shift_jis');
 
             const tempFilePath = path.join(tempDir, `${compName}_TYPE_${compType}.txt`);
             fs.writeFileSync(tempFilePath, shiftJisBuffer);
             count++;
+        }
+    }
+
+    // B. 31文字超モジュール名の警告
+    if (longNames.length > 0) {
+        const longResp = await vscode.window.showWarningMessage(
+            t('warning.longModuleNames', longNames.join(', ')),
+            { modal: true },
+            t('dialog.continue')
+        );
+        if (longResp !== t('dialog.continue')) {
+            return;
         }
     }
 
@@ -593,8 +613,8 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     const checkCatScript = `
 Sub CATMain()
     On Error Resume Next
-    Dim ag_fso, ag_apc, ag_vbe, ag_i, ag_j, ag_comp, ag_outStr, ag_devProj, ag_tmpProj, ag_px, ag_cx, ag_cName
-    Dim ag_errPath, ag_ef
+    Dim ag_fso, ag_apc, ag_vbe, ag_i, ag_j, ag_comp, ag_outStr, ag_codeStr, ag_devProj, ag_tmpProj, ag_px, ag_cx, ag_cName
+    Dim ag_errPath, ag_ef, ag_lineCount
     Set ag_fso = CreateObject("Scripting.FileSystemObject")
     ag_errPath = "${tempDir}\\c5d_err.log"
 
@@ -602,7 +622,12 @@ Sub CATMain()
     If ag_apc Is Nothing Then Set ag_apc = CreateObject("MSAPC.Apc")
     Set ag_vbe = ag_apc.VBE
 
-    If Err.Number <> 0 Then Exit Sub
+    If Err.Number <> 0 Then
+        Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
+        ag_ef.WriteLine "[Check] VBE access failed. Err=" & Err.Number & ": " & Err.Description
+        ag_ef.Close
+        Exit Sub
+    End If
 
     Set ag_devProj = Nothing
     For ag_i = 1 To ag_vbe.VBProjects.Count
@@ -611,7 +636,12 @@ Sub CATMain()
             Exit For
         End If
     Next
-    If ag_devProj Is Nothing Then Exit Sub
+    If ag_devProj Is Nothing Then
+        Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
+        ag_ef.WriteLine "[Check] Project '${targetProject}' not found in CATIA. Total VBProjects: " & ag_vbe.VBProjects.Count
+        ag_ef.Close
+        Exit Sub
+    End If
 
     Set ag_outStr = CreateObject("ADODB.Stream")
     ag_outStr.Type = 2
@@ -622,6 +652,16 @@ Sub CATMain()
         Set ag_comp = ag_devProj.VBComponents.Item(ag_j)
         If ag_comp.Type = 1 Or ag_comp.Type = 2 Or ag_comp.Type = 3 Then
             ag_outStr.WriteText ag_comp.Name & vbCrLf
+            ag_lineCount = ag_comp.CodeModule.CountOfLines
+            If ag_lineCount > 0 Then
+                Set ag_codeStr = CreateObject("ADODB.Stream")
+                ag_codeStr.Type = 2
+                ag_codeStr.Charset = "shift_jis"
+                ag_codeStr.Open
+                ag_codeStr.WriteText ag_comp.CodeModule.Lines(1, ag_lineCount)
+                ag_codeStr.SaveToFile "${tempDir}\\" & ag_comp.Name & "_REMOTE.txt", 2
+                ag_codeStr.Close
+            End If
         End If
     Next
 
@@ -687,6 +727,29 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
         const text = iconv.decode(buffer, 'shift_jis');
         remoteCompNames = text.split('\n').map(p => p.replace(/\r/g, '').trim()).filter(p => p.length > 0);
         fs.unlinkSync(remoteCompsFile);
+    }
+
+    // C4. リモート内容と一致するモジュールをスキップ
+    for (const compName of localCompNames) {
+        const remoteFilePath = path.join(tempDir, `${compName}_REMOTE.txt`);
+        if (fs.existsSync(remoteFilePath)) {
+            const remoteBuf = fs.readFileSync(remoteFilePath);
+            const remoteText = iconv.decode(remoteBuf, 'shift_jis').trimEnd();
+            fs.unlinkSync(remoteFilePath);
+
+            if (localContents[compName] === remoteText) {
+                const typeFilePath = path.join(tempDir, `${compName}_TYPE_${localCompTypes[compName]}.txt`);
+                if (fs.existsSync(typeFilePath)) {
+                    fs.unlinkSync(typeFilePath);
+                    count--;
+                    skippedCount++;
+                }
+            }
+        }
+    }
+    // 残留 _REMOTE.txt を削除
+    for (const f of fs.readdirSync(tempDir)) {
+        if (f.endsWith('_REMOTE.txt')) { fs.unlinkSync(path.join(tempDir, f)); }
     }
 
     // 3. Prompt user if there are files in CATIA missing locally
