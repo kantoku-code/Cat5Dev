@@ -314,7 +314,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_list.catvbs", "CATMain", ag_args
     });
 }
 
-async function executeCatiaPull(context: vscode.ExtensionContext) {
+async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: VbaServer) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage(t('error.noWorkspace'));
