@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import * as crypto from 'crypto';
 import { exec } from 'child_process';
 import * as iconv from 'iconv-lite';
 import { CatiaVbaTreeProvider } from './treeView';
@@ -15,21 +14,6 @@ import { tomlTemplate } from './lintConfig';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
 
-function ensureGitignore(rootPath: string): void {
-    const gitignorePath = path.join(rootPath, '.gitignore');
-    const cacheEntry = '.catia-vba-push-cache.json';
-
-    if (!fs.existsSync(gitignorePath)) {
-        fs.writeFileSync(gitignorePath, `${cacheEntry}\n`, 'utf-8');
-        return;
-    }
-
-    const content = fs.readFileSync(gitignorePath, 'utf-8');
-    if (!content.includes(cacheEntry)) {
-        const sep = content.endsWith('\n') ? '' : '\n';
-        fs.appendFileSync(gitignorePath, `${sep}${cacheEntry}\n`, 'utf-8');
-    }
-}
 
 /** CATScriptのエラーログファイルを読み込み、OutputChannelに出力する */
 function flushCatScriptErrors(tempDir: string): void {
@@ -181,7 +165,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         fs.writeFileSync(tomlPath, tomlTemplate(), 'utf-8');
-        ensureGitignore(rootPath);
 
         const doc = await vscode.workspace.openTextDocument(tomlPath);
         await vscode.window.showTextDocument(doc);
@@ -217,8 +200,6 @@ async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?
         }
         rootPath = workspaceFolders[0].uri.fsPath;
     }
-
-    ensureGitignore(rootPath);
 
     const tempDir = path.join(os.tmpdir(), 'cat5dev');
     if (fs.existsSync(tempDir)) {
@@ -356,8 +337,6 @@ async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: Vba
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
-
-    ensureGitignore(rootPath);
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -552,8 +531,6 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
 
-    ensureGitignore(rootPath);
-
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
         vscode.window.showInformationMessage(t('error.noModulesDir'));
@@ -576,18 +553,6 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     let skippedCount = 0;
     const localCompNames: string[] = [];
 
-    // Load push cache (stores SHA-256 hash of last successfully pushed content per module, keyed by project)
-    const cachePath = path.join(rootPath, '.catia-vba-push-cache.json');
-    let allProjectsCache: Record<string, Record<string, string>> = {};
-    if (fs.existsSync(cachePath)) {
-        try {
-            allProjectsCache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-        } catch (e) { allProjectsCache = {}; }
-    }
-    let pushCache: Record<string, string> = allProjectsCache[targetProject] ?? {};
-    // Track hashes of modules being pushed this session (for cache update on success)
-    const pendingCacheUpdates: Record<string, string> = {};
-
     for (const file of files) {
         if (file.endsWith('.bas_utf') || file.endsWith('.cls_utf') || file.endsWith('.frm_utf')) {
             const compName = file.substring(0, file.lastIndexOf('.')); // Strip extension
@@ -604,16 +569,6 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
 
             // Normalize for CATIA: Remove trailing newlines to prevent multiplication via AddFromString
             const trimmed = utf8String.trimEnd();
-
-            // Compute hash of normalized content to detect changes
-            const hash = crypto.createHash('sha256').update(trimmed, 'utf-8').digest('hex');
-            pendingCacheUpdates[compName] = hash;
-
-            // Skip modules whose content hasn't changed since last successful push
-            if (pushCache[compName] === hash) {
-                skippedCount++;
-                continue;
-            }
 
             const shiftJisBuffer = iconv.encode(trimmed, 'shift_jis');
 
@@ -961,27 +916,8 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_push.catvbs", "CATMain", ag_args
                     vscode.window.showErrorMessage(t('error.pushFailed'));
                     return reject();
                 }
-                // Update push cache with successfully pushed modules (scoped to targetProject)
-                for (const [modName, hash] of Object.entries(pendingCacheUpdates)) {
-                    pushCache[modName] = hash;
-                }
-                // Remove deleted modules from cache
-                if (performDelete) {
-                    for (const delName of toDelete) {
-                        delete pushCache[delName];
-                    }
-                }
-                allProjectsCache[targetProject] = pushCache;
-                try {
-                    fs.writeFileSync(cachePath, JSON.stringify(allProjectsCache, null, 2), 'utf-8');
-                    outputChannel.appendLine(`[Push Cache] Saved to: ${cachePath}`);
-                } catch (e) {
-                    outputChannel.appendLine(`[Push Cache] Failed to save cache: ${e}`);
-                }
-
-                const skipMsg = skippedCount > 0 ? `（変更なしスキップ: ${skippedCount} 個）` : '';
                 const deleteMsg = performDelete ? '（削除同期を含む）' : '';
-                vscode.window.showInformationMessage(t('info.pushSuccess', String(count), skipMsg, deleteMsg));
+                vscode.window.showInformationMessage(t('info.pushSuccess', String(count), '', deleteMsg));
                 vscode.commands.executeCommand('cat5dev.refreshTree');
                 resolve();
             });

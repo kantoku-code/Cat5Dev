@@ -1,6 +1,6 @@
 {
     "name": "cat5dev",
-    "displayName": "Cat5Dev",
+    "displayName": "CATIA V5 VBA",
     "description": "We provide support for CATIA V5 VBA macro development",
     "version": "0.3.0",
     "activationEvents": [
@@ -127,12 +127,12 @@
             },
             {
                 "command": "cat5dev.init",
-                "title": "Cat5Dev: Initialize Project (cat5dev.toml)"
+                "title": "CATIA: Initialize Project (cat5dev.toml)"
             }
         ],
         "configuration": [
             {
-                "title": "Cat5Dev",
+                "title": "CATIA V5 VBA",
                 "properties": {
                     "cat5dev.language": {
                         "type": "string",

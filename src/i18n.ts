@@ -83,6 +83,7 @@ export const messages = {
         'warning.deleteModules': '以下のモジュールはCATIA側に存在しますが、VSCode側には存在しません:\n{0}\n\nこれらをCATIAから削除して完全に同期しますか？',
         'warning.newUserForms': '以下のUserFormはCATIA側に存在しないため新規作成できません。CATIA側で空の同名UserFormを事前に作成してください。これらのファイルはスキップされます:\n{0}',
         'warning.noMoreFiles': 'プッシュ対象のファイルがなくなったため、処理を終了します。',
+        'warning.longModuleNames': '以下のモジュール名は31文字を超えています（VBAエディタの上限）:\n{0}\n\nこのままプッシュを続行しますか？',
 
         // Dialog options
         'dialog.delete': 'はい（削除する）',
@@ -143,6 +144,7 @@ export const messages = {
         'warning.deleteModules': 'The following modules exist in CATIA but not in VSCode:\n{0}\n\nDelete them from CATIA to fully sync?',
         'warning.newUserForms': 'The following UserForms do not exist in CATIA and cannot be created. Create empty UserForms with these names in CATIA first. These files will be skipped:\n{0}',
         'warning.noMoreFiles': 'No more files to push. Finishing.',
+        'warning.longModuleNames': 'The following module names exceed 31 characters (VBA editor limit):\n{0}\n\nProceed with push anyway?',
 
         // Dialog options
         'dialog.delete': 'Yes (Delete)',
