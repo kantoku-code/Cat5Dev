@@ -10,6 +10,8 @@ import { VbaDocumentSymbolProvider } from './symbolProvider';
 import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from './formatter';
 import { VbaServer } from './vbaServer';
 import { t, getLanguage, setLanguage } from './i18n';
+import { registerLinter } from './linter';
+import { tomlTemplate } from './lintConfig';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
 
@@ -153,7 +155,40 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(treeView);
 
-    context.subscriptions.push(pullCmd, pushCmd, selectCmd, switchLanguageCmd, renameFileCmd, deleteFileCmd, copyPathCmd);
+    // Linter 登録
+    const linterDisposables = registerLinter(vbaServer, outputChannel, VBA_SELECTOR);
+    context.subscriptions.push(...linterDisposables);
+
+    // cat5dev.init コマンド
+    const initCmd = vscode.commands.registerCommand('cat5dev.init', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            vscode.window.showErrorMessage(t('error.noWorkspace'));
+            return;
+        }
+        const rootPath = workspaceFolders[0].uri.fsPath;
+        const tomlPath = path.join(rootPath, 'cat5dev.toml');
+
+        if (fs.existsSync(tomlPath)) {
+            const answer = await vscode.window.showWarningMessage(
+                'cat5dev.toml は既に存在します。上書きしますか？',
+                { modal: true },
+                '上書き'
+            );
+            if (answer !== '上書き') {
+                return;
+            }
+        }
+
+        fs.writeFileSync(tomlPath, tomlTemplate(), 'utf-8');
+        ensureGitignore(rootPath);
+
+        const doc = await vscode.workspace.openTextDocument(tomlPath);
+        await vscode.window.showTextDocument(doc);
+        vscode.window.showInformationMessage('cat5dev.toml を作成しました');
+    });
+
+    context.subscriptions.push(pullCmd, pushCmd, selectCmd, switchLanguageCmd, renameFileCmd, deleteFileCmd, copyPathCmd, initCmd);
 }
 
 export function deactivate() { }

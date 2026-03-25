@@ -23,6 +23,7 @@ func startServer(port int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/format", handleFormat)
+	mux.HandleFunc("/lint", handleLint)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -76,6 +77,54 @@ func handleFormat(w http.ResponseWriter, r *http.Request) {
 		resp.Error = fmtErr
 	}
 	json.NewEncoder(w).Encode(resp) //nolint
+}
+
+type lintRequest struct {
+	Code    string      `json:"code"`
+	Options LintOptions `json:"options"`
+}
+
+type lintResponse struct {
+	Diagnostics []Diagnostic `json:"diagnostics"`
+	Error       string       `json:"error"`
+}
+
+func handleLint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req lintRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(lintResponse{Error: "invalid JSON: " + err.Error()}) //nolint
+		return
+	}
+
+	diags, lintErr := safeLint(req.Code, req.Options)
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := lintResponse{Diagnostics: diags}
+	if diags == nil {
+		resp.Diagnostics = []Diagnostic{}
+	}
+	if lintErr != "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		resp.Error = lintErr
+	}
+	json.NewEncoder(w).Encode(resp) //nolint
+}
+
+// safeLint はパニックを recover して文字列エラーとして返す
+func safeLint(code string, opts LintOptions) (diags []Diagnostic, errMsg string) {
+	defer func() {
+		if r := recover(); r != nil {
+			errMsg = fmt.Sprintf("lint panic: %v", r)
+		}
+	}()
+	return Lint(code, opts), ""
 }
 
 // safeFormat はパニックを recover して文字列エラーとして返す

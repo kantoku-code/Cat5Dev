@@ -124,6 +124,10 @@
             {
                 "command": "cat5dev.copyPath",
                 "title": "Copy Path"
+            },
+            {
+                "command": "cat5dev.init",
+                "title": "Cat5Dev: Initialize Project (cat5dev.toml)"
             }
         ],
         "configuration": [
