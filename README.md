@@ -1,5 +1,7 @@
 # Cat5Dev
 
+[🇨🇳 中文](docs/README.zh-CN.md)
+
 Cat5Dev is a VSCode extension that syncs VBA modules between VSCode and CATIA V5.
 
 ---
