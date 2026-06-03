@@ -226,6 +226,10 @@ async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?
         rootPath = workspaceFolders[0].uri.fsPath;
     }
 
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+
     const tempDir = path.join(os.tmpdir(), 'cat5dev');
     if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -317,7 +321,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_list.catvbs", "CATMain", ag_args
             }
 
             const buffer = fs.readFileSync(outTxtPath);
-            const text = iconv.decode(buffer, 'shift_jis');
+            const text = iconv.decode(buffer, encoding);
             const projects = text.split('\n').map(p => p.replace(/\r/g, '').trim()).filter(p => p.length > 0);
 
             fs.unlinkSync(outTxtPath);
@@ -347,6 +351,10 @@ async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: Vba
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    outputChannel.appendLine(`[Pull] Start: language=${activeLang}, encoding=${encoding}`);
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -395,7 +403,7 @@ Sub CATMain()
         ' Write error log
         Set ag_outStr = CreateObject("ADODB.Stream")
         ag_outStr.Type = 2
-        ag_outStr.Charset = "shift_jis"
+        ag_outStr.Charset = "${encoding}"
         ag_outStr.Open
         ag_outStr.WriteText "ERROR: VBE access failed"
         ag_outStr.SaveToFile "${tempDir}\\_error.log", 2
@@ -423,7 +431,7 @@ Sub CATMain()
             ag_outPath = "${tempDir}\\" & ag_comp.Name & "_TYPE_" & ag_comp.Type & ".txt"
             Set ag_outStr = CreateObject("ADODB.Stream")
             ag_outStr.Type = 2
-            ag_outStr.Charset = "shift_jis"
+            ag_outStr.Charset = "${encoding}"
             ag_outStr.Open
             ag_outStr.WriteText ag_codeMod.Lines(1, ag_lineCount)
             ag_outStr.SaveToFile ag_outPath, 2
@@ -501,7 +509,7 @@ sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
                         else if (compType === '3') ext = '.frm_utf'; // Userform
 
                         const shiftJisBuffer = fs.readFileSync(path.join(tempDir, file));
-                        const utf8String = iconv.decode(shiftJisBuffer, 'shift_jis');
+                        const utf8String = iconv.decode(shiftJisBuffer, encoding);
 
                         // Normalize newlines: Remove all trailing newlines/spaces and ensure exactly one LF
                         const normalized = utf8String.replace(/\r/g, '').trimEnd() + '\n';
@@ -540,6 +548,10 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    outputChannel.appendLine(`[Push] Start: language=${activeLang}, encoding=${encoding}`);
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -588,7 +600,7 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
             localContents[compName] = trimmed;
             localCompTypes[compName] = compType;
 
-            const shiftJisBuffer = iconv.encode(trimmed, 'shift_jis');
+            const shiftJisBuffer = iconv.encode(trimmed, encoding);
 
             const tempFilePath = path.join(tempDir, `${compName}_TYPE_${compType}.txt`);
             fs.writeFileSync(tempFilePath, shiftJisBuffer);
@@ -661,7 +673,7 @@ Sub CATMain()
             If ag_lineCount > 0 Then
                 Set ag_codeStr = CreateObject("ADODB.Stream")
                 ag_codeStr.Type = 2
-                ag_codeStr.Charset = "shift_jis"
+                ag_codeStr.Charset = "${encoding}"
                 ag_codeStr.Open
                 ag_codeStr.WriteText ag_comp.CodeModule.Lines(1, ag_lineCount)
                 ag_codeStr.SaveToFile "${tempDir}\\" & ag_comp.Name & "_REMOTE.txt", 2
@@ -729,7 +741,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
     let remoteCompNames: string[] = [];
     if (fs.existsSync(remoteCompsFile)) {
         const buffer = fs.readFileSync(remoteCompsFile);
-        const text = iconv.decode(buffer, 'shift_jis');
+        const text = iconv.decode(buffer, encoding);
         remoteCompNames = text.split('\n').map(p => p.replace(/\r/g, '').trim()).filter(p => p.length > 0);
         fs.unlinkSync(remoteCompsFile);
     }
@@ -739,7 +751,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
         const remoteFilePath = path.join(tempDir, `${compName}_REMOTE.txt`);
         if (fs.existsSync(remoteFilePath)) {
             const remoteBuf = fs.readFileSync(remoteFilePath);
-            const remoteText = iconv.decode(remoteBuf, 'shift_jis').trimEnd();
+            const remoteText = iconv.decode(remoteBuf, encoding).trimEnd();
             fs.unlinkSync(remoteFilePath);
 
             if (localContents[compName] === remoteText) {
@@ -779,7 +791,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
         }
         if (resp === t('dialog.delete')) {
             performDelete = true;
-            const delListShiftJis = iconv.encode(toDelete.join('\r\n'), 'shift_jis');
+            const delListShiftJis = iconv.encode(toDelete.join('\r\n'), encoding);
             fs.writeFileSync(path.join(tempDir, 'delete_list.txt'), delListShiftJis);
         }
     }
@@ -886,7 +898,7 @@ Sub CATMain()
     If fso.FileExists("${tempDir}\\delete_list.txt") Then
         Set inStr = CreateObject("ADODB.Stream")
         inStr.Type = 2
-        inStr.Charset = "shift_jis"
+        inStr.Charset = "${encoding}"
         inStr.Open
         inStr.LoadFromFile "${tempDir}\\delete_list.txt"
 
@@ -976,7 +988,7 @@ Sub CATMain()
                     Else
                         Set inStr = CreateObject("ADODB.Stream")
                         inStr.Type = 2
-                        inStr.Charset = "shift_jis"
+                        inStr.Charset = "${encoding}"
                         inStr.Open
                         inStr.LoadFromFile fp
                         newContent = inStr.ReadText

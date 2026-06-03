@@ -69,7 +69,7 @@ Sub CATMain()
     If fso.FileExists("{{TEMP_DIR}}\delete_list.txt") Then
         Set inStr = CreateObject("ADODB.Stream")
         inStr.Type = 2
-        inStr.Charset = "shift_jis"
+        inStr.Charset = "{{ENCODING}}"
         inStr.Open
         inStr.LoadFromFile "{{TEMP_DIR}}\delete_list.txt"
 
@@ -159,7 +159,7 @@ Sub CATMain()
                     Else
                         Set inStr = CreateObject("ADODB.Stream")
                         inStr.Type = 2
-                        inStr.Charset = "shift_jis"
+                        inStr.Charset = "{{ENCODING}}"
                         inStr.Open
                         inStr.LoadFromFile fp
                         newContent = inStr.ReadText
