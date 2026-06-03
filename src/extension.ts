@@ -8,7 +8,7 @@ import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
 import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from './formatter';
 import { VbaServer } from './vbaServer';
-import { t, getLanguage, setLanguage } from './i18n';
+import { t, getLanguage, setLanguage, Language, messages } from './i18n';
 import { registerLinter } from './linter';
 import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { startLspClient } from './lspClient';
@@ -54,14 +54,17 @@ export function activate(context: vscode.ExtensionContext) {
         const currentLang = getLanguage();
         const selected = await vscode.window.showQuickPick(
             [
-                { label: t('language.japanese'), description: t('language.description'), value: 'ja' },
-                { label: t('language.english'), description: t('language.description'), value: 'en' }
+                { label: t('language.japanese'), description: currentLang === 'ja' ? t('language.description') : '', value: 'ja' },
+                { label: t('language.english'), description: currentLang === 'en' ? t('language.description') : '', value: 'en' },
+                { label: t('language.chinese'), description: currentLang === 'zh' ? t('language.description') : '', value: 'zh' }
             ],
             { placeHolder: t('language.title') }
         );
         if (selected && selected.value !== currentLang) {
-            setLanguage(selected.value as 'ja' | 'en');
-            vscode.window.showInformationMessage(t('language.reload'));
+            const nextLang = selected.value as Language;
+            await setLanguage(nextLang);
+            const msg = (messages[nextLang] as any)['language.reload'] || messages.ja['language.reload'];
+            vscode.window.showInformationMessage(msg);
         }
     });
 
@@ -1097,7 +1100,7 @@ WScript.Echo "VBS: End"
                 if (hasErrors) {
                     outputChannel.show(true);
                 }
-                const deleteMsg = performDelete ? '（削除同期を含む）' : '';
+                const deleteMsg = performDelete ? t('push.deleteSync') : '';
                 vscode.window.showInformationMessage(t('info.pushSuccess', String(count), '', deleteMsg));
                 vscode.commands.executeCommand('cat5dev.refreshTree');
                 resolve();
