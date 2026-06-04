@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { VbaServer, httpPost } from './vbaServer';
 import { readLintOptions, LintOptions } from './lintConfig';
+import { t } from './i18n';
 
 const LINT_TIMEOUT_MS = 10000;
 const DEBOUNCE_MS = 500;
@@ -37,12 +38,12 @@ async function callLint(
         const raw = await httpPost(`${baseUrl}/lint`, body, LINT_TIMEOUT_MS);
         const resp = JSON.parse(raw) as LintResponse;
         if (resp.error) {
-            outputChannel.appendLine(`[vba-lint] エラー: ${resp.error}`);
+            outputChannel.appendLine(t('log.vbalint.error', resp.error));
             return null;
         }
         return resp.diagnostics ?? [];
     } catch (err) {
-        outputChannel.appendLine(`[vba-lint] リクエストエラー: ${err}`);
+        outputChannel.appendLine(t('log.vbalint.requestError', String(err)));
         return null;
     }
 }

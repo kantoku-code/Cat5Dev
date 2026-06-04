@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { VbaServer, httpPost } from './vbaServer';
 import { readFormatterOptions } from './lintConfig';
+import { t } from './i18n';
 
 const FORMATTER_TIMEOUT_MS = 10000;
 
@@ -13,7 +14,7 @@ export async function formatVbaDocument(
 ): Promise<string | null> {
     const baseUrl = server.getBaseUrl();
     if (baseUrl === null) {
-        outputChannel.appendLine('[vbafmt] サーバーが起動していません');
+        outputChannel.appendLine(t('log.vbafmt.serverNotRunning'));
         return null;
     }
 
@@ -47,12 +48,12 @@ export async function formatVbaDocument(
         const responseText = await httpPost(`${baseUrl}/format`, requestBody, FORMATTER_TIMEOUT_MS);
         const response = JSON.parse(responseText) as { result: string; error: string };
         if (response.error) {
-            outputChannel.appendLine(`[vbafmt] エラー: ${response.error}`);
+            outputChannel.appendLine(t('log.vbafmt.error', response.error));
             return null;
         }
         return response.result;
     } catch (err) {
-        outputChannel.appendLine(`[vbafmt] リクエストエラー: ${err}`);
+        outputChannel.appendLine(t('log.vbafmt.requestError', String(err)));
         return null;
     }
 }

@@ -22,7 +22,7 @@ function flushCatScriptErrors(tempDir: string): boolean {
     let hasErrors = false;
     try {
         const content = fs.readFileSync(errLogPath, 'utf-8').trim();
-        outputChannel.appendLine(`[CATScript Log]\n${content || '(空)'}`);
+        outputChannel.appendLine(`[CATScript Log]\n${content || t('log.catscript.empty')}`);
         outputChannel.show(true);
         hasErrors = /\[Push\.(Fatal|Add|DeleteLines|AddFromString)\]/.test(content);
     } catch {
@@ -354,7 +354,7 @@ async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: Vba
     const activeLang = getLanguage();
     const { encoding: configEncoding } = readProjectSettings(rootPath);
     const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
-    outputChannel.appendLine(`[Pull] Start: language=${activeLang}, encoding=${encoding}`);
+    outputChannel.appendLine(t('log.pull.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -551,7 +551,7 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     const activeLang = getLanguage();
     const { encoding: configEncoding } = readProjectSettings(rootPath);
     const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
-    outputChannel.appendLine(`[Push] Start: language=${activeLang}, encoding=${encoding}`);
+    outputChannel.appendLine(t('log.push.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -1040,10 +1040,10 @@ End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
 
-    outputChannel.appendLine(`[Push] tempDir: ${tempDir}`);
-    outputChannel.appendLine(`[Push] 対象プロジェクト: ${targetProject}`);
-    outputChannel.appendLine(`[Push] 転送ファイル数: ${count}`);
-    outputChannel.appendLine(`[Push] CATScript生成: ${catScriptPath}`);
+    outputChannel.appendLine(t('log.push.tempDir', tempDir));
+    outputChannel.appendLine(t('log.push.targetProject', targetProject));
+    outputChannel.appendLine(t('log.push.fileCount', String(count)));
+    outputChannel.appendLine(t('log.push.catscriptGenerated', catScriptPath));
     outputChannel.show(true);
 
     const doneFlagPath = path.join(tempDir, 'c5d_push_done.txt');
@@ -1082,8 +1082,8 @@ If fso2.FileExists(doneFile) Then fso2.DeleteFile doneFile
 WScript.Echo "VBS: End"
 `;
     fs.writeFileSync(pushVbsPath, pushVbsScript, 'utf-8');
-    outputChannel.appendLine(`[Push] VBS生成: ${pushVbsPath}`);
-    outputChannel.appendLine(`[Push] cscript実行開始...`);
+    outputChannel.appendLine(t('log.push.vbsGenerated', pushVbsPath));
+    outputChannel.appendLine(t('log.push.cscriptStart'));
     outputChannel.show(true);
 
     vscode.window.withProgress({
@@ -1093,7 +1093,7 @@ WScript.Echo "VBS: End"
     }, async (progress) => {
         return new Promise<void>((resolve, reject) => {
             exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${pushVbsPath}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-                outputChannel.appendLine(`[Push] cscript終了 error=${error?.code ?? 'null'} stdout="${stdout.trim()}" stderr="${stderr.trim()}"`);
+                outputChannel.appendLine(t('log.push.cscriptEnd', String(error?.code ?? 'null'), stdout.trim(), stderr.trim()));
                 outputChannel.show(true);
                 if (fs.existsSync(pushVbsPath)) fs.unlinkSync(pushVbsPath);
                 if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
