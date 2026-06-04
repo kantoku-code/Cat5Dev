@@ -1,5 +1,7 @@
 # Cat5Dev
 
+[🇨🇳 中文](docs/README.zh-CN.md)
+
 Cat5Dev is a VSCode extension that syncs VBA modules between VSCode and CATIA V5.
 
 ---
@@ -43,7 +45,7 @@ Quick-access buttons are available in the panel title bar:
 | 🌐 | Switch language |
 
 ### Multi-Language Support
-The extension supports both **Japanese (日本語)** and **English**.
+The extension supports **Japanese (日本語)**, **English**, and **Chinese (简体中文)**.
 - Click the 🌐 button in the panel title bar to switch languages
 - The language preference is saved in `cat5dev.toml` under the `[project]` section
 - All UI messages, TreeView labels, and tooltips will be translated
@@ -213,7 +215,8 @@ Before using Cat5Dev for the first time, **backup your CATIA V5 settings folder*
 
 > Settings are stored in `cat5dev.toml` under the `[project]` section:
 > - `target_project` — The name of the target CATIA VBA project
-> - `language` — `"ja"` for Japanese, `"en"` for English (default: `"ja"`)
+> - `language` — `"ja"` for Japanese, `"en"` for English, `"zh"` for Chinese (default: `"ja"`)
+> - `encoding` — The character encoding of VBA code transfer (e.g., `"gbk"`, `"shift_jis"`, `"utf-8"`). Defaults to `"gbk"` for Chinese (`"zh"`), `"shift_jis"` for Japanese (`"ja"`), and `"utf-8"` for English (`"en"`).
 
 ---
 
@@ -265,13 +268,14 @@ Well… that’s a different question entirely.
 
 ---
 
-## Notes on Encoding (Please Help)
+## Notes on Encoding
+VBA files are synchronized between VSCode (UTF-8) and CATIA V5 (native ANSI, e.g., Shift-JIS or GBK). 
+By default, Cat5Dev automatically detects and sets the transfer encoding based on the configured language:
+- `"gbk"` for Chinese (`"zh"`)
+- `"shift_jis"` for Japanese (`"ja"`)
+- `"utf-8"` for English (`"en"`)
 
-I have only ever used the Japanese version of CATIA V5, so I am familiar only with files exported from the VBA Editor being saved in Shift‑JIS. Because this was quite inconvenient, Cat5Dev automatically converts the encoding to UTF‑8 during the Pull/Push process.
-
-If you encounter garbled characters when using this extension in your environment, you may need to adjust the encoding settings. Unfortunately, I have no way to verify its behavior outside of a Japanese environment.
-
-If you run into any issues, please feel free to let me know.
+You can customize this by setting the `encoding` property under the `[project]` section in `cat5dev.toml` (e.g., `encoding = "gb2312"` or `encoding = "shift_jis"`). If you run into any issues, please feel free to let me know.
 
 ---
 

@@ -8,7 +8,7 @@ import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
 import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from './formatter';
 import { VbaServer } from './vbaServer';
-import { t, getLanguage, setLanguage } from './i18n';
+import { t, getLanguage, setLanguage, Language, messages } from './i18n';
 import { registerLinter } from './linter';
 import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { startLspClient } from './lspClient';
@@ -22,7 +22,7 @@ function flushCatScriptErrors(tempDir: string): boolean {
     let hasErrors = false;
     try {
         const content = fs.readFileSync(errLogPath, 'utf-8').trim();
-        outputChannel.appendLine(`[CATScript Log]\n${content || '(空)'}`);
+        outputChannel.appendLine(`[CATScript Log]\n${content || t('log.catscript.empty')}`);
         outputChannel.show(true);
         hasErrors = /\[Push\.(Fatal|Add|DeleteLines|AddFromString)\]/.test(content);
     } catch {
@@ -54,14 +54,17 @@ export function activate(context: vscode.ExtensionContext) {
         const currentLang = getLanguage();
         const selected = await vscode.window.showQuickPick(
             [
-                { label: t('language.japanese'), description: t('language.description'), value: 'ja' },
-                { label: t('language.english'), description: t('language.description'), value: 'en' }
+                { label: t('language.japanese'), description: currentLang === 'ja' ? t('language.description') : '', value: 'ja' },
+                { label: t('language.english'), description: currentLang === 'en' ? t('language.description') : '', value: 'en' },
+                { label: t('language.chinese'), description: currentLang === 'zh' ? t('language.description') : '', value: 'zh' }
             ],
             { placeHolder: t('language.title') }
         );
         if (selected && selected.value !== currentLang) {
-            setLanguage(selected.value as 'ja' | 'en');
-            vscode.window.showInformationMessage(t('language.reload'));
+            const nextLang = selected.value as Language;
+            await setLanguage(nextLang);
+            const msg = (messages[nextLang] as any)['language.reload'] || messages.ja['language.reload'];
+            vscode.window.showInformationMessage(msg);
         }
     });
 
@@ -223,6 +226,10 @@ async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?
         rootPath = workspaceFolders[0].uri.fsPath;
     }
 
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+
     const tempDir = path.join(os.tmpdir(), 'cat5dev');
     if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -314,7 +321,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_list.catvbs", "CATMain", ag_args
             }
 
             const buffer = fs.readFileSync(outTxtPath);
-            const text = iconv.decode(buffer, 'shift_jis');
+            const text = iconv.decode(buffer, encoding);
             const projects = text.split('\n').map(p => p.replace(/\r/g, '').trim()).filter(p => p.length > 0);
 
             fs.unlinkSync(outTxtPath);
@@ -344,6 +351,10 @@ async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: Vba
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    outputChannel.appendLine(t('log.pull.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -392,7 +403,7 @@ Sub CATMain()
         ' Write error log
         Set ag_outStr = CreateObject("ADODB.Stream")
         ag_outStr.Type = 2
-        ag_outStr.Charset = "shift_jis"
+        ag_outStr.Charset = "${encoding}"
         ag_outStr.Open
         ag_outStr.WriteText "ERROR: VBE access failed"
         ag_outStr.SaveToFile "${tempDir}\\_error.log", 2
@@ -420,7 +431,7 @@ Sub CATMain()
             ag_outPath = "${tempDir}\\" & ag_comp.Name & "_TYPE_" & ag_comp.Type & ".txt"
             Set ag_outStr = CreateObject("ADODB.Stream")
             ag_outStr.Type = 2
-            ag_outStr.Charset = "shift_jis"
+            ag_outStr.Charset = "${encoding}"
             ag_outStr.Open
             ag_outStr.WriteText ag_codeMod.Lines(1, ag_lineCount)
             ag_outStr.SaveToFile ag_outPath, 2
@@ -498,7 +509,7 @@ sys.ExecuteScript "${tempDir}", 1, "c5d_pull.catvbs", "CATMain", args
                         else if (compType === '3') ext = '.frm_utf'; // Userform
 
                         const shiftJisBuffer = fs.readFileSync(path.join(tempDir, file));
-                        const utf8String = iconv.decode(shiftJisBuffer, 'shift_jis');
+                        const utf8String = iconv.decode(shiftJisBuffer, encoding);
 
                         // Normalize newlines: Remove all trailing newlines/spaces and ensure exactly one LF
                         const normalized = utf8String.replace(/\r/g, '').trimEnd() + '\n';
@@ -537,6 +548,10 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
         return;
     }
     const rootPath = workspaceFolders[0].uri.fsPath;
+    const activeLang = getLanguage();
+    const { encoding: configEncoding } = readProjectSettings(rootPath);
+    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    outputChannel.appendLine(t('log.push.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
     if (!fs.existsSync(modulesDir)) {
@@ -585,7 +600,7 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
             localContents[compName] = trimmed;
             localCompTypes[compName] = compType;
 
-            const shiftJisBuffer = iconv.encode(trimmed, 'shift_jis');
+            const shiftJisBuffer = iconv.encode(trimmed, encoding);
 
             const tempFilePath = path.join(tempDir, `${compName}_TYPE_${compType}.txt`);
             fs.writeFileSync(tempFilePath, shiftJisBuffer);
@@ -658,7 +673,7 @@ Sub CATMain()
             If ag_lineCount > 0 Then
                 Set ag_codeStr = CreateObject("ADODB.Stream")
                 ag_codeStr.Type = 2
-                ag_codeStr.Charset = "shift_jis"
+                ag_codeStr.Charset = "${encoding}"
                 ag_codeStr.Open
                 ag_codeStr.WriteText ag_comp.CodeModule.Lines(1, ag_lineCount)
                 ag_codeStr.SaveToFile "${tempDir}\\" & ag_comp.Name & "_REMOTE.txt", 2
@@ -726,7 +741,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
     let remoteCompNames: string[] = [];
     if (fs.existsSync(remoteCompsFile)) {
         const buffer = fs.readFileSync(remoteCompsFile);
-        const text = iconv.decode(buffer, 'shift_jis');
+        const text = iconv.decode(buffer, encoding);
         remoteCompNames = text.split('\n').map(p => p.replace(/\r/g, '').trim()).filter(p => p.length > 0);
         fs.unlinkSync(remoteCompsFile);
     }
@@ -736,7 +751,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
         const remoteFilePath = path.join(tempDir, `${compName}_REMOTE.txt`);
         if (fs.existsSync(remoteFilePath)) {
             const remoteBuf = fs.readFileSync(remoteFilePath);
-            const remoteText = iconv.decode(remoteBuf, 'shift_jis').trimEnd();
+            const remoteText = iconv.decode(remoteBuf, encoding).trimEnd();
             fs.unlinkSync(remoteFilePath);
 
             if (localContents[compName] === remoteText) {
@@ -776,7 +791,7 @@ ag_sys.ExecuteScript "${tempDir}", 1, "c5d_check.catvbs", "CATMain", ag_args
         }
         if (resp === t('dialog.delete')) {
             performDelete = true;
-            const delListShiftJis = iconv.encode(toDelete.join('\r\n'), 'shift_jis');
+            const delListShiftJis = iconv.encode(toDelete.join('\r\n'), encoding);
             fs.writeFileSync(path.join(tempDir, 'delete_list.txt'), delListShiftJis);
         }
     }
@@ -883,7 +898,7 @@ Sub CATMain()
     If fso.FileExists("${tempDir}\\delete_list.txt") Then
         Set inStr = CreateObject("ADODB.Stream")
         inStr.Type = 2
-        inStr.Charset = "shift_jis"
+        inStr.Charset = "${encoding}"
         inStr.Open
         inStr.LoadFromFile "${tempDir}\\delete_list.txt"
 
@@ -973,7 +988,7 @@ Sub CATMain()
                     Else
                         Set inStr = CreateObject("ADODB.Stream")
                         inStr.Type = 2
-                        inStr.Charset = "shift_jis"
+                        inStr.Charset = "${encoding}"
                         inStr.Open
                         inStr.LoadFromFile fp
                         newContent = inStr.ReadText
@@ -1025,10 +1040,10 @@ End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
 
-    outputChannel.appendLine(`[Push] tempDir: ${tempDir}`);
-    outputChannel.appendLine(`[Push] 対象プロジェクト: ${targetProject}`);
-    outputChannel.appendLine(`[Push] 転送ファイル数: ${count}`);
-    outputChannel.appendLine(`[Push] CATScript生成: ${catScriptPath}`);
+    outputChannel.appendLine(t('log.push.tempDir', tempDir));
+    outputChannel.appendLine(t('log.push.targetProject', targetProject));
+    outputChannel.appendLine(t('log.push.fileCount', String(count)));
+    outputChannel.appendLine(t('log.push.catscriptGenerated', catScriptPath));
     outputChannel.show(true);
 
     const doneFlagPath = path.join(tempDir, 'c5d_push_done.txt');
@@ -1067,8 +1082,8 @@ If fso2.FileExists(doneFile) Then fso2.DeleteFile doneFile
 WScript.Echo "VBS: End"
 `;
     fs.writeFileSync(pushVbsPath, pushVbsScript, 'utf-8');
-    outputChannel.appendLine(`[Push] VBS生成: ${pushVbsPath}`);
-    outputChannel.appendLine(`[Push] cscript実行開始...`);
+    outputChannel.appendLine(t('log.push.vbsGenerated', pushVbsPath));
+    outputChannel.appendLine(t('log.push.cscriptStart'));
     outputChannel.show(true);
 
     vscode.window.withProgress({
@@ -1078,7 +1093,7 @@ WScript.Echo "VBS: End"
     }, async (progress) => {
         return new Promise<void>((resolve, reject) => {
             exec(`%SystemRoot%\\SysWOW64\\cscript.exe //nologo "${pushVbsPath}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-                outputChannel.appendLine(`[Push] cscript終了 error=${error?.code ?? 'null'} stdout="${stdout.trim()}" stderr="${stderr.trim()}"`);
+                outputChannel.appendLine(t('log.push.cscriptEnd', String(error?.code ?? 'null'), stdout.trim(), stderr.trim()));
                 outputChannel.show(true);
                 if (fs.existsSync(pushVbsPath)) fs.unlinkSync(pushVbsPath);
                 if (fs.existsSync(catScriptPath)) fs.unlinkSync(catScriptPath);
@@ -1097,7 +1112,7 @@ WScript.Echo "VBS: End"
                 if (hasErrors) {
                     outputChannel.show(true);
                 }
-                const deleteMsg = performDelete ? '（削除同期を含む）' : '';
+                const deleteMsg = performDelete ? t('push.deleteSync') : '';
                 vscode.window.showInformationMessage(t('info.pushSuccess', String(count), '', deleteMsg));
                 vscode.commands.executeCommand('cat5dev.refreshTree');
                 resolve();

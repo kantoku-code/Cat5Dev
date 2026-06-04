@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
 import { spawn, ChildProcess } from 'child_process';
+import { t } from './i18n';
 
 const SERVER_START_TIMEOUT_MS = 5000;
 const MAX_RESTART_COUNT = 3;
@@ -25,16 +26,16 @@ export class VbaServer implements vscode.Disposable {
 
     async start(): Promise<void> {
         if (!fs.existsSync(this.binaryPath)) {
-            this.outputChannel.appendLine(`[vbafmt] バイナリが見つかりません: ${this.binaryPath}`);
-            this.outputChannel.appendLine('[vbafmt] npm run compile:go を実行してバイナリをビルドしてください');
+            this.outputChannel.appendLine(t('log.vbafmt.binaryNotFound', this.binaryPath));
+            this.outputChannel.appendLine(t('log.vbafmt.buildBinaryPrompt'));
             return;
         }
 
         try {
             this.port = await this.spawnServer();
-            this.outputChannel.appendLine(`[vbafmt] サーバー起動完了 (port: ${this.port})`);
+            this.outputChannel.appendLine(t('log.vbafmt.serverStarted', String(this.port)));
         } catch (err) {
-            this.outputChannel.appendLine(`[vbafmt] サーバー起動失敗: ${err}`);
+            this.outputChannel.appendLine(t('log.vbafmt.serverStartFailed', String(err)));
         }
     }
 
@@ -47,7 +48,7 @@ export class VbaServer implements vscode.Disposable {
 
             const timer = setTimeout(() => {
                 proc.kill();
-                reject(new Error('サーバー起動タイムアウト'));
+                reject(new Error(t('log.vbafmt.serverTimeout')));
             }, SERVER_START_TIMEOUT_MS);
 
             let portResolved = false;
@@ -77,7 +78,7 @@ export class VbaServer implements vscode.Disposable {
             proc.on('exit', (code) => {
                 clearTimeout(timer);
                 if (!portResolved) {
-                    reject(new Error(`プロセスが終了しました (exit ${code})`));
+                    reject(new Error(t('log.vbafmt.processExited', String(code))));
                     return;
                 }
                 this.port = null;
@@ -91,12 +92,12 @@ export class VbaServer implements vscode.Disposable {
 
     private scheduleRestart(): void {
         if (this.restartCount >= MAX_RESTART_COUNT) {
-            this.outputChannel.appendLine('[vbafmt] サーバー再起動の上限に達しました。手動で再起動してください。');
+            this.outputChannel.appendLine(t('log.vbafmt.maxRestartReached'));
             return;
         }
         const delay = Math.pow(2, this.restartCount) * 1000;
         this.restartCount++;
-        this.outputChannel.appendLine(`[vbafmt] ${delay / 1000}秒後に再起動します... (${this.restartCount}/${MAX_RESTART_COUNT})`);
+        this.outputChannel.appendLine(t('log.vbafmt.restarting', String(delay / 1000), String(this.restartCount), String(MAX_RESTART_COUNT)));
         setTimeout(() => {
             if (!this.disposed) {
                 this.start();

@@ -248,17 +248,18 @@ temp/
 }
 
 /** cat5dev.toml の [project] セクションから設定を読み込む */
-export function readProjectSettings(workspaceRoot: string): { targetProject: string; language: string } {
+export function readProjectSettings(workspaceRoot: string): { targetProject: string; language: string; encoding: string } {
     const tomlPath = path.join(workspaceRoot, 'cat5dev.toml');
-    if (!fs.existsSync(tomlPath)) { return { targetProject: '', language: 'ja' }; }
+    if (!fs.existsSync(tomlPath)) { return { targetProject: '', language: '', encoding: '' }; }
 
     let content: string;
-    try { content = fs.readFileSync(tomlPath, 'utf-8'); } catch { return { targetProject: '', language: 'ja' }; }
+    try { content = fs.readFileSync(tomlPath, 'utf-8'); } catch { return { targetProject: '', language: '', encoding: '' }; }
 
     const proj = parseToml(content)['project'] ?? {};
     const targetProject = (proj['target_project'] ?? '').replace(/^"|"$/g, '');
-    const language = (proj['language'] ?? 'ja').replace(/^"|"$/g, '');
-    return { targetProject, language };
+    const language = (proj['language'] ?? '').replace(/^"|"$/g, '');
+    const encoding = (proj['encoding'] ?? '').replace(/^"|"$/g, '');
+    return { targetProject, language, encoding };
 }
 
 /** cat5dev.toml の [project] セクションの指定キーの値を書き換える（コメント・他行を保持） */
@@ -269,7 +270,7 @@ export function writeTomlProjectKey(workspaceRoot: string, key: string, value: s
     const lines = fs.readFileSync(tomlPath, 'utf-8').split(/\r?\n/);
     let inProject = false;
     let written = false;
-    const result = lines.map(line => {
+    let result = lines.map(line => {
         const secMatch = line.trim().match(/^\[([^\]]+)\]$/);
         if (secMatch) { inProject = secMatch[1].trim() === 'project'; }
         if (inProject && !written) {
@@ -281,6 +282,26 @@ export function writeTomlProjectKey(workspaceRoot: string, key: string, value: s
         }
         return line;
     });
+
+    if (!written) {
+        const newResult: string[] = [];
+        let projectFound = false;
+        for (const line of result) {
+            newResult.push(line);
+            const secMatch = line.trim().match(/^\[([^\]]+)\]$/);
+            if (secMatch && secMatch[1].trim() === 'project') {
+                newResult.push(`${key} = "${value}"`);
+                projectFound = true;
+            }
+        }
+        if (projectFound) {
+            result = newResult;
+        } else {
+            result.push('[project]');
+            result.push(`${key} = "${value}"`);
+        }
+    }
+
     fs.writeFileSync(tomlPath, result.join('\n'), 'utf-8');
 }
 
@@ -289,6 +310,7 @@ const tomlComments = {
         header: '# Cat5Dev 設定ファイル',
         targetProject: '# 対象の CATIA VBA プロジェクト名',
         language: '# 言語設定 (ja / en)',
+        encoding: '# エンコーディング設定 (utf-8 / shift_jis / gbk 等)',
         optionExplicit: '# Option Explicit が宣言されていない場合に警告',
         onErrorResumeNext: '# On Error Resume Next の使用時に警告',
         goto: '# GoTo の使用時に警告 (On Error GoTo は除外)',
@@ -316,6 +338,7 @@ const tomlComments = {
         header: '# Cat5Dev configuration file',
         targetProject: '# Target CATIA VBA project name',
         language: '# Language (ja / en)',
+        encoding: '# Encoding for VBA code transfer (utf-8 / shift_jis / gbk / etc.)',
         optionExplicit: '# Warn when Option Explicit is not declared',
         onErrorResumeNext: '# Warn on usage of On Error Resume Next',
         goto: '# Warn on GoTo usage (On Error GoTo is excluded)',
@@ -339,6 +362,34 @@ const tomlComments = {
         expandTypeSuffixes: '# Expand type suffix shorthand (% → Integer, $ → String, etc.)',
         formatOnSave: '# Automatically format on save',
     },
+    zh: {
+        header: '# Cat5Dev 配置文件',
+        targetProject: '# 目标 CATIA VBA 项目名称',
+        language: '# 语言设置 (ja / en / zh)',
+        encoding: '# VBA 代码传输编码 (utf-8 / shift_jis / gbk 等)',
+        optionExplicit: '# 当未声明 Option Explicit 时发出警告',
+        onErrorResumeNext: '# 使用 On Error Resume Next 时发出警告',
+        goto: '# 使用 GoTo 时发出警告 (不包括 On Error GoTo)',
+        maxLineLength: '# 单行字符数超过指定值时发出警告 (0 = 禁用)',
+        unusedVariables: '# 变量已声明但未使用时发出警告',
+        maxNestingDepth: '# 嵌套深度超过阈值时发出警告 (0 = 禁用)',
+        maxFunctionLines: '# Sub/Function 行数超过阈值时发出警告 (0 = 禁用)',
+        unmatchedParens: '# 将括号不匹配报告为错误',
+        unmatchedBlocks: '# 将缺少 End If / End Sub / End Function 等报告为错误',
+        formatterEnabled: '# 启用或禁用格式化程序',
+        indentSize: '# 每个缩进级别的空格数',
+        capitalizeKeywords: '# 自动大写 VBA 关键字 (If, Dim, Sub 等)',
+        fixIndentation: '# 自动修正缩进',
+        trimTrailingSpace: '# 删除行尾空白字符',
+        ensureContinuationSpace: '# 确保换行符 (_) 前有空格',
+        indentContinuationLines: '# 将换行行缩进一个级别',
+        maxBlankLines: '# 连续空行的最大数量 (0 = 禁用)',
+        normalizeOperatorSpacing: '# 规范运算符 (=, +, - 等) 两侧的空格',
+        normalizeCommaSpacing: '# 规范逗号后的空格',
+        normalizeCommentSpace: '# 确保注释符号 (\') 后有空格',
+        expandTypeSuffixes: '# 展开类型后缀简写 (% → Integer, $ → String 等)',
+        formatOnSave: '# 保存时自动格式化',
+    },
 };
 
 /** cat5dev.toml の雛形テキストを返す。値は DEFAULT_*_OPTIONS から生成する */
@@ -346,6 +397,7 @@ export function tomlTemplate(lang: Language = 'ja'): string {
     const l = DEFAULT_LINT_OPTIONS;
     const f = DEFAULT_FORMATTER_OPTIONS;
     const c = tomlComments[lang];
+    const defaultEncoding = lang === 'zh' ? 'gbk' : (lang === 'en' ? 'utf-8' : 'shift_jis');
     return `${c.header}
 
 [project]
@@ -354,6 +406,9 @@ target_project = ""
 
 ${c.language}
 language = "${lang}"
+
+${c.encoding}
+encoding = "${defaultEncoding}"
 
 [lint]
 enabled = false
