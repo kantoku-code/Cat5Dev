@@ -127,8 +127,8 @@ Sub CATMain()
                 compName = parts(0)
                 compType = CInt(parts(1))
 
-                ' C5D_内部ファイルや無効なTypeはスキップして削除
-                If Left(UCase(compName), 4) = "C5D_" Or compType < 1 Or compType > 3 Then
+                ' Invalid component types are not transferred
+                If compType < 1 Or compType > 3 Then
                     fso.DeleteFile fp
                 Else
                     logStream.WriteText "[Push.Process] " & compName & " (Type=" & compType & ")" & vbCrLf

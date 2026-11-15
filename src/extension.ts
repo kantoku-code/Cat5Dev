@@ -267,25 +267,6 @@ Sub CATMain()
     ag_outStr.SaveToFile "${outTxtPath}", 2
     ag_outStr.Close
 
-    ' --- CLEANUP INJECTED MACROS ---
-    For ag_px = 1 To ag_vbe.VBProjects.Count
-        Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
-        For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
-            ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If Left(ag_cName, 4) = "C5D_" Then
-                On Error Resume Next
-                ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
-                If Err.Number <> 0 Then
-                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
-                    ag_ef.WriteLine "[List.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
-                    ag_ef.Close
-                    Err.Clear
-                End If
-                On Error GoTo 0
-            End If
-        Next
-    Next
-    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
@@ -439,25 +420,6 @@ Sub CATMain()
         End If
     Next
 
-    ' --- CLEANUP INJECTED MACROS ---
-    For ag_px = 1 To ag_vbe.VBProjects.Count
-        Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
-        For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
-            ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If Left(ag_cName, 4) = "C5D_" Then
-                On Error Resume Next
-                ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
-                If Err.Number <> 0 Then
-                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
-                    ag_ef.WriteLine "[Pull.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
-                    ag_ef.Close
-                    Err.Clear
-                End If
-                On Error GoTo 0
-            End If
-        Next
-    Next
-    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(catScriptPath, catScriptContent, 'utf-8');
@@ -685,25 +647,6 @@ Sub CATMain()
     ag_outStr.SaveToFile "${remoteCompsFile}", 2
     ag_outStr.Close
 
-    ' --- CLEANUP INJECTED MACROS ---
-    For ag_px = 1 To ag_vbe.VBProjects.Count
-        Set ag_tmpProj = ag_vbe.VBProjects.Item(ag_px)
-        For ag_cx = ag_tmpProj.VBComponents.Count To 1 Step -1
-            ag_cName = UCase(ag_tmpProj.VBComponents.Item(ag_cx).Name)
-            If Left(ag_cName, 4) = "C5D_" Then
-                On Error Resume Next
-                ag_tmpProj.VBComponents.Remove ag_tmpProj.VBComponents.Item(ag_cx)
-                If Err.Number <> 0 Then
-                    Set ag_ef = ag_fso.OpenTextFile(ag_errPath, 8, True)
-                    ag_ef.WriteLine "[Check.Cleanup] Remove '" & ag_cName & "' Err=" & Err.Number & ": " & Err.Description
-                    ag_ef.Close
-                    Err.Clear
-                End If
-                On Error GoTo 0
-            End If
-        Next
-    Next
-    ' --------------------------------
 End Sub
 `;
     fs.writeFileSync(path.join(tempDir, 'c5d_check.catvbs'), checkCatScript, 'utf-8');
@@ -956,8 +899,8 @@ Sub CATMain()
                 compName = parts(0)
                 compType = CInt(parts(1))
 
-                ' C5D_内部ファイルや無効なTypeはスキップして削除
-                If Left(UCase(compName), 4) = "C5D_" Or compType < 1 Or compType > 3 Then
+                ' Invalid component types are not transferred
+                If compType < 1 Or compType > 3 Then
                     fso.DeleteFile fp
                 Else
                     logStream.WriteText "[Push.Process] " & compName & " (Type=" & compType & ")" & vbCrLf
