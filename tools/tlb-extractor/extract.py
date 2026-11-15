@@ -25,6 +25,9 @@ SQLite データベース catia_api.db（スキーマ v2、schema.sql）を生�
 
     # 生成済み DB の不変条件を検査する
     uv run python extract.py --verify catia_api.db
+
+    # V5Automation.chm の説明文を付けたローカル用 DB を作る（同梱の DB には入れない。README.md 参照）
+    uv run python extract.py --chm --chm-mode full --out D:/catia/catia_api_doc.db
 """
 
 from __future__ import annotations
@@ -32,10 +35,14 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import html
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
+import tempfile
 from typing import Optional
 
 EXTRACTOR_VERSION = "2.0.0"
@@ -180,6 +187,183 @@ class NoDocs:
 
     def enum_member_doc(self, enum: str, member: str) -> str:
         return ""
+
+
+# HTML → テキスト。CHM のリンクは <script>activateLink('Doc','Doc')</script> 形式なので最後の引数を本文にする。
+_SCRIPT_LINK = re.compile(r"<script[^>]*>\s*activateLink\w*\(([^)]*)\)\s*</script>", re.S | re.I)
+_LINE_TAGS = re.compile(r"<(?:br|p|/p|li|ul|/ul|ol|/ol|pre|/pre)\b[^>]*>", re.I)
+_TAG = re.compile(r"<[^>]*>", re.S)
+_BLANK = re.compile(r"[ \t\f\v\u00a0]+")
+
+
+def _link_text(m: re.Match) -> str:
+    args = [a.strip().strip("'\"") for a in m.group(1).split(",")]
+    return next((a for a in reversed(args) if a), "")
+
+
+def html_text(s: str) -> str:
+    """CHM の HTML 断片をプレーンテキストにする。
+
+    ソースの改行（折り返し）は空白にし、<br> / <p> / <li> などだけを改行にする。連続する空行は 1 つにまとめる。
+    """
+    s = _SCRIPT_LINK.sub(_link_text, s)
+    s = s.replace("\r", " ").replace("\n", " ")
+    s = _LINE_TAGS.sub("\n", s)
+    s = _TAG.sub("", s)
+    s = html.unescape(s)
+    out: list[str] = []
+    blank = False
+    for line in s.split("\n"):
+        line = _BLANK.sub(" ", line).strip()
+        if not line:
+            blank = bool(out)
+            continue
+        if blank:
+            out.append("")
+        out.append(line)
+        blank = False
+    return "\n".join(out).strip()
+
+
+_MEMBER_INDEX = re.compile(r"<a href=\"#([^\"]+)\"><b>[^<]*</b></a>\s*</td>\s*<td\s+id='tdright'>(.*?)</td>", re.S)
+_MEMBER_DETAIL = re.compile(r"<a id=\"([^\"]+)\"></a>\s*<dt class='dtmethod'>")
+_PARAM_ITEM = re.compile(r"<span class='paramitem'>\s*([^<]+?)\s*</span>\s*</dt>\s*<dd>(.*?)(?=</\s*dd>|<!\s*@sample|<dt>|</dl>)",
+                         re.S)
+_SUMMARY = re.compile(r"<b><i>(.*?)</i></b>", re.S)
+
+
+class ChmDocs(NoDocs):
+    """V5Automation.chm を展開したディレクトリから説明文を読む。
+
+    generated/interfaces/<Framework>/interface_<Name>_<n>.htm と enum_<Name>_<n>.htm を解析する。
+    full=False は型・メンバー・enum の 1 行要約だけ、full=True は詳細と引数・enum 値の説明まで。
+    """
+
+    def __init__(self, root: str, full: bool = False):
+        self.full = full
+        self.source = "chm-full" if full else "chm-summary"
+        self.iface: dict[str, tuple[str, dict, dict]] = {}  # 型 → (説明, {メンバー: 説明}, {(メンバー, 引数): 説明})
+        self.enum: dict[str, tuple[str, dict]] = {}  # enum → (説明, {値の名前: 説明})
+        base = os.path.join(root, "generated", "interfaces")
+        for p in sorted(glob.glob(os.path.join(base, "*", "interface_*.htm"))):
+            name = re.sub(r"^interface_(.*)_\d+\.htm$", r"\1", os.path.basename(p))
+            self.iface.setdefault(name, self.parse_interface(_read_html(p)))
+        for p in sorted(glob.glob(os.path.join(base, "*", "enum_*.htm"))):
+            name = re.sub(r"^enum_(.*)_\d+\.htm$", r"\1", os.path.basename(p))
+            self.enum.setdefault(name, self.parse_enum(_read_html(p)))
+
+    def _desc(self, block: str) -> str:
+        if self.full:
+            return html_text(block)
+        m = _SUMMARY.search(block)
+        return html_text(m.group(1)) if m else ""
+
+    def parse_interface(self, s: str) -> tuple[str, dict, dict]:
+        desc = ""
+        m = re.search(r"<section id='maindesc'>(.*?)<section id='idxsum'>", s, re.S)
+        if m:
+            desc = self._desc(m.group(1))
+        members: dict[str, str] = {}
+        params: dict[tuple[str, str], str] = {}
+        for mm in _MEMBER_INDEX.finditer(s):
+            members.setdefault(mm.group(1), html_text(mm.group(2)))
+        if self.full:
+            parts = _MEMBER_DETAIL.split(s)
+            for i in range(1, len(parts) - 1, 2):
+                name, body = parts[i], parts[i + 1]
+                dd = body.split("<dd class='ddmethod'>", 1)
+                if len(dd) < 2:
+                    continue
+                text = dd[1]
+                cut = min((k for k in (text.find("<dl"), text.find("</dd>"), text.find("<! @sample")) if k >= 0),
+                          default=len(text))
+                d = html_text(text[:cut])
+                if d:
+                    members[name] = d
+                for pm in _PARAM_ITEM.finditer(text):
+                    pd = html_text(pm.group(2))
+                    if pd:
+                        params.setdefault((name, pm.group(1)), pd)
+        return desc, members, params
+
+    def parse_enum(self, s: str) -> tuple[str, dict]:
+        desc = ""
+        m = re.search(r"<dd class='dd1'>(.*?)<dl\s+class='desclist'>", s, re.S)
+        if m:
+            desc = self._desc(m.group(1))
+        vals: dict[str, str] = {}
+        if self.full:
+            for vm in _PARAM_ITEM.finditer(s):
+                d = html_text(vm.group(2))
+                if d:
+                    vals.setdefault(vm.group(1), d)
+        return desc, vals
+
+    def type_doc(self, name: str) -> str:
+        return self.iface.get(name, ("", {}, {}))[0]
+
+    def member_doc(self, type_name: str, member: str) -> str:
+        return self.iface.get(type_name, ("", {}, {}))[1].get(member, "")
+
+    def param_doc(self, type_name: str, member: str, param: str) -> str:
+        return self.iface.get(type_name, ("", {}, {}))[2].get((member, param), "")
+
+    def enum_doc(self, name: str) -> str:
+        return self.enum.get(name, ("", {}))[0]
+
+    def enum_member_doc(self, enum: str, member: str) -> str:
+        return self.enum.get(enum, ("", {}))[1].get(member, "")
+
+
+def _read_html(path: str) -> str:
+    with open(path, "rb") as f:
+        return f.read().decode("cp1252", errors="replace")
+
+
+def find_chm(tlb_files: list[str]) -> Optional[str]:
+    """TLB に登録された helpfile（V5Automation.chm）を探す。見つからなければ TLB と同じディレクトリを見る。"""
+    for path in tlb_files:
+        tlb = _load_tlb(path)
+        if tlb is None:
+            continue
+        try:
+            helpfile = tlb.GetDocumentation(-1)[3]
+        except Exception:
+            helpfile = None
+        if helpfile and os.path.isfile(helpfile):
+            return os.path.abspath(helpfile)
+    for d in sorted({os.path.dirname(p) for p in tlb_files}):
+        cand = os.path.join(d, "V5Automation.chm")
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def load_chm_docs(chm: str, full: bool, workdir: Optional[str] = None, log=print) -> ChmDocs:
+    """chm（.chm ファイルか、展開済みのディレクトリ）から ChmDocs を作る。
+
+    .chm は空白を含まない一時ディレクトリにコピーして hh.exe -decompile で展開し、解析後に削除する
+    （hh.exe はパスに空白があると何も出力せずに失敗する）。
+    """
+    if os.path.isdir(chm):
+        return ChmDocs(chm, full)
+    base = workdir or tempfile.gettempdir()
+    tmp = tempfile.mkdtemp(prefix="cat5dev-chm-", dir=base)
+    try:
+        if re.search(r"\s", tmp):
+            raise RuntimeError(f"作業ディレクトリのパスに空白がある: {tmp}（--chm-workdir で空白の無い場所を指定してください）")
+        src = os.path.join(tmp, "src.chm")
+        out = os.path.join(tmp, "out")
+        shutil.copyfile(chm, src)
+        os.mkdir(out)
+        hh = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "hh.exe")
+        log(f"CHM を展開中: {chm}")
+        subprocess.run([hh, "-decompile", out, src], check=False)
+        if not os.path.isdir(os.path.join(out, "generated", "interfaces")):
+            raise RuntimeError(f"CHM の展開に失敗した（generated/interfaces が無い）: {chm}")
+        return ChmDocs(out, full)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +743,12 @@ def main():
     ap.add_argument("--recursive", "-r", action="store_true", help="ディレクトリを再帰検索")
     ap.add_argument("--list", action="store_true", help="処理対象 TLB を一覧表示して終了")
     ap.add_argument("--verify", metavar="DB", help="生成済み DB の不変条件を検査して終了")
+    ap.add_argument("--chm", nargs="?", const="auto", metavar="PATH",
+                    help="V5Automation.chm（または展開済みのディレクトリ）から説明文を付ける。"
+                         "PATH を省略すると TLB に登録された helpfile を使う")
+    ap.add_argument("--chm-mode", choices=("summary", "full"), default="summary",
+                    help="summary: 1 行要約（既定）/ full: 詳細と引数・Enum 値の説明")
+    ap.add_argument("--chm-workdir", metavar="DIR", help="CHM を展開する作業ディレクトリ（パスに空白が無いこと。既定は TEMP）")
     args = ap.parse_args()
 
     if args.verify:
@@ -586,7 +776,20 @@ def main():
             print(f"  {f}")
         return
 
-    stats = build_db(tlb_files, args.out, log=lambda s: print(s, flush=True))
+    docs = None
+    if args.chm:
+        chm = find_chm(tlb_files) if args.chm == "auto" else args.chm
+        if not chm or not os.path.exists(chm):
+            print(f"ERROR: CHM が見つかりません: {chm or '(TLB に helpfile の登録なし)'}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            docs = load_chm_docs(chm, args.chm_mode == "full", args.chm_workdir, log=lambda s: print(s, flush=True))
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"CHM: 型 {len(docs.iface)} / enum {len(docs.enum)} ページ", flush=True)
+
+    stats = build_db(tlb_files, args.out, docs=docs, log=lambda s: print(s, flush=True))
     for w in stats["warnings"]:
         print(f"警告: {w}")
     errs = verify_db(args.out)

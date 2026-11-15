@@ -68,6 +68,121 @@ class PureFunctionTest(unittest.TestCase):
             shutil.rmtree(d)
 
 
+_IFACE_PAGE = """<html><body>
+<section id='maindesc'>
+<b><i>   Represents the
+ factory.</i></b><br>
+ <b>Role</b>: creates a <script type="text/javascript"> activateLinkAnchor('ShapeInstance','','ShapeInstance') </script>
+ instance.<br>Second &amp; line.
+</section>
+<section id='idxsum'>
+ <tr><td  id='tdleft'>
+    <a href="#Mode"><b>Mode</b></a>
+</td><td  id='tdright'>  Sets the
+ mode.
+</td></tr>
+ <tr><td  id='tdleft'>
+    <a href="#Run"><b>Run</b></a>
+</td><td  id='tdright'>  Runs it.
+</td></tr>
+</section>
+<a id="Mode"></a><dt class='dtmethod'>
+<span class='property'>Property Mode</span></dt>
+  <dd class='ddmethod'>
+ Sets the mode of
+ instantiation.<br><b>Role</b>: call it first.
+ <! @sample >
+ <dl><dt><b>Example:</b><dd>ignored</dl>
+</dd>
+<a id="Run"></a><dt class='dtmethod'>
+<span class='property'>Sub Run(<script type="text/javascript"> activateLink('CATBSTR','CATBSTR')</script> iName)</span></dt>
+  <dd class='ddmethod'>
+ Runs it.
+<dl  class='desclist'>
+  <dt> <b>Parameters:</b></dt>
+  <dd>
+    <dl class='paramlist' >
+    <dt><span class='paramitem'> iName</span></dt>
+   <dd>   The name of
+ the <script>activateLink('Document','Document')</script>.
+ </ dd>
+    <dt><span class='paramitem'> iLast</span></dt>
+   <dd>  Last one.
+ <! @sample >
+ </dl>
+ </dl></dd>
+</body></html>"""
+
+_ENUM_PAGE = """</dt><dd class='dd1'>
+<b><i> Paper size.</i></b><br>
+ It used by the <script type="text/javascript"> activateLinkAnchor('PageSetup','','PageSetup') </script> object.
+<dl  class='desclist'>
+  <dt> <b>Values:</b></dt>
+  <dd>
+    <dl class='valuelist'>
+    <dt><span class='paramitem'> catPaperA4</span></dt>
+   <dd>   The A4 ISO format (210 x 297 mm)
+ </ dd>
+    <dt><span class='paramitem'> catPaperA3</span></dt>
+   <dd>   The A3 format
+ </ dd>
+ </dl>"""
+
+
+class ChmTest(unittest.TestCase):
+    def test_html_text(self):
+        self.assertEqual(extract.html_text("a\n b<br>c &lt;d&gt;"), "a b\nc <d>")
+        self.assertEqual(extract.html_text("see <script type='text/javascript'> activateLink('Doc','Document')</script>."),
+                         "see Document.")
+        self.assertEqual(extract.html_text("x<p><p><p>y"), "x\n\ny")
+        self.assertEqual(extract.html_text("<ul><li>one</li><li>two</li></ul>"), "one\ntwo")
+        self.assertEqual(extract.html_text("  \n "), "")
+
+    def _docs(self, full):
+        d = extract.ChmDocs.__new__(extract.ChmDocs)
+        d.full = full
+        return d
+
+    def test_interface_summary(self):
+        desc, members, params = self._docs(False).parse_interface(_IFACE_PAGE)
+        self.assertEqual(desc, "Represents the factory.")
+        self.assertEqual(members, {"Mode": "Sets the mode.", "Run": "Runs it."})
+        self.assertEqual(params, {})
+
+    def test_interface_full(self):
+        desc, members, params = self._docs(True).parse_interface(_IFACE_PAGE)
+        self.assertEqual(desc, "Represents the factory.\nRole: creates a ShapeInstance instance.\nSecond & line.")
+        self.assertEqual(members["Mode"], "Sets the mode of instantiation.\nRole: call it first.")
+        self.assertEqual(members["Run"], "Runs it.")
+        self.assertEqual(params, {("Run", "iName"): "The name of the Document.", ("Run", "iLast"): "Last one."})
+
+    def test_enum(self):
+        desc, vals = self._docs(False).parse_enum(_ENUM_PAGE)
+        self.assertEqual((desc, vals), ("Paper size.", {}))
+        desc, vals = self._docs(True).parse_enum(_ENUM_PAGE)
+        self.assertEqual(desc, "Paper size.\nIt used by the PageSetup object.")
+        self.assertEqual(vals, {"catPaperA4": "The A4 ISO format (210 x 297 mm)", "catPaperA3": "The A3 format"})
+
+    def test_chm_directory(self):
+        d = tempfile.mkdtemp()
+        try:
+            fw = os.path.join(d, "generated", "interfaces", "InfInterfaces")
+            os.makedirs(fw)
+            with open(os.path.join(fw, "interface_InstanceFactory_1.htm"), "w", encoding="cp1252") as f:
+                f.write(_IFACE_PAGE)
+            with open(os.path.join(fw, "enum_CatPaperSize_2.htm"), "w", encoding="cp1252") as f:
+                f.write(_ENUM_PAGE)
+            docs = extract.load_chm_docs(d, full=True, log=lambda s: None)
+            self.assertEqual(docs.source, "chm-full")
+            self.assertEqual(docs.member_doc("InstanceFactory", "Run"), "Runs it.")
+            self.assertEqual(docs.param_doc("InstanceFactory", "Run", "iName"), "The name of the Document.")
+            self.assertEqual(docs.enum_member_doc("CatPaperSize", "catPaperA3"), "The A3 format")
+            self.assertEqual(docs.type_doc("Nothing"), "")
+            self.assertEqual(extract.ChmDocs(d, full=False).source, "chm-summary")
+        finally:
+            shutil.rmtree(d)
+
+
 class DatabaseTest(unittest.TestCase):
     """TLBDatabase と verify_db（合成データ）。"""
 
