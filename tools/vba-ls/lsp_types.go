@@ -25,9 +25,35 @@ type Location struct {
 
 // --- Initialize ---
 
+type WorkspaceFolder struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
 type InitializeParams struct {
-	RootURI               *string     `json:"rootUri,omitempty"`
-	InitializationOptions interface{} `json:"initializationOptions,omitempty"`
+	RootURI               *string           `json:"rootUri,omitempty"`
+	RootPath              *string           `json:"rootPath,omitempty"`
+	WorkspaceFolders      []WorkspaceFolder `json:"workspaceFolders,omitempty"`
+	InitializationOptions interface{}       `json:"initializationOptions,omitempty"`
+}
+
+// --- Workspace ---
+
+type FileChangeType int
+
+const (
+	FileChangeCreated FileChangeType = 1
+	FileChangeChanged FileChangeType = 2
+	FileChangeDeleted FileChangeType = 3
+)
+
+type FileEvent struct {
+	URI  DocumentURI    `json:"uri"`
+	Type FileChangeType `json:"type"`
+}
+
+type DidChangeWatchedFilesParams struct {
+	Changes []FileEvent `json:"changes"`
 }
 
 type TextDocumentSyncKind int
@@ -56,6 +82,7 @@ type ServerCapabilities struct {
 	TextDocumentSync       TextDocumentSyncKind   `json:"textDocumentSync"`
 	CompletionProvider     *CompletionOptions     `json:"completionProvider,omitempty"`
 	HoverProvider          bool                   `json:"hoverProvider,omitempty"`
+	DefinitionProvider     bool                   `json:"definitionProvider,omitempty"`
 	SemanticTokensProvider *SemanticTokensOptions `json:"semanticTokensProvider,omitempty"`
 }
 
@@ -144,6 +171,12 @@ type CompletionItem struct {
 // --- Hover ---
 
 type HoverParams struct {
+	TextDocumentPositionParams
+}
+
+// --- Definition ---
+
+type DefinitionParams struct {
 	TextDocumentPositionParams
 }
 
