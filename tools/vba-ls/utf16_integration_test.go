@@ -272,3 +272,21 @@ func TestSemanticTokensWithSurrogatePair(t *testing.T) {
 		})
 	}
 }
+
+func TestSemanticTokensIgnoreStringLiterals(t *testing.T) {
+	db := newTestTLBDatabase(t)
+	const line2 = `    MsgBox "doc あdoc" & doc.Name ' doc`
+	base := "Sub M()\n    Dim doc As PartDocument\n" + line2 + "\nEnd Sub\n"
+	for _, tc := range []struct{ name, src string }{
+		{"LF", base},
+		{"CRLF", toCRLF(base)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			toks := tokensOnLine(decodeSemanticTokens(t, BuildSemanticTokens(tc.src, ParseSymbols(tc.src), db)), 2)
+			want := []absToken{{2, u16(`    MsgBox "doc あdoc" & `), 3, tokenTypeVariable, 0}}
+			if len(toks) != len(want) || toks[0] != want[0] {
+				t.Fatalf("行 2 のトークン = %+v, want %+v（文字列・コメント内の語が色付けされている可能性）", toks, want)
+			}
+		})
+	}
+}

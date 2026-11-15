@@ -83,15 +83,13 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 	lines := strings.Split(src, "\n")
 	for lineIdx, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
-		// コメント・文字列リテラルを除外するため、コメント開始位置（バイト）を特定
-		commentStart := commentStartCol(line)
+		// コメントと文字列リテラルの中身を空白に置換してから走査する。
+		// stripped は line とバイト長が等しいので、バイト位置は line でもそのまま有効。
+		stripped := stripCommentAndStrings(line)
 
-		matches := identRe.FindAllStringIndex(line, -1)
+		matches := identRe.FindAllStringIndex(stripped, -1)
 		for _, m := range matches {
-			if commentStart >= 0 && m[0] >= commentStart {
-				break // コメント部分はスキップ
-			}
-			word := line[m[0]:m[1]]
+			word := stripped[m[0]:m[1]]
 			col := byteToUTF16Offset(line, m[0])
 			lower := strings.ToLower(word)
 			if _, ok := catiaVars[lower]; !ok {
@@ -137,20 +135,6 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 		prevCol = t.col
 	}
 	return data
-}
-
-// commentStartCol は行内のコメント開始位置（バイト）を返す。コメントがなければ -1。
-// 文字列リテラル内の ' は無視する。
-func commentStartCol(line string) int {
-	inStr := false
-	for i, ch := range line {
-		if ch == '"' {
-			inStr = !inStr
-		} else if ch == '\'' && !inStr {
-			return i
-		}
-	}
-	return -1
 }
 
 // isDeclToken はシンボルテーブル内の宣言位置と一致するか確認する。
