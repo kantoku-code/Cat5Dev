@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -464,4 +465,145 @@ func sampleTLB(t *testing.T) *TLBDatabase {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// TestCompletionLatencySample は実サンプルの最大のモジュールを索引付きで開いた状態で、識別子補完・型補完・
+// signatureHelp・空白の起動（文脈外）の応答時間と応答の大きさを計測する。
+// CAT5DEV_COMPLETION_BUDGET_MS が設定されていれば、識別子補完・型補完・signatureHelp の p95 がそれを超えたら失敗にする。
+func TestCompletionLatencySample(t *testing.T) {
+	files := sampleFiles(t)
+	dir := os.Getenv("CAT5DEV_SAMPLE_DIR")
+	ws := NewWorkspace()
+	ws.SetRoots([]string{dir})
+	ws.IndexAll(context.Background())
+	types := NewDefaultResolver(sampleTLB(t), ws.TypesProvider(), ws.ModulesProvider())
+	// 最大（行数）のモジュール
+	var e *ModuleEntry
+	var text string
+	var lines []string
+	for _, f := range files {
+		src := stripBOM(readSample(t, f))
+		if ls := splitLines(src); len(ls) > len(lines) {
+			e, text, lines = ws.Entry(f), src, ls
+		}
+	}
+	if e == nil {
+		t.Fatal("索引に無い")
+	}
+	// プロシージャの本体の行から 100 か所を選ぶ
+	var targets []int
+	for i := range lines {
+		if p := e.Table.ProcAt(i); p != nil && i > p.StartLine && i < p.EndLine && strings.TrimSpace(lines[i]) != "" {
+			targets = append(targets, i)
+		}
+	}
+	step := len(targets) / 100
+	if step == 0 {
+		step = 1
+	}
+	var picked []int
+	for i := 0; i < len(targets) && len(picked) < 100; i += step {
+		picked = append(picked, targets[i])
+	}
+	docWith := func(line int, replace string) (*Document, int) {
+		ls := lines
+		if replace != "" {
+			ls = append([]string(nil), lines...)
+			ls[line] = replace
+		}
+		return newDocumentFull(e.URI, text, ls, e.Table, e, types), utf16Len(ls[line])
+	}
+	type series struct {
+		name  string
+		durs  []time.Duration
+		bytes []int
+	}
+	// Windows の時計は粗いので、同じ要求を 20 回繰り返した平均を 1 回の応答時間とする
+	const reps = 20
+	measure := func(s *series, fn func() interface{}) {
+		start := time.Now()
+		var v interface{}
+		for i := 0; i < reps; i++ {
+			v = fn()
+		}
+		s.durs = append(s.durs, time.Since(start)/reps)
+		b, _ := json.Marshal(v)
+		s.bytes = append(s.bytes, len(b))
+	}
+	ident := &series{name: "識別子補完（行頭）"}
+	typ := &series{name: "型補完（As の後）"}
+	sig := &series{name: "signatureHelp"}
+	space := &series{name: "空白の起動（文脈外）"}
+	// 初回だけの準備（組み込みの候補・TLB の型一覧）を計測から外す
+	if d, _ := docWith(picked[0], "    Dim zz As "); d != nil {
+		BuildCompletions(d, picked[0], utf16Len("    Dim zz As "))
+		BuildCompletions(d, picked[0], 4)
+	}
+	for _, ln := range picked {
+		indent := len(lines[ln]) - len(strings.TrimLeft(lines[ln], " \t"))
+		d, _ := docWith(ln, "")
+		measure(ident, func() interface{} { return BuildCompletions(d, ln, indent) })
+		d, ch := docWith(ln, "    Dim zz As ")
+		measure(typ, func() interface{} { return BuildCompletions(d, ln, ch) })
+		d, ch = docWith(ln, "    MsgBox \"a\", ")
+		measure(sig, func() interface{} { return BuildSignatureHelp(d, ln, ch) })
+		d, ch = docWith(ln, "    x = 1 ")
+		measure(space, func() interface{} { return BuildCompletionsTrigger(d, ln, ch, " ") })
+	}
+	pct := func(ds []time.Duration, p float64) time.Duration {
+		s := append([]time.Duration(nil), ds...)
+		sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+		return s[int(float64(len(s)-1)*p)]
+	}
+	maxInt := func(xs []int) int {
+		m := 0
+		for _, x := range xs {
+			if x > m {
+				m = x
+			}
+		}
+		return m
+	}
+	t.Logf("%s（%d 行）の %d か所", filepath.Base(e.Path), len(lines), len(picked))
+	var budget time.Duration
+	if b := os.Getenv("CAT5DEV_COMPLETION_BUDGET_MS"); b != "" {
+		ms, err := strconv.ParseFloat(b, 64)
+		if err != nil {
+			t.Fatalf("CAT5DEV_COMPLETION_BUDGET_MS=%q: %v", b, err)
+		}
+		budget = time.Duration(ms * float64(time.Millisecond))
+	}
+	for _, s := range []*series{ident, typ, sig, space} {
+		p95 := pct(s.durs, 0.95)
+		t.Logf("  %s: p50 %v / p95 %v / 最大 %v、応答 最大 %.1f KB", s.name, pct(s.durs, 0.5), p95, pct(s.durs, 1), float64(maxInt(s.bytes))/1024)
+		if budget > 0 && s != space && p95 > budget {
+			t.Errorf("%s の p95 %v が予算 %v を超えた", s.name, p95, budget)
+		}
+	}
+	if maxInt(space.bytes) > len("null") {
+		t.Errorf("空白の起動（文脈外）は null を返すはず")
+	}
+}
+
+func BenchmarkIdentifierCompletion(b *testing.B) {
+	src := syntheticModule(50)
+	doc := NewDocument("file:///bench.bas", src, ParseSymbols(src), NewDefaultResolver(nil))
+	line := 12 // Proc0 の本体
+	BuildCompletions(doc, line, 4)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildCompletions(doc, line, 4)
+	}
+}
+
+func BenchmarkSignatureHelp(b *testing.B) {
+	src := syntheticModule(50)
+	lines := splitLines(src)
+	lines[12] = "    x = Mid(Left(s, 3), InStr(1, s, "
+	doc := newDocumentWithLines("file:///bench.bas", src, lines, ParseSymbols(src), NewDefaultResolver(nil))
+	ch := utf16Len(lines[12])
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildSignatureHelp(doc, 12, ch)
+	}
 }
