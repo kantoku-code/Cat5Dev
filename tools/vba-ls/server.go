@@ -10,7 +10,7 @@ import (
 )
 
 const serverName = "vba-ls"
-const serverVersion = "0.5.2"
+const serverVersion = "0.6.0"
 
 // 再解析の待ち時間。jsonrpc2 はハンドラを読み取りループ内で同期実行するため、
 // 解析はバックグラウンドで行い、入力が続く間は最新の版だけを解析する。
