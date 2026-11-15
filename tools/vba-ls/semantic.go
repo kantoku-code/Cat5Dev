@@ -66,8 +66,8 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 			tokenType: tokenTypeVariable,
 			modifiers: tokenModDeclaration,
 		})
-		// 型名トークン（type）
-		if sym.TypeName != "" {
+		// 型名トークン（type）。CreateObject 由来など型名がソース上にない場合は出さない。
+		if sym.HasTypeNamePos {
 			tokens = append(tokens, rawToken{
 				line:      sym.TypeNameLine,
 				col:       sym.TypeNameCol,

@@ -9,8 +9,11 @@ type Symbol struct {
 	Scope        string // "module" または "Sub:FooSub" / "Function:Bar" 等
 	Line         int    // 0-based 行番号（変数名の位置）
 	Col          int    // 0-based 列番号（変数名の位置、LSP と同じ UTF-16 単位）
-	TypeNameLine int    // 0-based 行番号（型名の位置）
-	TypeNameCol  int    // 0-based 列番号（型名の位置、LSP と同じ UTF-16 単位）
+	TypeNameLine int    // 0-based 行番号（型名の位置。HasTypeNamePos が true のときのみ有効）
+	TypeNameCol  int    // 0-based 列番号（型名の位置、LSP と同じ UTF-16 単位。HasTypeNamePos が true のときのみ有効）
+	// HasTypeNamePos はソース上に型名トークンがある（Dim ... As / New）ときのみ true。
+	// CreateObject("ProgID") 由来の型など、型名がソースに現れない場合は false。
+	HasTypeNamePos bool
 }
 
 // SymbolTable はファイル単位のシンボルテーブル。

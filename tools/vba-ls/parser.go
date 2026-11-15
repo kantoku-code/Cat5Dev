@@ -8,7 +8,8 @@ import (
 	vbaantlr "github.com/nori/cat5dev/vba-ls/antlr"
 )
 
-var reCreateObject = regexp.MustCompile(`(?i)CreateObject\s*\(\s*"([^"]+)"\s*\)`)
+// reProgIDArg は CreateObject の第1引数（文字列リテラル）から ProgID を取り出す。
+var reProgIDArg = regexp.MustCompile(`^"([^"]+)"`)
 
 // ParseSymbols は VBA ソースを ANTLR4 でパースしてシンボルテーブルを返す。
 func ParseSymbols(src string) *SymbolTable {
@@ -82,26 +83,37 @@ func (l *symbolListener) EnterVariableDcl(ctx *vbaantlr.VariableDclContext) {
 		typeName := ""
 		typeNameLine := 0
 		typeNameCol := 0
+		hasPos := false
 		if ac := u.AsClause(); ac != nil {
 			if at := ac.AsType(); at != nil {
+				// Dim x As TypeName
 				if ts := at.TypeSpec(); ts != nil {
 					if te := ts.TypeExpression(); te != nil {
 						typeName = strings.TrimSpace(te.GetText())
 						typeNameLine, typeNameCol = l.tokenPos(te.GetStart())
+						hasPos = true
 					}
+				}
+			} else if ao := ac.AsAutoObject(); ao != nil {
+				// Dim x As New TypeName
+				if ct := ao.ClassTypeName(); ct != nil {
+					typeName = strings.TrimSpace(ct.GetText())
+					typeNameLine, typeNameCol = l.tokenPos(ct.GetStart())
+					hasPos = true
 				}
 			}
 		}
 		if name != "" {
 			line, col := l.tokenPos(ident.GetStart())
 			l.table.Symbols = append(l.table.Symbols, Symbol{
-				Name:         name,
-				TypeName:     typeName,
-				Scope:        l.scope,
-				Line:         line,
-				Col:          col,
-				TypeNameLine: typeNameLine,
-				TypeNameCol:  typeNameCol,
+				Name:           name,
+				TypeName:       typeName,
+				Scope:          l.scope,
+				Line:           line,
+				Col:            col,
+				TypeNameLine:   typeNameLine,
+				TypeNameCol:    typeNameCol,
+				HasTypeNamePos: hasPos,
 			})
 		}
 	}
@@ -109,62 +121,123 @@ func (l *symbolListener) EnterVariableDcl(ctx *vbaantlr.VariableDclContext) {
 
 // --- Set 代入（Set x = New TypeName） ---
 
+// EnterSetStatement は "Set <変数> = New <型>" / "Set <変数> = CreateObject("ProgID")" から
+// 変数の型を登録する。左辺が単純な変数名でない（obj.Prop / arr(i) / With 内の .Member）場合は対象外。
 func (l *symbolListener) EnterSetStatement(ctx *vbaantlr.SetStatementContext) {
-	// "Set <lhs> = <rhs>"
-	// SetStatement: SET ws implicitCallStmt_S EQ ws? valueStmt
-	// lhs からシンボル名を取得するのは複雑なため、テキストを解析
-	text := ctx.GetText()
-	// 簡易パース: "Set<name>=New<type>" または "Set<name>=<type>"
-	lower := strings.ToLower(text)
-	if !strings.HasPrefix(lower, "set") {
+	lex, rhs := ctx.LExpression(), ctx.Expression()
+	if lex == nil || rhs == nil {
 		return
 	}
-	inner := text[3:]
-	eqIdx := strings.Index(inner, "=")
-	if eqIdx < 0 {
+	nameTok, name := simpleLExprName(lex)
+	if nameTok == nil || name == "" {
 		return
 	}
-	lhs := strings.TrimSpace(inner[:eqIdx])
-	rhs := strings.TrimSpace(inner[eqIdx+1:])
-
-	rhsLow := strings.ToLower(rhs)
-	if strings.HasPrefix(rhsLow, "new") {
-		// New TypeName
-		typeName := strings.TrimSpace(rhs[3:])
-		if idx := strings.IndexAny(typeName, ".("); idx >= 0 {
-			typeName = typeName[:idx]
+	if ne := rhs.NewExpress(); ne != nil {
+		// New TypeName / New Lib.TypeName → 最後の名前を型名とし、その位置を型名トークンにする
+		if inner := ne.Expression(); inner != nil && inner.LExpression() != nil {
+			if typeTok, typeName := lastNameOf(inner.LExpression()); typeTok != nil && typeName != "" {
+				l.upsertSymbol(name, nameTok, typeName, typeTok)
+			}
 		}
-		if lhs != "" && typeName != "" {
-			l.upsertSymbol(lhs, typeName, ctx.GetStart())
-		}
-	} else if m := reCreateObject.FindStringSubmatch(rhs); m != nil {
-		// CreateObject("ProgID") → ProgID の最後のコンポーネントを型名とする
-		progID := m[1]
+		return
+	}
+	if progID := createObjectProgID(rhs); progID != "" {
+		// CreateObject("ProgID") → ProgID の最後のコンポーネントを型名とする（ソース上に型名トークンはない）
 		parts := strings.Split(progID, ".")
-		typeName := parts[len(parts)-1]
-		if lhs != "" && typeName != "" {
-			l.upsertSymbol(lhs, typeName, ctx.GetStart())
+		if typeName := parts[len(parts)-1]; typeName != "" {
+			l.upsertSymbol(name, nameTok, typeName, nil)
 		}
 	}
 }
 
-// upsertSymbol は Set 代入で型が判明した変数を登録する。start は Set 文の先頭トークン。
-func (l *symbolListener) upsertSymbol(name, typeName string, start antlr.Token) {
+// identOfName は name 規則から識別子部分（型接尾辞を除く）を返す。
+func identOfName(n vbaantlr.INameContext) vbaantlr.IAmbiguousIdentifierContext {
+	if n == nil {
+		return nil
+	}
+	if un := n.UntypedName(); un != nil {
+		return un.AmbiguousIdentifier()
+	}
+	if tn := n.TypedName(); tn != nil {
+		return tn.AmbiguousIdentifier()
+	}
+	return nil
+}
+
+// simpleLExprName は lExpression が単純な名前のとき、その識別子の先頭トークンと名前を返す。
+func simpleLExprName(lex vbaantlr.ILExpressionContext) (antlr.Token, string) {
+	sn := lex.SimpleNameExpression()
+	if sn == nil {
+		return nil, ""
+	}
+	id := identOfName(sn.Name())
+	if id == nil {
+		return nil, ""
+	}
+	return id.GetStart(), id.GetText()
+}
+
+// lastNameOf は "Foo" または "Lib.Foo" の形の lExpression から最後の名前とその先頭トークンを返す。
+func lastNameOf(lex vbaantlr.ILExpressionContext) (antlr.Token, string) {
+	if tok, name := simpleLExprName(lex); tok != nil {
+		return tok, name
+	}
+	if lex.PERIOD() != nil {
+		if un := lex.UnrestrictedName(); un != nil {
+			return un.GetStart(), un.GetText()
+		}
+	}
+	return nil, ""
+}
+
+// createObjectProgID は式が CreateObject("ProgID", ...) の呼び出しなら ProgID を返す。
+func createObjectProgID(expr vbaantlr.IExpressionContext) string {
+	lex := expr.LExpression()
+	if lex == nil || lex.LPAREN() == nil || lex.ArgumentList() == nil {
+		return ""
+	}
+	callee := lex.LExpression()
+	if callee == nil {
+		return ""
+	}
+	calleeName := ""
+	if callee.SimpleNameExpression() != nil {
+		calleeName = callee.GetText()
+	} else if un := callee.UnrestrictedName(); un != nil {
+		calleeName = un.GetText() // VBA.CreateObject(...)
+	}
+	if !strings.EqualFold(calleeName, "CreateObject") {
+		return ""
+	}
+	if m := reProgIDArg.FindStringSubmatch(lex.ArgumentList().GetText()); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// upsertSymbol は Set 代入で型が判明した変数を登録する。
+// nameTok は左辺の変数名トークン、typeTok は型名トークン（ソース上にない場合は nil）。
+// 同じスコープに既存のシンボルがあれば、型が未設定の場合のみ型を補う（宣言位置は変えない）。
+func (l *symbolListener) upsertSymbol(name string, nameTok antlr.Token, typeName string, typeTok antlr.Token) {
 	for i := range l.table.Symbols {
-		if strings.EqualFold(l.table.Symbols[i].Name, name) &&
-			l.table.Symbols[i].Scope == l.scope {
-			if l.table.Symbols[i].TypeName == "" {
-				l.table.Symbols[i].TypeName = typeName
+		s := &l.table.Symbols[i]
+		if strings.EqualFold(s.Name, name) && s.Scope == l.scope {
+			if s.TypeName == "" {
+				s.TypeName = typeName
+				s.TypeNameLine, s.TypeNameCol, s.HasTypeNamePos = 0, 0, false
+				if typeTok != nil {
+					s.TypeNameLine, s.TypeNameCol = l.tokenPos(typeTok)
+					s.HasTypeNamePos = true
+				}
 			}
 			return
 		}
 	}
-	line, col := l.tokenPos(start)
-	l.table.Symbols = append(l.table.Symbols, Symbol{
-		Name:     name,
-		TypeName: typeName,
-		Scope:    l.scope,
-		Line:     line,
-		Col:      col,
-	})
+	sym := Symbol{Name: name, TypeName: typeName, Scope: l.scope}
+	sym.Line, sym.Col = l.tokenPos(nameTok)
+	if typeTok != nil {
+		sym.TypeNameLine, sym.TypeNameCol = l.tokenPos(typeTok)
+		sym.HasTypeNamePos = true
+	}
+	l.table.Symbols = append(l.table.Symbols, sym)
 }
