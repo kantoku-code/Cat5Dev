@@ -6,3 +6,14 @@ tools/**
 tsconfig.json
 **/*.map
 tests/**
+temp/**
+.cat5dev-pull-*/**
+scripts/*.js
+.claude/**
+CLAUDE.md
+LSP_PLAN.md
+cat5dev.toml
+**/*.vsix
+bin/*-journal
+bin/*-wal
+bin/*-shm

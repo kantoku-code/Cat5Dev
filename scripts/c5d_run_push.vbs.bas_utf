@@ -1,29 +1,19 @@
+Option Explicit
+Dim app, service, args
 On Error Resume Next
-Dim ag_catia, ag_sys, ag_args()
-WScript.Echo "VBS: Start"
-Set ag_catia = GetObject(, "CATIA.Application")
-WScript.Echo "VBS: CATIA Err=" & Err.Number
-If Err.Number <> 0 Then WScript.Quit 1
 Err.Clear
-Set ag_sys = ag_catia.SystemService
-WScript.Echo "VBS: SystemService Err=" & Err.Number
-If Err.Number <> 0 Or ag_sys Is Nothing Then WScript.Quit 1
+Set app = GetObject(, "CATIA.Application")
+If Err.Number <> 0 Then WScript.Quit 10
+If app Is Nothing Then WScript.Quit 10
 Err.Clear
-WScript.Echo "VBS: Calling ExecuteScript..."
-ag_sys.ExecuteScript "{{TEMP_DIR}}", 1, "c5d_push.catvbs", "CATMain", ag_args
-WScript.Echo "VBS: ExecuteScript returned Err=" & Err.Number
-Dim fso2, doneFile, startTime
-Set fso2 = CreateObject("Scripting.FileSystemObject")
-doneFile = "{{TEMP_DIR}}\c5d_push_done.txt"
-WScript.Echo "VBS: doneFile exists=" & fso2.FileExists(doneFile)
-startTime = Now
-Do While Not fso2.FileExists(doneFile)
-    WScript.Sleep 500
-    If DateDiff("s", startTime, Now) > 30 Then
-        WScript.Echo "VBS: Polling timeout"
-        Exit Do
-    End If
-Loop
-WScript.Echo "VBS: Poll done, doneFile exists=" & fso2.FileExists(doneFile)
-If fso2.FileExists(doneFile) Then fso2.DeleteFile doneFile
-WScript.Echo "VBS: End"
+Set service = app.SystemService
+If Err.Number <> 0 Then WScript.Quit 11
+If service Is Nothing Then WScript.Quit 11
+args = Array()
+Err.Clear
+Call service.ExecuteScript("{{TEMP_DIR}}", 1, "operation.catvbs", "CATMain", args)
+If Err.Number <> 0 Then
+    WScript.StdErr.WriteLine CStr(Err.Number) & ": " & Err.Description
+    WScript.Quit 12
+End If
+WScript.Quit 0

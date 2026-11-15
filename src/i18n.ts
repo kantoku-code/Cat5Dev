@@ -42,6 +42,14 @@ export async function setLanguage(lang: Language): Promise<void> {
 
 export const messages = {
     ja: {
+        'sync.busy': '別のCATIA操作が実行中、または前回操作の終了を確認できません。終了後に再実行してください。',
+        'sync.pullDeletions': '以下のローカルモジュールはCATIA側に存在しません:\n{0}\n\n削除しますか？「残す」を選ぶと上書き・追加だけ続行します。',
+        'sync.localChanged': '未保存の編集、またはPull中のローカル変更を検出したため中止しました。保存して再実行してください。',
+        'sync.recoveryFailed': 'Pullの復元が完了しませんでした。退避先: {0}\n未復旧: {1}',
+        'sync.partialFailure': 'CATIA操作に失敗がありました。成功: {0}件、失敗: {1}件。詳細はOutputを確認してください。',
+        'sync.unconfirmed': 'CATIA操作の完了を確認できません。再操作を防止しています。CATIA側の状態を確認してください。',
+        'sync.lockRecovered': '同期ロックの復旧が完了しました。',
+        'sync.lockRecoveryBlocked': '同期ロックを安全に解除できません。実行中の操作が終了しない場合はCATIAを終了し、VSCodeウィンドウを再読み込みしてから復旧コマンドを実行してください。',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',
@@ -146,6 +154,14 @@ export const messages = {
         'log.push.cscriptEnd': '[Push] cscript終了 error={0} stdout="{1}" stderr="{2}"',
     },
     en: {
+        'sync.busy': 'Another CATIA operation is running, or its completion is unconfirmed. Try again after it finishes.',
+        'sync.pullDeletions': 'These local modules do not exist in CATIA:\n{0}\n\nDelete them? Choose Keep to continue with updates and additions only.',
+        'sync.localChanged': 'Pull stopped because a module has unsaved edits or local files changed during Pull. Save and try again.',
+        'sync.recoveryFailed': 'Pull recovery is incomplete. Backup: {0}\nUnrestored: {1}',
+        'sync.partialFailure': 'CATIA operation failed. Succeeded: {0}; failures: {1}. See Output for details.',
+        'sync.unconfirmed': 'CATIA completion could not be confirmed. Further operations are blocked. Check the state in CATIA.',
+        'sync.lockRecovered': 'The synchronization lock has been recovered.',
+        'sync.lockRecoveryBlocked': 'The synchronization lock cannot be safely released. If the operation does not finish, close CATIA, reload this VSCode window, and run recovery again.',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',
@@ -250,6 +266,14 @@ export const messages = {
         'log.push.cscriptEnd': '[Push] cscript finished error={0} stdout="{1}" stderr="{2}"',
     },
     zh: {
+        'sync.busy': '另一个CATIA操作正在运行，或无法确认其已结束。请在操作结束后重试。',
+        'sync.pullDeletions': '以下本地模块在CATIA中不存在:\n{0}\n\n是否删除？选择保留将仅继续更新和添加。',
+        'sync.localChanged': '检测到未保存的编辑或Pull期间的本地更改，已停止Pull。请保存后重试。',
+        'sync.recoveryFailed': 'Pull恢复未完成。备份: {0}\n未恢复: {1}',
+        'sync.partialFailure': 'CATIA操作失败。成功: {0}；失败: {1}。详情请查看输出面板。',
+        'sync.unconfirmed': '无法确认CATIA操作已完成。已阻止后续操作，请检查CATIA中的状态。',
+        'sync.lockRecovered': '同步锁已恢复。',
+        'sync.lockRecoveryBlocked': '无法安全释放同步锁。如果操作无法结束，请关闭CATIA，重新加载VSCode窗口，然后再次运行恢复命令。',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',
