@@ -254,7 +254,11 @@ func declarationText(sym *Symbol) string {
 		if sym.WithEvents {
 			kw += " WithEvents"
 		}
-		return kw + " " + sym.Name + arr + asClause(elem, sym.AsNew)
+		s := kw + " " + sym.Name + arr + asClause(elem, sym.AsNew)
+		if h := sym.HintRef(); !h.IsZero() {
+			s += "  ' 型ヒント: " + h.Elem().String()
+		}
+		return s
 	case SymParam:
 		if sym.Owner != nil {
 			for _, p := range sym.Owner.Params {

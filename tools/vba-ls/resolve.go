@@ -113,10 +113,11 @@ func (r *exprResolver) resolveLocalHead(sg ExprSegment, line int) (TypeRef, bool
 	if sym := r.table.Lookup(sg.Name, line); sym != nil {
 		switch sym.Kind {
 		case SymVariable, SymParam, SymConst:
-			if sym.TypeName == "" {
+			t := sym.EffectiveTypeRef(r.types) // 'As 型 の型ヒントがあればそれ
+			if t.Name == "" {
 				return TypeRef{}, false
 			}
-			return r.applyIndex(sym.TypeRef(), sg.Calls)
+			return r.applyIndex(t, sg.Calls)
 		case SymProcedure, SymProperty:
 			if sym.Decl == nil || !sym.Decl.HasReturn() {
 				return TypeRef{}, false

@@ -512,7 +512,49 @@ func (l *symbolListener) EnterVariableDcl(ctx *vbaantlr.VariableDclContext) {
 	ref, typeTok, asNew := typeRefOfAsClause(ac)
 	sym.TypeName, sym.TypeLib, sym.AsNew = ref.Name, ref.Lib, asNew
 	l.setTypePos(&sym, typeTok)
+	if hintable(sym) && singleDeclarator(ctx) {
+		if h, ok := typeHint(l.lines, sym.Line); ok {
+			sym.HintName, sym.HintLib = h.Name, h.Lib
+			sym.Doc = docAbove(l.lines, sym.Line) // 行末コメントはヒントなので説明にしない
+		}
+	}
 	l.addSymbol(sym)
+}
+
+// hintable は型ヒント注釈の対象（Object・Variant・型なしの変数）かを返す。
+func hintable(s Symbol) bool {
+	if s.TypeLib != "" && !strings.EqualFold(s.TypeLib, "VBA") {
+		return false
+	}
+	return s.TypeName == "" || strings.EqualFold(s.TypeName, "Object") || strings.EqualFold(s.TypeName, "Variant")
+}
+
+// singleDeclarator は宣言子が 1 つだけの宣言（Dim a As Object 'As X）かを返す（Dim a, b 'As X は対象外）。
+func singleDeclarator(ctx *vbaantlr.VariableDclContext) bool {
+	if list, ok := ctx.GetParent().(interface{ AllCOMMA() []antlr.TerminalNode }); ok {
+		return len(list.AllCOMMA()) == 0
+	}
+	return true
+}
+
+// typeHintRe は型ヒント注釈（コメント全体が "@As 型" または "As 型"）。型は Ident か Lib.Ident。
+var typeHintRe = regexp.MustCompile(`(?i)^\s*@?As\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$`)
+
+// typeHint は行 line の行末コメントが型ヒント注釈ならその型を返す。
+func typeHint(lines []string, line int) (TypeRef, bool) {
+	if line < 0 || line >= len(lines) {
+		return TypeRef{}, false
+	}
+	c, ok := trailingCommentRaw(lines[line])
+	if !ok {
+		return TypeRef{}, false
+	}
+	m := typeHintRe.FindStringSubmatch(c)
+	if m == nil {
+		return TypeRef{}, false
+	}
+	ref := ParseTypeName(m[1])
+	return ref, ref.Name != ""
 }
 
 func (l *symbolListener) EnterWitheventsVariableDcl(ctx *vbaantlr.WitheventsVariableDclContext) {
@@ -919,6 +961,14 @@ func docAbove(lines []string, startLine int) string {
 
 // trailingComment は行末コメント（コードの後ろの '）の本文を返す。
 func trailingComment(line string) string {
+	if c, ok := trailingCommentRaw(line); ok {
+		return strings.Trim(c, docTrim)
+	}
+	return ""
+}
+
+// trailingCommentRaw は行末コメントの ' より後ろをそのまま返す（行全体がコメント・コメントなしは false）。
+func trailingCommentRaw(line string) (string, bool) {
 	inStr := false
 	for i := 0; i < len(line); i++ {
 		switch c := line[i]; {
@@ -926,12 +976,12 @@ func trailingComment(line string) string {
 			inStr = !inStr
 		case c == '\'' && !inStr:
 			if strings.TrimSpace(line[:i]) == "" {
-				return "" // 行全体がコメント
+				return "", false // 行全体がコメント
 			}
-			return strings.Trim(line[i+1:], docTrim)
+			return line[i+1:], true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // declDoc は宣言のドキュメント（行末コメントがあればそれ、なければ直上のコメント）を返す。

@@ -232,6 +232,9 @@ func plainMember(s *Symbol, includePrivate bool) (MemberInfo, TypeRef, bool) {
 		m.ReadOnly = s.Kind == SymConst
 		t = s.TypeRef()
 		m.ReturnType = t.String()
+		if h := s.HintRef(); !h.IsZero() {
+			t = h // 型ヒント（解決できなければ連鎖は止まる。Object のときと同じ）
+		}
 	case SymProcedure:
 		m.Kind = MemberKindMethod
 		if d := s.Decl; d != nil {

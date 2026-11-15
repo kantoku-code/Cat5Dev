@@ -126,11 +126,31 @@ type Symbol struct {
 	TypeNameLine   int
 	TypeNameCol    int
 	HasTypeNamePos bool
+	// HintName / HintLib は Object・Variant・型なしの変数の行末の型ヒント注釈（'@As 型 / 'As 型）の型。
+	// 宣言の型（TypeName）は書き換えず、解決のときだけ EffectiveTypeRef で使う。
+	HintName string
+	HintLib  string
 }
 
 // TypeRef はシンボルの型参照を返す。
 func (s *Symbol) TypeRef() TypeRef {
 	return TypeRef{Lib: s.TypeLib, Name: s.TypeName, Array: s.IsArray}
+}
+
+// HintRef は型ヒント注釈の型参照を返す（無ければゼロ値）。
+func (s *Symbol) HintRef() TypeRef {
+	if s.HintName == "" {
+		return TypeRef{}
+	}
+	return TypeRef{Lib: s.HintLib, Name: s.HintName, Array: s.IsArray}
+}
+
+// EffectiveTypeRef は解決に使う型を返す。型ヒントがあり、その型が解決できればヒント、そうでなければ宣言の型。
+func (s *Symbol) EffectiveTypeRef(types *CompositeResolver) TypeRef {
+	if h := s.HintRef(); !h.IsZero() && types.TypeExists(h) {
+		return h
+	}
+	return s.TypeRef()
 }
 
 // QualifiedTypeName は表示用の型名（書かれていた修飾子付き、配列なら "()" 付き）を返す。
