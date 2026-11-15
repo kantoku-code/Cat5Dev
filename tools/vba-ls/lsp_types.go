@@ -148,24 +148,50 @@ type TextDocumentPositionParams struct {
 	Position     Position               `json:"position"`
 }
 
+// CompletionTriggerKind: 1=Invoked（Ctrl+Space・入力）, 2=TriggerCharacter, 3=TriggerForIncompleteCompletions
+const CompletionTriggerCharacter = 2
+
+type CompletionContext struct {
+	TriggerKind      int    `json:"triggerKind"`
+	TriggerCharacter string `json:"triggerCharacter,omitempty"`
+}
+
 type CompletionParams struct {
 	TextDocumentPositionParams
+	Context *CompletionContext `json:"context,omitempty"`
 }
 
 type CompletionItemKind int
 
 const (
 	CompletionItemKindMethod     CompletionItemKind = 2
+	CompletionItemKindFunction   CompletionItemKind = 3
 	CompletionItemKindField      CompletionItemKind = 5
+	CompletionItemKindVariable   CompletionItemKind = 6
+	CompletionItemKindClass      CompletionItemKind = 7
+	CompletionItemKindInterface  CompletionItemKind = 8
+	CompletionItemKindModule     CompletionItemKind = 9
 	CompletionItemKindProperty   CompletionItemKind = 10
+	CompletionItemKindEnum       CompletionItemKind = 13
+	CompletionItemKindKeyword    CompletionItemKind = 14
 	CompletionItemKindEnumMember CompletionItemKind = 20
+	CompletionItemKindConstant   CompletionItemKind = 21
+	CompletionItemKindStruct     CompletionItemKind = 22
 	CompletionItemKindEvent      CompletionItemKind = 23
 )
 
+type CompletionItemLabelDetails struct {
+	Detail      string `json:"detail,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 type CompletionItem struct {
-	Label  string             `json:"label"`
-	Kind   CompletionItemKind `json:"kind,omitempty"`
-	Detail string             `json:"detail,omitempty"`
+	Label         string                      `json:"label"`
+	LabelDetails  *CompletionItemLabelDetails `json:"labelDetails,omitempty"`
+	Kind          CompletionItemKind          `json:"kind,omitempty"`
+	Detail        string                      `json:"detail,omitempty"`
+	Documentation *MarkupContent              `json:"documentation,omitempty"`
+	SortText      string                      `json:"sortText,omitempty"`
 }
 
 // --- Hover ---

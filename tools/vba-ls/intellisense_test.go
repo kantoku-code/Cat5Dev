@@ -302,7 +302,7 @@ func TestDiagnosticsSeverity(t *testing.T) {
 		{"組み込みの Scripting.File は Error", "Sub A()\n    Dim fso As New Scripting.FileSystemObject\n    fso.GetFile(\"a\").Bogus\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
 		{"Err の存在しないメンバーは Error", "Sub A()\n    Err.Bogus\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
 		{"Err / Debug の正しいメンバー", "Sub A()\n    If Err.Number <> 0 Then Debug.Print Err.Description; Err.Source\n    Err.Clear\n    Err.Raise vbObjectError + 1\n    Debug.Assert True\nEnd Sub\n", nil},
-		{"TLB の名前でも組み込み型なら Error","Sub A()\n    Dim c As New Collection\n    c.Part\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
+		{"TLB の名前でも組み込み型なら Error", "Sub A()\n    Dim c As New Collection\n    c.Part\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lfAndCRLF(t, tc.src, func(t *testing.T, src string) {

@@ -645,3 +645,19 @@ func (c *CompositeResolver) ProjectModules() []TypeInfo {
 	}
 	return out
 }
+
+// ProjectTypes はプロジェクト（ProjectLister を実装するプロバイダ）の型（クラス・フォーム・Public UDT / Enum）を返す。
+// TLB の型を含まないので、識別子補完で他モジュールの Public Enum を集めるのに使う。
+func (c *CompositeResolver) ProjectTypes() []TypeInfo {
+	if c == nil {
+		return nil
+	}
+	var out []TypeInfo
+	for _, p := range c.providers {
+		_, isProject := p.(ProjectLister)
+		if l, ok := p.(TypeLister); ok && isProject {
+			out = append(out, l.Types()...)
+		}
+	}
+	return out
+}

@@ -247,7 +247,7 @@ func (h *lspHandler) initializeResult() InitializeResult {
 		Capabilities: ServerCapabilities{
 			TextDocumentSync: TextDocumentSyncKindFull,
 			CompletionProvider: &CompletionOptions{
-				TriggerCharacters: []string{"."},
+				TriggerCharacters: []string{".", " "},
 			},
 			HoverProvider:      true,
 			DefinitionProvider: true,
@@ -403,7 +403,11 @@ func (h *lspHandler) completion(p CompletionParams) []CompletionItem {
 	if doc == nil {
 		return nil
 	}
-	return BuildCompletions(doc, int(p.Position.Line), int(p.Position.Character))
+	trigger := ""
+	if p.Context != nil && p.Context.TriggerKind == CompletionTriggerCharacter {
+		trigger = p.Context.TriggerCharacter
+	}
+	return BuildCompletionsTrigger(doc, int(p.Position.Line), int(p.Position.Character), trigger)
 }
 
 func (h *lspHandler) hover(p HoverParams) *Hover {
