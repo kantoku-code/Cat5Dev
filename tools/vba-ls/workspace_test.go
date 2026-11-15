@@ -341,3 +341,31 @@ func TestWorkspaceSelfClassPrivateIsLoose(t *testing.T) {
 		t.Error("クラス内では自クラス型の Private も見える（現仕様）")
 	}
 }
+
+func TestWorkspaceHover(t *testing.T) {
+	_, types, dir := newTestWorkspace(t, wsFixture)
+	for _, tc := range []struct {
+		name, file, src, want string
+	}{
+		{"Property Get とドキュメント", "Module1.bas_utf", "Sub T()\n    Dim o As clsA\n    o.Do|c\nEnd Sub\n",
+			"```vba\nPublic Property Get Doc() As PartDocument\n```\n\n部品を返す"},
+		{"Property Get / Let", "Module1.bas_utf", "Sub T()\n    Dim o As clsA\n    o.Val|ue = 1\nEnd Sub\n",
+			"```vba\nPublic Property Get Value() As Long\nPublic Property Let Value(ByVal v As Long)\n```"},
+		{"Module1.Pub", "clsA.cls_utf", "Sub T()\n    Module1.Pu|b\nEnd Sub\n", "```vba\nPublic Sub Pub()\n```"},
+		{"非修飾の NewA", "frmA.frm_utf", "Sub T()\n    Set o = New|A()\nEnd Sub\n", "```vba\nPublic Function NewA() As clsA\n```\n\nA を作る"},
+		{"変数", "frmA.frm_utf", "Sub T()\n    x = Module1.|g\nEnd Sub\n", "```vba\nPublic g As Long\n```"},
+		{"As clsA", "Module1.bas_utf", "Sub T()\n    Dim o As cls|A\nEnd Sub\n", "```vba\nClass clsA\n```\n\nテスト用クラス A"},
+		{"モジュール名", "clsA.cls_utf", "Sub T()\n    Mod|ule1.Pub\nEnd Sub\n", "```vba\nModule Module1\n```"},
+		{"フォーム", "clsA.cls_utf", "Sub T()\n    frm|A.Show\nEnd Sub\n", "```vba\nUserForm frmA\n```"},
+		{"他モジュールの Public Enum", "clsA.cls_utf", "Sub T()\n    Dim k As EKi|nd\nEnd Sub\n", "```vba\nPublic Enum EKind\n```"},
+		{"TLB の型名は対象外", "clsA.cls_utf", "Sub T()\n    Dim d As PartDocu|ment\nEnd Sub\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, line, char := caretPos(t, withFixture(tc.file, tc.src))
+			doc := NewDocument(pathToURI(filepath.Join(dir, tc.file)), src, ParseSymbols(src), types)
+			if got := ResolveHover(doc, line, char); got != tc.want {
+				t.Errorf("hover = %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}

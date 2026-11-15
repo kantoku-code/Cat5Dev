@@ -49,11 +49,10 @@ func ResolveHover(doc *Document, line, utf16Char int) string {
 	}
 	last := ch.Segs[len(ch.Segs)-1]
 	if !ch.LeadingDot && len(ch.Segs) == 1 {
-		sym := doc.Table.Lookup(last.Name, line)
-		if sym == nil {
-			return ""
+		if sym := doc.Table.Lookup(last.Name, line); sym != nil {
+			return symbolHover(sym)
 		}
-		return symbolHover(sym)
+		return projectHover(doc, last)
 	}
 	owner := MemberChain{Segs: ch.Segs[:len(ch.Segs)-1], LeadingDot: ch.LeadingDot}
 	t, ok := newExprResolver(doc).resolveChain(owner, line)
@@ -64,7 +63,59 @@ func ResolveHover(doc *Document, line, utf16Char int) string {
 	if !ok {
 		return ""
 	}
+	return memberHover(m)
+}
+
+// projectHover は自モジュールに無い単独の識別子（標準モジュールの Public・モジュール名・ワークスペースの型）のホバーを返す。
+func projectHover(doc *Document, sg ExprSegment) string {
+	if _, m, ok := doc.Types.ProjectMember(sg.Name); ok {
+		return memberHover(m)
+	}
+	if ti, ok := projectType(doc, sg.Name); ok {
+		return typeHover(ti)
+	}
+	return ""
+}
+
+// projectType はモジュール名（Main / frmMenu）またはワークスペースの型名（clsA / Public UDT・Enum）を型情報にする。
+// TLB・組み込みの型（宣言元の無いもの）は対象外。
+func projectType(doc *Document, name string) (TypeInfo, bool) {
+	if ref, ok := doc.Types.ModuleRef(name); ok {
+		if ti, _, ok := doc.Types.Resolve(ref); ok {
+			return ti, true
+		}
+	}
+	if ti, _, ok := doc.Types.Resolve(TypeRef{Name: name}); ok && ti.Origin != nil {
+		return ti, true
+	}
+	return TypeInfo{}, false
+}
+
+// memberHover はメンバーのホバー。ワークスペースのメンバーなら宣言（Property は Get / Let / Set の各行）を表示する。
+func memberHover(m MemberInfo) string {
+	if m.Origin != nil && len(m.Origin.Syms) > 0 {
+		decls := make([]string, len(m.Origin.Syms))
+		for i, s := range m.Origin.Syms {
+			decls[i] = declarationText(s)
+		}
+		return codeBlock(strings.Join(decls, "\n"), m.Doc)
+	}
 	return codeBlock(m.Signature(), m.Doc)
+}
+
+// typeHover はワークスペースの型（クラス・フォーム・標準モジュール・UDT・Enum）のホバー。
+func typeHover(ti TypeInfo) string {
+	if ti.Origin != nil && len(ti.Origin.Syms) > 0 {
+		return codeBlock(declarationText(ti.Origin.Syms[0]), ti.Doc)
+	}
+	kw := "Class"
+	switch {
+	case ti.Kind == TypeKindModule:
+		kw = "Module"
+	case ti.Base == formBaseType:
+		kw = "UserForm"
+	}
+	return codeBlock(kw+" "+ti.Ref.Name, ti.Doc)
 }
 
 func codeBlock(code, doc string) string {
