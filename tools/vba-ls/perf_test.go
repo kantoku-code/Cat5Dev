@@ -52,12 +52,16 @@ func TestParseSampleDir(t *testing.T) {
 	files := sampleFiles(t)
 	var total time.Duration
 	var maxDur time.Duration
-	maxFile, fallbacks, lines := "", 0, 0
+	maxFile, fallbacks, lines, repaired := "", 0, 0, 0
 	for _, f := range files {
 		src := readSample(t, f)
 		table := ParseSymbols(src)
 		st := table.Stats
 		total += st.Duration
+		repaired += st.Repaired
+		if st.Repaired > 0 {
+			t.Errorf("正しいコードを補修した: %s（%d 行）", filepath.Base(f), st.Repaired)
+		}
 		lines += strings.Count(src, "\n") + 1
 		if st.Duration > maxDur {
 			maxDur, maxFile = st.Duration, filepath.Base(f)
@@ -67,7 +71,7 @@ func TestParseSampleDir(t *testing.T) {
 			t.Logf("LL フォールバック: %s（SLL 失敗 %d 行目、LL の構文エラー %d 件、%v）", filepath.Base(f), st.SLLErrorLine, st.SyntaxErrors, st.Duration)
 		}
 	}
-	t.Logf("%d ファイル・%d 行: 合計 %v、最大 %s（%v）、LL フォールバック %d 件", len(files), lines, total, maxFile, maxDur, fallbacks)
+	t.Logf("%d ファイル・%d 行: 合計 %v、最大 %s（%v）、LL フォールバック %d 件、補修 %d 行", len(files), lines, total, maxFile, maxDur, fallbacks, repaired)
 	if b := os.Getenv("CAT5DEV_PARSE_BUDGET_SEC"); b != "" {
 		sec, err := strconv.ParseFloat(b, 64)
 		if err != nil {

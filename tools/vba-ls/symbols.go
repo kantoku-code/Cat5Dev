@@ -171,6 +171,7 @@ type ParseStats struct {
 	SyntaxErrors int           // LL 段で検出した構文エラーの数（SLL で成功したときは 0）
 	SLLErrorLine int           // SLL 段が失敗したトークンの行（1-based、計測ログ用）
 	Duration     time.Duration // 字句解析・構文解析・シンボル収集の合計時間
+	Repaired     int           // 解析の前に末尾を補修した論理行の数（入力途中の行。正しいコードでは 0）
 }
 
 // SymbolTable はファイル単位のシンボルテーブル。

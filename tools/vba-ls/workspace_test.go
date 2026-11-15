@@ -275,7 +275,8 @@ func TestWorkspaceMeAndModuleAccess(t *testing.T) {
 }
 
 func TestWorkspaceDiagnostics(t *testing.T) {
-	files := map[string]string{"clsBad.cls_utf": "Public Sub A(\nEnd Sub\nPublic Sub B()\nEnd Sub\n"}
+	// 末尾の補修（repair.go）で直らない構文エラー（ブロックの未終端）
+	files := map[string]string{"clsBad.cls_utf": "Public Sub A()\n    Do\nEnd Sub\nPublic Sub B()\nEnd Sub\n"}
 	for k, v := range wsFixture {
 		files[k] = v
 	}

@@ -16,12 +16,23 @@ func ParseSymbolsLines(src string, lines []string) *SymbolTable {
 }
 
 func parseModule(src string, lines []string, mode parseMode) *SymbolTable {
+	return parseModuleOpt(src, lines, mode, true)
+}
+
+// parseModuleOpt は repair が true なら入力途中の行の末尾を補修してから解析する（repair.go）。
+// 補修は位置を変えないので、シンボルの位置・ドキュメントは元の lines から求める。
+func parseModuleOpt(src string, lines []string, mode parseMode, repair bool) *SymbolTable {
 	start := time.Now()
+	repaired := 0
+	if repair {
+		src, repaired = repairSource(src, lines)
+	}
 	tree, stats := parseTree(src, mode)
 	l := newSymbolListener(lines)
 	antlr.ParseTreeWalkerDefault.Walk(l, tree)
 	stats.Duration = time.Since(start)
 	stats.SyntaxErrors += l.grammarErrors // 文法では表していない制約の違反（For の ", i" など）
+	stats.Repaired = repaired
 	l.table.Stats = stats
 	l.finish()
 	return l.table

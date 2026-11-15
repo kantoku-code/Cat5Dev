@@ -142,7 +142,8 @@ func TestModuleSurfaceHash(t *testing.T) {
 	if ti := f.typeInfo(); ti.Complete || ti.Base != formBaseType {
 		t.Errorf("form typeInfo = %+v", ti)
 	}
-	bad := entryOf(t, "clsBad", ModuleClass, "Public Sub A(\nEnd Sub\n")
+	// 末尾の補修（repair.go）で直らない構文エラー（ブロックの未終端）
+	bad := entryOf(t, "clsBad", ModuleClass, "Public Sub A()\n    Do\nEnd Sub\n")
 	if bad.Table.Stats.SyntaxErrors == 0 || bad.typeInfo().Complete {
 		t.Errorf("構文エラーのあるクラスは Complete にしない: %+v", bad.Table.Stats)
 	}

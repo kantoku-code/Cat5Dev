@@ -140,6 +140,12 @@ func (ll logicalLine) Physical(off int) (line, byteCol int) {
 // maskCode は文字列リテラルの中身とコメント（' と、文頭 / ":" の直後の Rem）を空白にした文字列を返す（バイト長は保持）。
 // 末尾が文字列の中か、コメントの中かも返す。
 func maskCode(s string) (masked string, inString, inComment bool) {
+	masked, inString, at := maskCodeAt(s)
+	return masked, inString, at >= 0
+}
+
+// maskCodeAt は maskCode と同じ処理をし、コメントがあればその開始位置（' または Rem の位置）を、なければ -1 を返す。
+func maskCodeAt(s string) (masked string, inString bool, commentAt int) {
 	b := []byte(s)
 	stmtStart := true // 文の先頭（行頭または ":" の後）で、まだ空白しか見ていない
 	for i := 0; i < len(b); i++ {
@@ -160,7 +166,7 @@ func maskCode(s string) (masked string, inString, inComment bool) {
 			for j := i; j < len(b); j++ {
 				b[j] = ' '
 			}
-			return string(b), false, true
+			return string(b), false, i
 		case c == ':':
 			stmtStart = true
 		case isBlankByte(c):
@@ -168,12 +174,12 @@ func maskCode(s string) (masked string, inString, inComment bool) {
 			for j := i; j < len(b); j++ {
 				b[j] = ' '
 			}
-			return string(b), false, true
+			return string(b), false, i
 		default:
 			stmtStart = false
 		}
 	}
-	return string(b), inString, false
+	return string(b), inString, -1
 }
 
 // isRemAt は s[i:] が "Rem" の後に空白か行末が続く形かを返す。
