@@ -590,12 +590,15 @@ eventParameterList
 //---------------------------------------------------------------------------------------
 // 5.3 Module Code Section Structure
 // removed an EOS
+// Cat5Dev: endOfLine* を endOfStatement? に変更し、モジュールレベルの ":" 区切り
+// （例: Dim a As X: Dim b As Y）を受け付ける。endOfStatement は (endOfLine | wsc? COLON wsc?)+
+// なので旧 endOfLine* に COLON を加えたものと同等。endOfStatement* は二重閉包で曖昧になるため使わない。
 proceduralModuleCode
-    : (proceduralModuleCodeElement endOfLine*)*
+    : (proceduralModuleCodeElement endOfStatement?)*
     ;
 
 classModuleCode
-    : (classModuleCodeElement endOfLine*)*
+    : (classModuleCodeElement endOfStatement?)*
     ;
 
 proceduralModuleCodeElement

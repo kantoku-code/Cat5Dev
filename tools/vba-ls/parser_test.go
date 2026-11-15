@@ -172,3 +172,35 @@ func TestDimAsNew(t *testing.T) {
 		})
 	})
 }
+
+// --- 項目16: モジュールレベルの ":" 区切り ---
+
+func TestModuleLevelColonSeparatedDeclarations(t *testing.T) {
+	const (
+		line1 = "Dim s As String: Dim doc As PartDocument"
+		line2 = "Private p As Part : Public d2 As PartDocument"
+		line3 = "Const A = 1: Dim e As Part"
+		line5 = "    Dim a As Part: Dim b As PartDocument"
+	)
+	base := "Option Explicit\n" + line1 + "\n" + line2 + "\n" + line3 + "\nSub M()\n" + line5 + "\nEnd Sub\n"
+	lfAndCRLF(t, base, func(t *testing.T, src string) {
+		table := ParseSymbols(src)
+		for _, want := range []struct {
+			name, scope, typeName string
+			line, col             int
+		}{
+			{"s", "module", "String", 1, 4},
+			{"doc", "module", "PartDocument", 1, u16("Dim s As String: Dim ")},
+			{"p", "module", "Part", 2, 8},
+			{"d2", "module", "PartDocument", 2, u16("Private p As Part : Public ")},
+			{"e", "module", "Part", 3, u16("Const A = 1: Dim ")},
+			{"a", "Sub:M", "Part", 5, 8},
+			{"b", "Sub:M", "PartDocument", 5, u16("    Dim a As Part: Dim ")},
+		} {
+			s := findSym(t, table, want.name, want.scope)
+			if s.TypeName != want.typeName || s.Line != want.line || s.Col != want.col {
+				t.Errorf("%s = %+v, want type %s (%d,%d)", want.name, s, want.typeName, want.line, want.col)
+			}
+		}
+	})
+}
