@@ -239,29 +239,26 @@ func (h *lspHandler) publishDiagnostics(ctx context.Context, conn *jsonrpc2.Conn
 
 // --- ユーティリティ ---
 
+// lineAt は line 行目のカーソル位置より前のテキストを返す。
+// char は LSP の UTF-16 位置。
 func lineAt(content string, line, char int) string {
-	lines := strings.Split(content, "\n")
-	if line >= len(lines) {
+	l, ok := lineText(content, line)
+	if !ok {
 		return ""
 	}
-	l := lines[line]
-	if char > len(l) {
-		char = len(l)
-	}
-	return l[:char]
+	return l[:utf16ToByteOffset(l, char)]
 }
 
 var wordRe = regexp.MustCompile(`\w+`)
 
+// wordAndPrevWord はカーソル位置の語と、その直前に "." で連結された語を返す。
+// char は LSP の UTF-16 位置。
 func wordAndPrevWord(content string, line, char int) (word, prevWord string) {
-	lines := strings.Split(content, "\n")
-	if line >= len(lines) {
+	l, ok := lineText(content, line)
+	if !ok {
 		return
 	}
-	l := lines[line]
-	if char > len(l) {
-		char = len(l)
-	}
+	char = utf16ToByteOffset(l, char)
 	matches := wordRe.FindAllStringIndex(l, -1)
 	for _, m := range matches {
 		if m[0] <= char && char <= m[1] {

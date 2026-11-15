@@ -62,7 +62,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 		tokens = append(tokens, rawToken{
 			line:      sym.Line,
 			col:       sym.Col,
-			length:    len(sym.Name),
+			length:    utf16Len(sym.Name),
 			tokenType: tokenTypeVariable,
 			modifiers: tokenModDeclaration,
 		})
@@ -71,7 +71,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 			tokens = append(tokens, rawToken{
 				line:      sym.TypeNameLine,
 				col:       sym.TypeNameCol,
-				length:    len(sym.TypeName),
+				length:    utf16Len(sym.TypeName),
 				tokenType: tokenTypeType,
 				modifiers: 0,
 			})
@@ -79,18 +79,20 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 	}
 
 	// --- 2. 使用箇所のトークン（宣言以外の識別子出現を走査）---
+	// 正規表現・コメント判定はバイト位置で行い、トークンの列は UTF-16 位置に変換して扱う。
 	lines := strings.Split(src, "\n")
-	for lineIdx, lineText := range lines {
-		// コメント・文字列リテラルを除外するため、コメント開始位置を特定
-		commentStart := commentStartCol(lineText)
+	for lineIdx, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		// コメント・文字列リテラルを除外するため、コメント開始位置（バイト）を特定
+		commentStart := commentStartCol(line)
 
-		matches := identRe.FindAllStringIndex(lineText, -1)
+		matches := identRe.FindAllStringIndex(line, -1)
 		for _, m := range matches {
-			col := m[0]
-			if commentStart >= 0 && col >= commentStart {
+			if commentStart >= 0 && m[0] >= commentStart {
 				break // コメント部分はスキップ
 			}
-			word := lineText[m[0]:m[1]]
+			word := line[m[0]:m[1]]
+			col := byteToUTF16Offset(line, m[0])
 			lower := strings.ToLower(word)
 			if _, ok := catiaVars[lower]; !ok {
 				continue
@@ -102,7 +104,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 			tokens = append(tokens, rawToken{
 				line:      lineIdx,
 				col:       col,
-				length:    len(word),
+				length:    utf16Len(word),
 				tokenType: tokenTypeVariable,
 				modifiers: 0,
 			})
@@ -137,7 +139,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 	return data
 }
 
-// commentStartCol は行内のコメント開始列を返す。コメントがなければ -1。
+// commentStartCol は行内のコメント開始位置（バイト）を返す。コメントがなければ -1。
 // 文字列リテラル内の ' は無視する。
 func commentStartCol(line string) int {
 	inStr := false
@@ -152,6 +154,7 @@ func commentStartCol(line string) int {
 }
 
 // isDeclToken はシンボルテーブル内の宣言位置と一致するか確認する。
+// col は UTF-16 位置（Symbol.Col と同じ単位）。
 func isDeclToken(table *SymbolTable, lowerName string, line, col int) bool {
 	for _, sym := range table.Symbols {
 		if strings.ToLower(sym.Name) == lowerName && sym.Line == line && sym.Col == col {

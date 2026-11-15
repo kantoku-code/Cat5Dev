@@ -23,6 +23,7 @@ func ParseSymbols(src string) *SymbolTable {
 	listener := &symbolListener{
 		table: &SymbolTable{},
 		scope: "module",
+		lines: strings.Split(src, "\n"),
 	}
 	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
 	return listener.table
@@ -32,7 +33,19 @@ func ParseSymbols(src string) *SymbolTable {
 type symbolListener struct {
 	*vbaantlr.BasevbaListener
 	table *SymbolTable
-	scope string // 現在のスコープ名
+	scope string   // 現在のスコープ名
+	lines []string // ソースを "\n" で分割した行（列の UTF-16 変換用）
+}
+
+// tokenPos はトークンの 0-based 行と UTF-16 列を返す。
+// ANTLR の GetColumn は rune 単位のため、該当行のテキストを使って UTF-16 単位に変換する。
+func (l *symbolListener) tokenPos(tok antlr.Token) (line, col int) {
+	line = tok.GetLine() - 1
+	col = tok.GetColumn()
+	if line >= 0 && line < len(l.lines) {
+		col = runeToUTF16Offset(l.lines[line], col)
+	}
+	return line, col
 }
 
 // --- スコープ管理 ---
@@ -74,19 +87,19 @@ func (l *symbolListener) EnterVariableDcl(ctx *vbaantlr.VariableDclContext) {
 				if ts := at.TypeSpec(); ts != nil {
 					if te := ts.TypeExpression(); te != nil {
 						typeName = strings.TrimSpace(te.GetText())
-						typeNameLine = te.GetStart().GetLine() - 1
-						typeNameCol = te.GetStart().GetColumn()
+						typeNameLine, typeNameCol = l.tokenPos(te.GetStart())
 					}
 				}
 			}
 		}
 		if name != "" {
+			line, col := l.tokenPos(ident.GetStart())
 			l.table.Symbols = append(l.table.Symbols, Symbol{
 				Name:         name,
 				TypeName:     typeName,
 				Scope:        l.scope,
-				Line:         ident.GetStart().GetLine() - 1,
-				Col:          ident.GetStart().GetColumn(),
+				Line:         line,
+				Col:          col,
 				TypeNameLine: typeNameLine,
 				TypeNameCol:  typeNameCol,
 			})
@@ -122,7 +135,7 @@ func (l *symbolListener) EnterSetStatement(ctx *vbaantlr.SetStatementContext) {
 			typeName = typeName[:idx]
 		}
 		if lhs != "" && typeName != "" {
-			l.upsertSymbol(lhs, typeName, ctx.GetStart().GetLine()-1, ctx.GetStart().GetColumn())
+			l.upsertSymbol(lhs, typeName, ctx.GetStart())
 		}
 	} else if m := reCreateObject.FindStringSubmatch(rhs); m != nil {
 		// CreateObject("ProgID") → ProgID の最後のコンポーネントを型名とする
@@ -130,12 +143,13 @@ func (l *symbolListener) EnterSetStatement(ctx *vbaantlr.SetStatementContext) {
 		parts := strings.Split(progID, ".")
 		typeName := parts[len(parts)-1]
 		if lhs != "" && typeName != "" {
-			l.upsertSymbol(lhs, typeName, ctx.GetStart().GetLine()-1, ctx.GetStart().GetColumn())
+			l.upsertSymbol(lhs, typeName, ctx.GetStart())
 		}
 	}
 }
 
-func (l *symbolListener) upsertSymbol(name, typeName string, line, col int) {
+// upsertSymbol は Set 代入で型が判明した変数を登録する。start は Set 文の先頭トークン。
+func (l *symbolListener) upsertSymbol(name, typeName string, start antlr.Token) {
 	for i := range l.table.Symbols {
 		if strings.EqualFold(l.table.Symbols[i].Name, name) &&
 			l.table.Symbols[i].Scope == l.scope {
@@ -145,6 +159,7 @@ func (l *symbolListener) upsertSymbol(name, typeName string, line, col int) {
 			return
 		}
 	}
+	line, col := l.tokenPos(start)
 	l.table.Symbols = append(l.table.Symbols, Symbol{
 		Name:     name,
 		TypeName: typeName,
