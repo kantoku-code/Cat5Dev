@@ -66,6 +66,7 @@ const (
 
 type CompletionOptions struct {
 	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+	ResolveProvider   bool     `json:"resolveProvider,omitempty"`
 }
 
 type SemanticTokensLegend struct {
@@ -198,7 +199,16 @@ type CompletionItem struct {
 	Detail        string                      `json:"detail,omitempty"`
 	Documentation *MarkupContent              `json:"documentation,omitempty"`
 	SortText      string                      `json:"sortText,omitempty"`
+	// Data は completionItem/resolve で詳細を引くための印（件数の多い TLB の型・Enum 定数だけに付ける）。
+	// 名前は Label から引く（応答を小さくするため印だけにする）。
+	Data string `json:"data,omitempty"`
 }
+
+// CompletionItem.Data の値。
+const (
+	completionDataType  = "t"
+	completionDataConst = "c"
+)
 
 // --- Signature Help ---
 

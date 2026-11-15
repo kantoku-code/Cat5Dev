@@ -210,15 +210,16 @@ type ownMember struct {
 // TLBProvider は catia_api.db の型を TypeProvider として提供する。
 // interfaces は初回に全件ロードし、継承込みのメンバーは interface ごとにメモ化する（DB は読み取り専用なので無効化不要）。
 type TLBProvider struct {
-	db      *TLBDatabase
-	once    sync.Once
-	schema  *tlbSchema
-	byName  map[string]tlbIface // 小文字名 → iface
-	byID    map[int64]tlbIface
-	libs    map[string]bool       // OwnsLibrary の対象（小文字）
-	libName map[int64]string      // libraries.id → 名前（表示用）
-	enums   map[string]*tlbEnum   // v2: 小文字の Enum 名 → Enum
-	consts  map[string]MemberInfo // v2: 小文字のメンバー名 → Enum メンバー（同名は最初の Enum が勝つ）
+	db        *TLBDatabase
+	once      sync.Once
+	schema    *tlbSchema
+	byName    map[string]tlbIface // 小文字名 → iface
+	byID      map[int64]tlbIface
+	libs      map[string]bool       // OwnsLibrary の対象（小文字）
+	libName   map[int64]string      // libraries.id → 名前（表示用）
+	enums     map[string]*tlbEnum   // v2: 小文字の Enum 名 → Enum
+	consts    map[string]MemberInfo // v2: 小文字のメンバー名 → Enum メンバー（同名は最初の Enum が勝つ）
+	constList []MemberInfo          // v2: consts を名前順に並べたもの（識別子補完用）
 
 	mu     sync.Mutex
 	merged map[int64]*memberSet
@@ -344,6 +345,12 @@ func (p *TLBProvider) loadEnums() {
 		e.sorted = append([]MemberInfo(nil), e.members...)
 		sort.SliceStable(e.sorted, func(i, j int) bool { return strings.ToLower(e.sorted[i].Name) < strings.ToLower(e.sorted[j].Name) })
 	}
+	for _, m := range p.consts {
+		p.constList = append(p.constList, m)
+	}
+	sort.Slice(p.constList, func(i, j int) bool {
+		return strings.ToLower(p.constList[i].Name) < strings.ToLower(p.constList[j].Name)
+	})
 }
 
 // HasHierarchy は DB が継承（parent_id と自前メンバー）を持つ v2 以上かを返す。
@@ -699,6 +706,12 @@ func (p *TLBProvider) HasMemberInDescendants(t TypeRef, name string) bool {
 		stack = append(stack, p.children[id]...)
 	}
 	return false
+}
+
+// EnumConstants は非修飾で参照できる Enum メンバー（名前の重複は最初の Enum のもの）を名前順に返す。
+func (p *TLBProvider) EnumConstants() []MemberInfo {
+	p.load()
+	return p.constList
 }
 
 // Types は型補完用の型（IUnknown / IDispatch と hidden のインターフェースを除く）と Enum を名前順に返す。

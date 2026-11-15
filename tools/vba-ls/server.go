@@ -211,6 +211,13 @@ func (h *lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 			return
 		}
 		_ = conn.Reply(ctx, req.ID, items)
+	case "completionItem/resolve":
+		var it CompletionItem
+		if !unmarshalParams(req, &it) {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		_ = conn.Reply(ctx, req.ID, h.resolveCompletion(it))
 	case "textDocument/signatureHelp":
 		var p SignatureHelpParams
 		if !unmarshalParams(req, &p) {
@@ -262,6 +269,7 @@ func (h *lspHandler) initializeResult() InitializeResult {
 			TextDocumentSync: TextDocumentSyncKindFull,
 			CompletionProvider: &CompletionOptions{
 				TriggerCharacters: []string{".", " "},
+				ResolveProvider:   true,
 			},
 			SignatureHelpProvider: &SignatureHelpOptions{
 				TriggerCharacters:   []string{"(", ",", " "},
@@ -433,6 +441,11 @@ func (h *lspHandler) completion(p CompletionParams) []CompletionItem {
 		trigger = p.Context.TriggerCharacter
 	}
 	return BuildCompletionsTrigger(doc, int(p.Position.Line), int(p.Position.Character), trigger)
+}
+
+// resolveCompletion は一覧では省いた詳細（Detail・Documentation）を埋める（Data のある候補だけ）。
+func (h *lspHandler) resolveCompletion(it CompletionItem) CompletionItem {
+	return ResolveCompletionItem(h.types, it)
 }
 
 func (h *lspHandler) signatureHelp(p SignatureHelpParams) *SignatureHelp {

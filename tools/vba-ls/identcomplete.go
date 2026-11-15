@@ -37,6 +37,17 @@ func (s *itemSet) add(g candGroup, it CompletionItem) {
 	s.items = append(s.items, it)
 }
 
+// addUnsorted は sortText を付けずに加える（sortText の無い候補はグループの数字で始まる候補より後ろに並ぶ）。
+// 件数の多い TLB の Enum 定数を最小の形で送るのに使う。
+func (s *itemSet) addUnsorted(it CompletionItem) {
+	key := strings.ToLower(it.Label)
+	if key == "" || s.seen[key] {
+		return
+	}
+	s.seen[key] = true
+	s.items = append(s.items, it)
+}
+
 func (s *itemSet) result() []CompletionItem {
 	if len(s.items) == 0 {
 		return nil
@@ -152,6 +163,13 @@ func buildIdentifierItems(doc *Document, line int, ctx completionContext) []Comp
 	}
 	for _, g := range doc.Types.Globals() {
 		set.add(grpBuiltin, globalItem(g)) // CATIA（VBA の Err / Debug は上で入っているので重複で除かれる）
+	}
+	// TLB の Enum 定数（1,400 件ほど）。一覧は名前と種類だけにして、詳細は completionItem/resolve で返す
+	if !ctx.AfterCall {
+		for _, m := range doc.Types.EnumConstants() {
+			set.addUnsorted(CompletionItem{Label: m.Name, Kind: CompletionItemKindEnumMember,
+				Data: completionDataConst})
+		}
 	}
 	// キーワード
 	if !ctx.AfterCall {
@@ -402,8 +420,16 @@ func typeWanted(ti TypeInfo, ctx completionContext) bool {
 	return !ctx.Creatable || ti.Creatable
 }
 
-// typeItem は型を候補にする。TLB の型は件数が多いので Detail・Documentation を付けない（所属だけ右側に出す）。
+// typeItem は型を候補にする。TLB の型（1,500 件ほど）は名前・種類と Data だけにして、
+// Detail・Documentation は completionItem/resolve で返す。
 func typeItem(ti TypeInfo) CompletionItem {
+	if ti.Origin == nil && ti.Ref.Lib == "CATIA" {
+		kind := CompletionItemKindInterface
+		if ti.Kind == TypeKindEnum {
+			kind = CompletionItemKindEnum
+		}
+		return CompletionItem{Label: ti.Ref.Name, Kind: kind, Data: completionDataType}
+	}
 	it := CompletionItem{Label: ti.Ref.Name, Kind: CompletionItemKindClass}
 	switch {
 	case ti.Kind == TypeKindUDT:

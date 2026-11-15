@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sourcegraph/jsonrpc2"
 )
 
 // tlbV2Schema は tools/tlb-extractor/schema.sql（抽出器と同じスキーマ定義）を読む。
@@ -447,5 +452,80 @@ func TestDiagnosticsWithHierarchy(t *testing.T) {
 		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
 			t.Errorf("%q: 診断 = %v, want %v", tc.body, got, tc.want)
 		}
+	}
+}
+
+func findItem(items []CompletionItem, label string) *CompletionItem {
+	for i := range items {
+		if items[i].Label == label {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+func TestCompletionResolveForTLB(t *testing.T) {
+	r := v2resolver(t)
+	ident := completeAt(t, r, "Sub M()\n    x = |\nEnd Sub\n")
+	c := findItem(ident, "catPaperA4")
+	if c == nil || c.Kind != CompletionItemKindEnumMember || c.SortText != "" || c.Detail != "" || c.Documentation != nil ||
+		c.Data != "c" {
+		t.Fatalf("識別子補完の catPaperA4 = %+v", c)
+	}
+	if got := labelsOf(completeAt(t, r, "Sub M()\n    Call |\nEnd Sub\n")); got["catPaperA4"] {
+		t.Error("Call の後に Enum 定数が出た")
+	}
+	types := completeAt(t, r, "Sub M()\n    Dim a As |\nEnd Sub\n")
+	app := findItem(types, "Application")
+	if app == nil || app.Kind != CompletionItemKindInterface || app.LabelDetails != nil || app.Detail != "" ||
+		app.Data != "t" || app.SortText == "" {
+		t.Fatalf("型補完の Application = %+v", app)
+	}
+	if e := findItem(types, "CatPaperSize"); e == nil || e.Kind != CompletionItemKindEnum {
+		t.Errorf("型補完の CatPaperSize = %+v", e)
+	}
+	if s := findItem(types, "Dictionary"); s == nil || s.Data != "" || s.Detail == "" {
+		t.Errorf("組み込みの型はその場で詳細を付ける: %+v", s)
+	}
+
+	got := ResolveCompletionItem(r, *app)
+	if got.Detail != "Interface Application（INFITF）" || got.Documentation == nil || got.Documentation.Value != "Represents the current CNext application." || got.Label != "Application" {
+		t.Errorf("resolve(Application) = %+v", got)
+	}
+	got = ResolveCompletionItem(r, *c)
+	if got.Detail != "CatPaperSize.catPaperA4 = 6" || got.Documentation == nil || got.Documentation.Value != "The A4 ISO format" {
+		t.Errorf("resolve(catPaperA4) = %+v", got)
+	}
+	plain := CompletionItem{Label: "x", Detail: "d"}
+	if got := ResolveCompletionItem(r, plain); got.Detail != "d" || got.Data != "" {
+		t.Errorf("Data の無い候補が変わった: %+v", got)
+	}
+}
+
+// JSON-RPC 経由: resolveProvider を宣言し、completionItem/resolve で詳細を返す。
+func TestCompletionResolveOverJSONRPC(t *testing.T) {
+	ctx := context.Background()
+	h := newLSPHandler(v2resolver(t))
+	sc, cc := net.Pipe()
+	server := jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(sc, jsonrpc2.VSCodeObjectCodec{}), h)
+	defer server.Close()
+	client := jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(cc, jsonrpc2.VSCodeObjectCodec{}),
+		jsonrpc2.HandlerWithError(func(context.Context, *jsonrpc2.Conn, *jsonrpc2.Request) (interface{}, error) { return nil, nil }))
+	defer client.Close()
+	var init InitializeResult
+	if err := client.Call(ctx, "initialize", map[string]interface{}{}, &init); err != nil || !init.Capabilities.CompletionProvider.ResolveProvider {
+		t.Fatalf("initialize: %v %+v", err, init.Capabilities.CompletionProvider)
+	}
+	// クライアントは受け取った候補（data を含む JSON）をそのまま送り返す
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(`{"label":"catPaperA4","kind":20,"data":"c"}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	var got CompletionItem
+	if err := client.Call(ctx, "completionItem/resolve", raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Detail != "CatPaperSize.catPaperA4 = 6" || got.Documentation == nil || got.Data != "c" {
+		t.Errorf("resolve = %+v", got)
 	}
 }

@@ -30,6 +30,49 @@ func BuildCompletionsTrigger(doc *Document, line, utf16Char int, trigger string)
 	return nil
 }
 
+// ResolveCompletionItem は completionItem/resolve の応答を作る。一覧では Data だけを付けた TLB の型・Enum 定数に
+// Detail と Documentation を埋める。Data が無い・引けない候補はそのまま返す。
+func ResolveCompletionItem(types *CompositeResolver, it CompletionItem) CompletionItem {
+	if it.Data == "" || types == nil {
+		return it
+	}
+	switch it.Data {
+	case completionDataType:
+		if ti, _, ok := types.Resolve(TypeRef{Lib: "CATIA", Name: it.Label}); ok {
+			it.Detail = typeDetail(ti)
+			it.Documentation = plainDoc(ti.Doc)
+		}
+	case completionDataConst:
+		if m, ok := types.Constant(it.Label); ok {
+			it.Detail = m.Owner.Name + "." + m.Signature()
+			it.Documentation = plainDoc(m.Doc)
+		}
+	}
+	return it
+}
+
+// typeDetail は型の 1 行表示（"Interface Application（INFITF）" / "Enum CatPaperSize（INFITF）"）を返す。
+func typeDetail(ti TypeInfo) string {
+	kw := "Class"
+	switch {
+	case ti.Kind == TypeKindInterface:
+		kw = "Interface"
+	case ti.Kind == TypeKindEnum:
+		kw = "Enum"
+	case ti.Kind == TypeKindUDT:
+		kw = "Type"
+	case ti.Kind == TypeKindModule:
+		kw = "Module"
+	case ti.Base == formBaseType:
+		kw = "UserForm"
+	}
+	s := kw + " " + ti.Ref.Name
+	if ti.Container != "" {
+		s += "（" + ti.Container + "）"
+	}
+	return s
+}
+
 // memberItems はメンバー一覧を補完候補に変換する。
 func memberItems(members []MemberInfo) []CompletionItem {
 	if len(members) == 0 {

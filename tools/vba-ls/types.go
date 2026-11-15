@@ -256,6 +256,9 @@ type TypeLister interface {
 // MemberNameIndex は「ライブラリ内のどこかの型にこの名前のメンバーがあるか」を答える（TLB の遅延バインディング対策）。
 type MemberNameIndex interface{ HasMemberNamed(name string) bool }
 
+// EnumConstantLister は非修飾で参照できるライブラリの Enum 定数（TLB の catPaperA4 など）を名前順に提供する（識別子補完用）。
+type EnumConstantLister interface{ EnumConstants() []MemberInfo }
+
 // MemberHierarchyIndex は継承関係を持つライブラリで、宣言型か派生型のどれかにメンバーがあるかを答える
 // （TLB の遅延バインディング対策。HasHierarchy が false なら使わない）。
 type MemberHierarchyIndex interface {
@@ -676,6 +679,20 @@ func (c *CompositeResolver) ProjectTypes() []TypeInfo {
 		_, isProject := p.(ProjectLister)
 		if l, ok := p.(TypeLister); ok && isProject {
 			out = append(out, l.Types()...)
+		}
+	}
+	return out
+}
+
+// EnumConstants は EnumConstantLister を実装するプロバイダの Enum 定数をプロバイダ順に集めて返す。
+func (c *CompositeResolver) EnumConstants() []MemberInfo {
+	if c == nil {
+		return nil
+	}
+	var out []MemberInfo
+	for _, p := range c.providers {
+		if l, ok := p.(EnumConstantLister); ok {
+			out = append(out, l.EnumConstants()...)
 		}
 	}
 	return out
