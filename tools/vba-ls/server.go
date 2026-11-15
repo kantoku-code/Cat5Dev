@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
-	"strings"
 	"sync"
 
 	"github.com/sourcegraph/jsonrpc2"
@@ -262,20 +261,4 @@ func wordAndPrevWordInLine(l string, char int) (word, prevWord string) {
 		}
 	}
 	return
-}
-
-func scopeAtLine(lines []string, targetLine int) string {
-	scope := "module"
-	for i, line := range lines {
-		if i >= targetLine {
-			break
-		}
-		if m := procStartRe.FindStringSubmatch(line); m != nil {
-			kind := strings.Title(strings.ToLower(m[1])) //nolint:staticcheck
-			scope = kind + ":" + m[2]
-		} else if procEndRe.MatchString(line) {
-			scope = "module"
-		}
-	}
-	return scope
 }

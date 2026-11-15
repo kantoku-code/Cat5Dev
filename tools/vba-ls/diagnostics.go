@@ -2,7 +2,6 @@ package main
 
 import (
 	"regexp"
-	"strings"
 )
 
 // memberAccessPattern は "識別子.識別子" を検出する（Unicode 識別子対応）。
@@ -13,15 +12,8 @@ var memberAccessPattern = regexp.MustCompile(`(` + identPattern + `)\.(` + ident
 // メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
 func BuildDiagnostics(doc *Document) []Diagnostic {
 	var diags []Diagnostic
-	curScope := "module"
-
 	for lineIdx, line := range doc.Lines {
-		if m := procStartRe.FindStringSubmatch(line); m != nil {
-			kind := strings.Title(strings.ToLower(m[1])) //nolint:staticcheck
-			curScope = kind + ":" + m[2]
-		} else if procEndRe.MatchString(line) {
-			curScope = "module"
-		}
+		curScope := doc.Table.ScopeAt(lineIdx)
 
 		// stripped は line とバイト長が等しいので、正規表現のバイト位置は line でもそのまま有効
 		stripped := stripCommentAndStrings(line)

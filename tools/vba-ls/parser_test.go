@@ -16,6 +16,17 @@ func findSym(t *testing.T, table *SymbolTable, name, scope string) Symbol {
 	return Symbol{}
 }
 
+// varsOf は Kind が変数のシンボルだけを返す（Sub 自体などのシンボルを除く）。
+func varsOf(table *SymbolTable) []Symbol {
+	var out []Symbol
+	for _, s := range table.Symbols {
+		if s.Kind == SymVariable {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // lfAndCRLF は LF 版と CRLF 版のソースでサブテストを実行する。
 func lfAndCRLF(t *testing.T, base string, fn func(t *testing.T, src string)) {
 	t.Helper()
@@ -45,8 +56,8 @@ func TestSetNewSymbolPositions(t *testing.T) {
 	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Set doc = New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
-		if len(table.Symbols) != 1 {
-			t.Fatalf("シンボル数 = %d, want 1: %+v", len(table.Symbols), table.Symbols)
+		if vars := varsOf(table); len(vars) != 1 {
+			t.Fatalf("変数の数 = %d, want 1: %+v", len(vars), vars)
 		}
 		s := findSym(t, table, "doc", "Sub:M")
 		typeCol := u16("    Set doc = New ")
@@ -99,10 +110,11 @@ func TestSetNewFillsUntypedDim(t *testing.T) {
 	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Dim doc\n    Set doc = New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
-		if len(table.Symbols) != 1 {
-			t.Fatalf("シンボル数 = %d, want 1: %+v", len(table.Symbols), table.Symbols)
+		vars := varsOf(table)
+		if len(vars) != 1 {
+			t.Fatalf("変数の数 = %d, want 1: %+v", len(vars), vars)
 		}
-		s := table.Symbols[0]
+		s := vars[0]
 		typeCol := u16("    Set doc = New ")
 		if s.Name != "doc" || s.Line != 1 || s.Col != 8 || s.TypeName != "PartDocument" || !s.HasTypeNamePos || s.TypeNameLine != 2 || s.TypeNameCol != typeCol {
 			t.Fatalf("doc = %+v, want 宣言 (1,8)、型 PartDocument (2,%d)", s, typeCol)
@@ -119,10 +131,11 @@ func TestSetNewFillsUntypedDim(t *testing.T) {
 func TestSetDoesNotOverrideDimType(t *testing.T) {
 	lfAndCRLF(t, "Sub M()\n    Dim doc As PartDocument\n    Set doc = New Part\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
-		if len(table.Symbols) != 1 {
-			t.Fatalf("シンボル数 = %d, want 1: %+v", len(table.Symbols), table.Symbols)
+		vars := varsOf(table)
+		if len(vars) != 1 {
+			t.Fatalf("変数の数 = %d, want 1: %+v", len(vars), vars)
 		}
-		s := table.Symbols[0]
+		s := vars[0]
 		if s.TypeName != "PartDocument" || s.TypeNameLine != 1 || s.TypeNameCol != u16("    Dim doc As ") || !s.HasTypeNamePos {
 			t.Fatalf("doc = %+v, want Dim 時の型と位置のまま", s)
 		}
@@ -132,8 +145,8 @@ func TestSetDoesNotOverrideDimType(t *testing.T) {
 func TestSetMemberLHSIgnored(t *testing.T) {
 	lfAndCRLF(t, "Sub M()\n    Set obj.Prop = New PartDocument\n    Set arr(1) = New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
-		if len(table.Symbols) != 0 {
-			t.Fatalf("シンボル = %+v, want なし", table.Symbols)
+		if vars := varsOf(table); len(vars) != 0 {
+			t.Fatalf("変数 = %+v, want なし", vars)
 		}
 	})
 }
@@ -141,7 +154,7 @@ func TestSetMemberLHSIgnored(t *testing.T) {
 func TestSetNewQualifiedType(t *testing.T) {
 	lfAndCRLF(t, "Sub M()\n    Set d = New Scripting.Dictionary\nEnd Sub\n", func(t *testing.T, src string) {
 		s := findSym(t, ParseSymbols(src), "d", "Sub:M")
-		if s.TypeName != "Dictionary" || !s.HasTypeNamePos || s.TypeNameLine != 1 || s.TypeNameCol != u16("    Set d = New Scripting.") {
+		if s.TypeName != "Dictionary" || s.TypeLib != "Scripting" || !s.HasTypeNamePos || s.TypeNameLine != 1 || s.TypeNameCol != u16("    Set d = New Scripting.") {
 			t.Fatalf("d = %+v, want TypeName Dictionary, 型位置 (1,%d)", s, u16("    Set d = New Scripting."))
 		}
 	})

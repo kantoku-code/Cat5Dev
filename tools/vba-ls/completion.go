@@ -14,7 +14,7 @@ func BuildCompletions(doc *Document, line, utf16Char int) []CompletionItem {
 	if m == nil {
 		return nil
 	}
-	t, ok := resolveChainType(m[1], doc, scopeAtLine(doc.Lines, line))
+	t, ok := resolveChainType(m[1], doc, doc.Table.ScopeAt(line))
 	if !ok {
 		return nil
 	}
@@ -68,7 +68,7 @@ func ResolveHover(doc *Document, line, utf16Char int) string {
 	if word == "" {
 		return ""
 	}
-	scope := scopeAtLine(doc.Lines, line)
+	scope := doc.Table.ScopeAt(line)
 	if prevWord == "" {
 		sym := doc.Table.FindByName(word, scope)
 		if sym == nil {

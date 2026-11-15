@@ -40,7 +40,7 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 	// 型が解決できる（primitive でない）シンボル。TypeExists は型ごとに 1 回だけ問い合わせる
 	existsCache := map[TypeRef]bool{}
 	typed := func(sym *Symbol) bool {
-		if sym.TypeName == "" {
+		if sym.TypeName == "" || (sym.Kind != SymVariable && sym.Kind != SymParam && sym.Kind != SymConst) {
 			return false
 		}
 		ref := sym.TypeRef()

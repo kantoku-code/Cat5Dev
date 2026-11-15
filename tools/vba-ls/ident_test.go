@@ -21,8 +21,8 @@ func TestJapaneseIdentifiers(t *testing.T) {
 			t.Fatalf("部品 = %+v, want (1,8) 型 PartDocument (1,%d)", *s, typeCol)
 		}
 
-		if got := scopeAtLine(splitLines(src), 2); got != "Sub:処理" {
-			t.Errorf("scopeAtLine(2) = %q, want %q", got, "Sub:処理")
+		if got := table.ScopeAt(2); got != "Sub:処理" {
+			t.Errorf("ScopeAt(2) = %q, want %q", got, "Sub:処理")
 		}
 
 		diags := BuildDiagnostics(NewDocument("", src, table, db))
@@ -83,21 +83,24 @@ func TestScopeAtLineUnicode(t *testing.T) {
 		"　End Function\n" + // 6
 		"z = 3\n" // 7
 	lfAndCRLF(t, base, func(t *testing.T, src string) {
+		table := ParseSymbols(src)
 		for _, want := range []struct {
 			line  int
 			scope string
 		}{
+			{0, "Sub:処理"}, // 宣言行もプロシージャのスコープ
 			{2, "Sub:処理"},
-			{4, "module"},
+			{3, "Sub:処理"},
+			{4, "Function:計算１"},
 			{5, "Function:計算１"},
+			{6, "Function:計算１"},
 			{7, "module"},
 		} {
-			if got := scopeAtLine(splitLines(src), want.line); got != want.scope {
-				t.Errorf("scopeAtLine(%d) = %q, want %q", want.line, got, want.scope)
+			if got := table.ScopeAt(want.line); got != want.scope {
+				t.Errorf("ScopeAt(%d) = %q, want %q", want.line, got, want.scope)
 			}
 		}
 		// Private Sub 内の宣言もパーサと同じスコープ名で解決され、診断が出ること
-		table := ParseSymbols(src)
 		findSym(t, table, "部品", "Sub:処理")
 		diags := BuildDiagnostics(NewDocument("", src, table, db))
 		if len(diags) != 1 || diags[0].Range.Start.Line != 2 {
