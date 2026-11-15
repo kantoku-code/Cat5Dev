@@ -30,6 +30,11 @@ export function safeFileName(name: string): boolean {
         && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 }
 
+/** Comparison form of module source: line endings unified to LF and trailing whitespace removed. */
+export function normalizeModuleText(text: string): string {
+    return text.replace(/\r\n?/g, '\n').trimEnd();
+}
+
 /** Validates terminal results, including confirmed partial failures. */
 export function validateCatiaResult(text: string, expected: CatiaExpectation): CatiaResult {
     const r = JSON.parse(text.replace(/^\uFEFF/, ''));

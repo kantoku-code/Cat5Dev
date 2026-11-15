@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fixture, result } = require('./helpers');
-const { validateCatiaResult, catiaSucceeded } = require('../out/catiaTypes');
+const { validateCatiaResult, catiaSucceeded, normalizeModuleText } = require('../out/catiaTypes');
 const { createCatiaRequest, runCatiaRequest, CatiaExecutionError } = require('../out/catiaExecution');
 const { SyncOperationManager } = require('../out/syncOperation');
 function setup(t) {
@@ -72,4 +72,11 @@ test('timeout retains lock until a late valid terminal result arrives', async t 
     fs.writeFileSync(path.join(request.directory, 'result.json'), JSON.stringify(result(request)));
     await new Promise(resolve => setTimeout(resolve, 1150));
     assert.ok(!fs.existsSync(context.tempDir));
+});
+test('module text normalization unifies CRLF, CR and LF and trims trailing whitespace', () => {
+    assert.equal(normalizeModuleText('a\r\nb\rc\nd\r\n\r\n  '), 'a\nb\nc\nd');
+    assert.equal(normalizeModuleText('a\r\nb'), normalizeModuleText('a\nb\n'));
+    assert.equal(normalizeModuleText('  indented\r\n'), '  indented');
+    assert.equal(normalizeModuleText(''), '');
+    assert.notEqual(normalizeModuleText('a\r\nb'), normalizeModuleText('a\r\nc'));
 });

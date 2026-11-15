@@ -32,8 +32,8 @@ Module._load = originalLoad;
 function setup(t, options = {}) {
     const root = fixture(t); fs.mkdirSync(path.join(root, 'modules'));
     fs.writeFileSync(path.join(root, 'cat5dev.toml'), `[project]\ntarget_project = "${options.noTarget ? '' : 'Review'}"\nlanguage = "ja"\nencoding = "shift_jis"\n`);
-    fs.writeFileSync(path.join(root, 'modules', 'C5D_UserModule.bas_utf'), 'old');
-    fs.writeFileSync(path.join(root, 'modules', 'LocalOnly.cls_utf'), 'local');
+    const localFiles = options.localFiles || { 'C5D_UserModule.bas_utf': 'old', 'LocalOnly.cls_utf': 'local' };
+    for (const [name, content] of Object.entries(localFiles)) fs.writeFileSync(path.join(root, 'modules', name), content);
     state = { root, events: [], choice: options.choice, selection: options.selection, documents: options.documents };
     const steps = [];
     const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
@@ -41,7 +41,7 @@ function setup(t, options = {}) {
     const execute = async script => {
         const directory = path.dirname(script), source = fs.readFileSync(path.join(directory, 'operation.catvbs'), 'utf8');
         const get = name => new RegExp(`${name} = "([^"]*)"`).exec(source)[1];
-        const request = { operationId: get('gOperationId'), stepId: get('gStepId'), kind: get('gKind'), targetProject: get('gTargetProject') };
+        const request = { operationId: get('gOperationId'), stepId: get('gStepId'), kind: get('gKind'), targetProject: get('gTargetProject'), directory };
         steps.push(request.kind);
         if (options.beforeResult) await options.beforeResult(request);
         let r;
@@ -49,7 +49,7 @@ function setup(t, options = {}) {
         else if (request.kind === 'list') r = result(request, { projects: ['Review'], expectedCount: 1, succeededCount: 1 });
         else if (request.kind === 'pull' || request.kind === 'check') {
             const items = options.empty ? [] : [{ name: 'C5D_UserModule', type: 1, file: 'm0.txt' }];
-            for (const item of items) fs.writeFileSync(path.join(directory, item.file), 'new source');
+            for (const item of items) fs.writeFileSync(path.join(directory, item.file), options.remoteSource ?? 'new source');
             r = result(request, { items, expectedCount: items.length, succeededCount: items.length });
         } else r = result(request, { expectedCount: 1, succeededCount: 1, updatedCount: 1 });
         fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify(r));
@@ -110,4 +110,34 @@ test('Push failure never reports success and always releases settled lock', asyn
     assert.deepEqual(steps, ['check', 'push']); assert.ok(events.some(e => e[0] === 'error'));
     assert.ok(!events.some(e => e[0] === 'info' && e[1].includes('プッシュしました')));
     assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')));
+});
+test('Pull normalizes CATIA CRLF output to LF with a single trailing newline', async t => {
+    const { root, sync, events } = setup(t, { choice: 'keep', remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n\r\n' });
+    await sync.pull();
+    assert.equal(fs.readFileSync(path.join(root, 'modules', 'C5D_UserModule.bas_utf'), 'utf8'), 'Sub A()\n    x = 1\nEnd Sub\n');
+    assert.ok(!events.some(e => e[0] === 'error'));
+});
+test('Push treats line-ending-only differences as unchanged', async t => {
+    for (const [local, remote] of [
+        ['Sub A()\n    x = 1\nEnd Sub\n', 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n'],
+        ['Sub A()\r\n    x = 1\r\nEnd Sub\r\n', 'Sub A()\n    x = 1\nEnd Sub\n']
+    ]) {
+        const { sync, steps, events } = setup(t, { localFiles: { 'C5D_UserModule.bas_utf': local }, remoteSource: Buffer.from(remote) });
+        await sync.push();
+        assert.deepEqual(steps, ['check']);
+        assert.ok(events.some(e => e[0] === 'info' && e[1].includes('変更されていません')), JSON.stringify(events));
+        assert.ok(!events.some(e => e[0] === 'error'));
+    }
+});
+test('Push still transfers real changes under CRLF and sends the local text unchanged', async t => {
+    let sent;
+    const { sync, steps, events } = setup(t, {
+        localFiles: { 'C5D_UserModule.bas_utf': 'Sub B()\r\n    x = 2\r\nEnd Sub\r\n' },
+        remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n',
+        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+    });
+    await sync.push();
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.equal(sent, 'Sub B()\r\n    x = 2\r\nEnd Sub');
+    assert.ok(!events.some(e => e[0] === 'error'));
 });

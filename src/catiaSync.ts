@@ -8,7 +8,7 @@ import { t, getLanguage } from './i18n';
 import { defaultEncodingFor, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { OperationContext, SyncBusyError, SyncOperationManager } from './syncOperation';
 import { CatiaExecutionError, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
-import { CatiaItem, CatiaRequest, CatiaResult, safeFileName } from './catiaTypes';
+import { CatiaItem, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName } from './catiaTypes';
 import { PullConflictError, PullRecoveryError, applyPull, captureModules, listPullDeletions } from './pullTransaction';
 
 const moduleExtension = /\.(bas_utf|cls_utf|frm_utf)$/i;
@@ -85,7 +85,7 @@ export class CatiaSync {
                 const result = await this.step(context, request);
                 const incoming = new Map<string, string>();
                 for (const item of result.items) {
-                    let text = iconv.decode(fs.readFileSync(path.join(request.directory, item.file)), request.encoding).replace(/\r/g, '').trimEnd() + '\n';
+                    let text = normalizeModuleText(iconv.decode(fs.readFileSync(path.join(request.directory, item.file)), request.encoding)) + '\n';
                     if (vscode.workspace.getConfiguration('cat5dev.formatter').get<boolean>('formatOnPull', false)) {
                         text = await formatVbaDocument(text, this.server, this.output, root) ?? text;
                     }
@@ -113,7 +113,8 @@ export class CatiaSync {
             const encoding = this.encoding(root);
             const files = fs.readdirSync(directory).filter(name => moduleExtension.test(name));
             if (!files.length) { await vscode.window.showInformationMessage(t('error.noModuleFiles')); return; }
-            const local: { name: string; type: 1 | 2 | 3; text: string }[] = [];
+            // text is sent as-is; comparable ignores line-ending differences (CATIA exports CRLF, Pull writes LF).
+            const local: { name: string; type: 1 | 2 | 3; text: string; comparable: string }[] = [];
             const seen = new Set<string>();
             for (const file of files) {
                 const name = file.slice(0, file.lastIndexOf('.'));
@@ -122,8 +123,9 @@ export class CatiaSync {
                 const fullPath = path.join(directory, file);
                 const stat = fs.lstatSync(fullPath);
                 if (!stat.isFile() || stat.isSymbolicLink()) { throw new Error(`Not a regular module: ${file}`); }
+                const text = fs.readFileSync(fullPath, 'utf8').trimEnd();
                 local.push({ name, type: /\.cls_utf$/i.test(file) ? 2 : /\.frm_utf$/i.test(file) ? 3 : 1,
-                    text: fs.readFileSync(fullPath, 'utf8').trimEnd() });
+                    text, comparable: normalizeModuleText(text) });
             }
             const longNames = local.filter(item => item.name.length > 31).map(item => item.name);
             if (longNames.length && await vscode.window.showWarningMessage(t('warning.longModuleNames', longNames.join(', ')), { modal: true }, t('dialog.continue')) !== t('dialog.continue')) { return; }
@@ -133,7 +135,7 @@ export class CatiaSync {
                 const remoteByName = new Map(remote.items.map(item => [item.name.toLowerCase(), item]));
                 const changed = local.filter(item => {
                     const other = remoteByName.get(item.name.toLowerCase());
-                    return !other || other.type !== item.type || item.text !== iconv.decode(fs.readFileSync(path.join(check.directory, other.file)), encoding).trimEnd();
+                    return !other || other.type !== item.type || item.comparable !== normalizeModuleText(iconv.decode(fs.readFileSync(path.join(check.directory, other.file)), encoding));
                 });
                 // Preserve the existing no-change behavior; deletion-only sync is a separate reviewed issue.
                 if (!changed.length) { await vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
