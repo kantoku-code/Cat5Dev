@@ -399,3 +399,53 @@ func TestCATIAGlobal(t *testing.T) {
 		t.Errorf("CATIA.Bogus の診断 = %v", got)
 	}
 }
+
+func TestHasMemberInDescendants(t *testing.T) {
+	p := newTLBProvider(newTestTLBDatabaseV2(t)).(*TLBProvider)
+	for _, tc := range []struct {
+		typ, name string
+		want      bool
+	}{
+		{"Document", "Part", true},    // PartDocument にある
+		{"Document", "product", true}, // ProductDocument にある
+		{"Document", "Name", true},    // AnyObject（祖先）にある
+		{"Document", "Bodies", false}, // Part にあるが Document の系統ではない
+		{"AnyObject", "Bodies", true}, // Part は AnyObject の派生型
+		{"Collection", "Item", true},  // Documents / Bodies にある
+		{"PartDocument", "Product", false},
+		{"Application", "HiddenMethod", true},
+		{"CatPaperSize", "catBogus", false},
+		{"NoSuchType", "Name", false},
+	} {
+		if got := p.HasMemberInDescendants(TypeRef{Name: tc.typ}, tc.name); got != tc.want {
+			t.Errorf("HasMemberInDescendants(%s, %s) = %v", tc.typ, tc.name, got)
+		}
+	}
+	if !p.HasHierarchy() || newTLBProvider(newTestTLBDatabase(t)).(*TLBProvider).HasHierarchy() {
+		t.Error("HasHierarchy が v2 で true、v1 で false でない")
+	}
+}
+
+func TestDiagnosticsWithHierarchy(t *testing.T) {
+	r := v2resolver(t)
+	for _, tc := range []struct {
+		body string
+		want []string
+	}{
+		{"Dim d As Document\n    x = d.Part.Bodies.Count", nil},
+		{"Dim d As Document\n    x = d.Bodies", []string{"W:'Document' に 'Bodies' は存在しません（派生型を含む）"}},
+		{"x = CATIA.ActiveDocument.Part.Name", nil},
+		{"x = CATIA.Documents.Item(1).Part.Bodies.Item(1).Name", nil},
+		{"x = CATIA.ActiveDocument.Bogus", []string{"W:'CATIA.Document' に 'Bogus' は存在しません（派生型を含む）"}},
+		{"x = CATIA.ActiveDocument.Bodies", []string{"W:'CATIA.Document' に 'Bodies' は存在しません（派生型を含む）"}},
+		{"CATIA.HiddenMethod", nil},
+		{"Dim f As InstanceFactory\n    f.InstantiationMode = \"After\"", nil},
+		{"Dim s As String\n    x = s.Bogus", nil},
+		{"Dim c As Collection\n    c.Bogus", []string{"E:'Collection' に 'Bogus' は存在しません"}},
+	} {
+		got := diagMessages(t, r, "Sub M()\n    "+tc.body+"\nEnd Sub\n")
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%q: 診断 = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}

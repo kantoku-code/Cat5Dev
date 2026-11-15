@@ -228,6 +228,10 @@ type TLBProvider struct {
 
 	typesOnce sync.Once
 	typeList  []TypeInfo // 型補完用の型（IUnknown / IDispatch・hidden を除く）。名前順
+
+	hierOnce sync.Once
+	children map[int64][]int64         // v2: 親 → 子
+	ownNames map[int64]map[string]bool // v2: interface_id → 自前のメンバー名（小文字、hidden を含む）
 }
 
 // newTLBProvider は db が nil なら interface の nil を返す（typed nil を作らない）。
@@ -627,6 +631,74 @@ func (p *TLBProvider) Constant(name string) (MemberInfo, bool) {
 	p.load()
 	m, ok := p.consts[strings.ToLower(name)]
 	return m, ok
+}
+
+// loadHierarchy は継承の子の一覧と、各型の自前のメンバー名（1 クエリで全件）を作る。
+func (p *TLBProvider) loadHierarchy() {
+	p.hierOnce.Do(func() {
+		p.load()
+		p.children = map[int64][]int64{}
+		p.ownNames = map[int64]map[string]bool{}
+		for _, it := range p.byID {
+			if it.parent.Valid && it.parent.Int64 != it.id {
+				p.children[it.parent.Int64] = append(p.children[it.parent.Int64], it.id)
+			}
+		}
+		rows, err := p.db.db.Query(`SELECT interface_id, name FROM methods UNION ALL SELECT interface_id, name FROM properties`)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vba-ls: メンバー名の読み込みに失敗: %v\n", err)
+			p.ownNames = nil
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			var n string
+			if rows.Scan(&id, &n) != nil {
+				continue
+			}
+			set := p.ownNames[id]
+			if set == nil {
+				set = map[string]bool{}
+				p.ownNames[id] = set
+			}
+			set[strings.ToLower(n)] = true
+		}
+	})
+}
+
+// HasMemberInDescendants は t（とその祖先）か、t の派生型のどれかに name があるかを返す（v2 の診断用）。
+// CATIA は遅延バインディングなので、宣言型 Document の変数で PartDocument.Part を呼ぶのは正しい。
+// 一方、Document の系統に無い Bodies（Part のメンバー）は誤りとして検出できる。
+// t がインターフェースでなければ false。メンバー名を読めなかったときは true（安全側＝診断しない）。
+func (p *TLBProvider) HasMemberInDescendants(t TypeRef, name string) bool {
+	if _, ok := p.Member(t, name); ok {
+		return true
+	}
+	p.loadHierarchy()
+	it, ok := p.byName[strings.ToLower(t.Name)]
+	if !ok {
+		return false
+	}
+	if p.ownNames == nil {
+		return true
+	}
+	key := strings.ToLower(name)
+	seen := map[int64]bool{}
+	stack := []int64{it.id}
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if p.ownNames[id][key] {
+			return true
+		}
+		stack = append(stack, p.children[id]...)
+	}
+	return false
 }
 
 // Types は型補完用の型（IUnknown / IDispatch と hidden のインターフェースを除く）と Enum を名前順に返す。

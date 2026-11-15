@@ -8,9 +8,11 @@ import (
 // BuildDiagnostics は文書全体を走査して、存在しないメンバーへのアクセスを診断として返す。
 // 論理行（行継続を連結）ごとに文字列・コメントをマスクし、"." の直後の識別子をすべて調べる。
 // 受け手の型が解決でき、メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
-// 組み込み型・ワークスペースの型は Error、TLB（CATIA）型は TLB 全体に無い名前だけを Warning にする。
-// TLB（CATIA）型のメンバーの戻り値を経由して求めた型は、typelib が基底型を宣言していることが多いため診断しない
-// （例: Part.UserSurfaces は Collection と宣言されているが実体は UserSurfaces）。
+// 組み込み型・ワークスペースの型は Error、TLB（CATIA）型は Warning にする（TLB に載らない非公開の API があるため）。
+// TLB 型は遅延バインディングなので、継承を持つ DB（v2）では宣言型とその派生型のどれにも無い名前だけを、
+// 旧 DB（v1）では TLB 全体に無い名前だけを診断する。
+// v1 では TLB 型のメンバーの戻り値を経由して求めた型も診断しない（typelib が基底型を宣言していることが多いため。
+// 例: Part.UserSurfaces は Collection と宣言されているが実体は UserSurfaces）。v2 は派生型込みで判定するので対象にする。
 func BuildDiagnostics(doc *Document) []Diagnostic {
 	var diags []Diagnostic
 	r := newExprResolver(doc)
@@ -51,21 +53,33 @@ func BuildDiagnostics(doc *Document) []Diagnostic {
 			}
 			r.viaTLBMember = false
 			t, ok := r.resolveChain(ch, line)
-			if !ok || t.Array || r.viaTLBMember {
+			if !ok || t.Array {
 				continue
 			}
 			ti, prov, ok := doc.Types.Resolve(t)
 			if !ok || ti.Kind == TypeKindPrimitive || !ti.Complete {
 				continue
 			}
+			hier, _ := prov.(MemberHierarchyIndex)
+			hierarchy := hier != nil && hier.HasHierarchy()
+			if r.viaTLBMember && !hierarchy {
+				continue
+			}
 			if _, ok := doc.Types.Member(t, name); ok {
 				continue
 			}
 			sev := DiagnosticSeverityError
+			msg := "'" + t.String() + "' に '" + name + "' は存在しません"
 			if _, isTLB := prov.(*TLBProvider); isTLB {
 				// CATIA は遅延バインディング。宣言型が基底型（Document 等）でも派生型のメンバーが実行時に動くため、
-				// TLB のどこにも無い名前（typo か型情報の欠落）だけを警告にする。型情報に欠落がありうるので Error にはしない。
-				if idx, ok := prov.(MemberNameIndex); ok && idx.HasMemberNamed(name) {
+				// v2 は宣言型と派生型のどれにも無い名前、v1 は TLB のどこにも無い名前だけを警告にする。
+				// TLB に載らない API（CATIA.ActiveEditor など）があるので Error にはしない。
+				if hierarchy {
+					if hier.HasMemberInDescendants(t, name) {
+						continue
+					}
+					msg += "（派生型を含む）"
+				} else if idx, ok := prov.(MemberNameIndex); ok && idx.HasMemberNamed(name) {
 					continue
 				}
 				sev = DiagnosticSeverityWarning
@@ -82,7 +96,7 @@ func BuildDiagnostics(doc *Document) []Diagnostic {
 				},
 				Severity: sev,
 				Source:   "vba-ls",
-				Message:  "'" + t.String() + "' に '" + name + "' は存在しません",
+				Message:  msg,
 			})
 		}
 	}

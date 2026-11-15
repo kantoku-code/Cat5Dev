@@ -256,6 +256,13 @@ type TypeLister interface {
 // MemberNameIndex は「ライブラリ内のどこかの型にこの名前のメンバーがあるか」を答える（TLB の遅延バインディング対策）。
 type MemberNameIndex interface{ HasMemberNamed(name string) bool }
 
+// MemberHierarchyIndex は継承関係を持つライブラリで、宣言型か派生型のどれかにメンバーがあるかを答える
+// （TLB の遅延バインディング対策。HasHierarchy が false なら使わない）。
+type MemberHierarchyIndex interface {
+	HasHierarchy() bool
+	HasMemberInDescendants(t TypeRef, name string) bool
+}
+
 // FunctionProvider は組み込みライブラリの関数・ステートメント・定数を提供する（識別子補完・signatureHelp・ホバー）。
 type FunctionProvider interface {
 	Functions() []MemberInfo                 // Kind は Method（Date / Now などは Property）。名前順
