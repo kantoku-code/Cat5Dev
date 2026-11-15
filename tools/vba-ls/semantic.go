@@ -27,7 +27,7 @@ type rawToken struct {
 	modifiers uint32
 }
 
-var identRe = regexp.MustCompile(`[A-Za-z_]\w*`)
+var identRe = regexp.MustCompile(identPattern)
 
 // BuildSemanticTokens は LSP の flat uint32 配列（5-tuple の deltaLine/deltaChar/length/type/modifier）を返す。
 // SymbolTable の宣言情報と本文スキャンの両方から CATIA 型関連トークンを収集する。
@@ -89,6 +89,9 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 
 		matches := identRe.FindAllStringIndex(stripped, -1)
 		for _, m := range matches {
+			if precededByIdentPart(stripped, m[0]) {
+				continue // 識別子の途中から始まるマッチ（先頭側 \b の代わり）
+			}
 			word := stripped[m[0]:m[1]]
 			col := byteToUTF16Offset(line, m[0])
 			lower := strings.ToLower(word)

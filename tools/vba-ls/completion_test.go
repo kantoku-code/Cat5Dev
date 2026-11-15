@@ -148,6 +148,9 @@ func TestDotPattern(t *testing.T) {
 		{"partDocument1.Part.", "partDocument1.Part"},
 		{"a.b.c.", "a.b.c"},
 		{"notrailing", ""},
+		{"部品.", "部品"},
+		{"x = 部品.Part.", "部品.Part"},
+		{"Debug.Print \"あ\": doc.", "doc"},
 	}
 	for _, tt := range tests {
 		m := dotPattern.FindStringSubmatch(tt.input)

@@ -3527,8 +3527,10 @@ MACRO_LINE
     ;
 
 // identifier
+// Cat5Dev: 日本語等の Unicode 識別子を受け付ける（\p{L} は A-Z を含む）。
+// 先頭の "_" は行継続（LINE_CONTINUATION）との競合を避けるため VBA 仕様どおり不可。
 IDENTIFIER
-    : [A-Z][A-Z0-9_]*
+    : [\p{L}] [\p{L}\p{Nd}_]*
     ;
 
 FOREIGN_NAME

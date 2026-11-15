@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
-const START_PATTERN = /^\s*(?:Public\s+|Private\s+|Friend\s+)?(?:(Sub|Function)\s+(\w+)\s*\(|(Property\s+(?:Get|Let|Set))\s+(\w+)\s*\(|(Type)\s+(\w+)|(Enum)\s+(\w+))/i;
+// 識別子は日本語などの Unicode 文字を含み得るため \w（ASCII のみ）ではなく \p{L}\p{N}_ を使う（u フラグ必須）。
+const START_PATTERN = /^\s*(?:Public\s+|Private\s+|Friend\s+)?(?:(Sub|Function)\s+([\p{L}\p{N}_]+)\s*\(|(Property\s+(?:Get|Let|Set))\s+([\p{L}\p{N}_]+)\s*\(|(Type)\s+([\p{L}\p{N}_]+)|(Enum)\s+([\p{L}\p{N}_]+))/iu;
 const END_PATTERN = /^\s*End\s+(Sub|Function|Property|Type|Enum)\b/i;
 
 export class VbaDocumentSymbolProvider implements vscode.DocumentSymbolProvider {

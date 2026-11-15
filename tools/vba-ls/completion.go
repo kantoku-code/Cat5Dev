@@ -6,7 +6,7 @@ import (
 )
 
 // dotPattern はカーソル前の "識別子." パターンを検出する。
-var dotPattern = regexp.MustCompile(`([\w.]+)\.$`)
+var dotPattern = regexp.MustCompile(`([` + identPartClass + `.]+)\.$`)
 
 // BuildCompletions はカーソル前テキストを解析して補完候補を返す。
 func BuildCompletions(linePrefix string, table *SymbolTable, db *TLBDatabase, scope string) []CompletionItem {

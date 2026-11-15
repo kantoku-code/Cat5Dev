@@ -5,8 +5,9 @@ import (
 	"strings"
 )
 
-// memberAccessPattern は "識別子.識別子" を検出する。
-var memberAccessPattern = regexp.MustCompile(`\b(\w+)\.(\w+)\b`)
+// memberAccessPattern は "識別子.識別子" を検出する（Unicode 識別子対応）。
+// 末尾側は貪欲マッチで識別子の終わりまで取るため \b 不要。先頭側は precededByIdentPart で判定する。
+var memberAccessPattern = regexp.MustCompile(`(` + identPattern + `)\.(` + identPattern + `)`)
 
 // BuildDiagnostics はソース全体を走査して不正なメンバーアクセスを診断として返す。
 func BuildDiagnostics(src string, table *SymbolTable, db *TLBDatabase) []Diagnostic {
@@ -14,15 +15,12 @@ func BuildDiagnostics(src string, table *SymbolTable, db *TLBDatabase) []Diagnos
 	lines := strings.Split(src, "\n")
 	curScope := "module"
 
-	subRe := regexp.MustCompile(`(?i)^\s*(Sub|Function)\s+(\w+)`)
-	endSubRe := regexp.MustCompile(`(?i)^\s*End\s+(Sub|Function)`)
-
 	for lineIdx, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
-		if m := subRe.FindStringSubmatch(line); m != nil {
+		if m := procStartRe.FindStringSubmatch(line); m != nil {
 			kind := strings.Title(strings.ToLower(m[1])) //nolint:staticcheck
 			curScope = kind + ":" + m[2]
-		} else if endSubRe.MatchString(line) {
+		} else if procEndRe.MatchString(line) {
 			curScope = "module"
 		}
 
@@ -30,6 +28,9 @@ func BuildDiagnostics(src string, table *SymbolTable, db *TLBDatabase) []Diagnos
 		stripped := stripCommentAndStrings(line)
 
 		for _, match := range memberAccessPattern.FindAllStringSubmatchIndex(stripped, -1) {
+			if precededByIdentPart(stripped, match[2]) {
+				continue // 識別子の途中から始まるマッチ（先頭側 \b の代わり）
+			}
 			varName := stripped[match[2]:match[3]]
 			memberName := stripped[match[4]:match[5]]
 

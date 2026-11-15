@@ -249,7 +249,7 @@ func lineAt(content string, line, char int) string {
 	return l[:utf16ToByteOffset(l, char)]
 }
 
-var wordRe = regexp.MustCompile(`\w+`)
+var wordRe = regexp.MustCompile(`[` + identPartClass + `]+`)
 
 // wordAndPrevWord はカーソル位置の語と、その直前に "." で連結された語を返す。
 // char は LSP の UTF-16 位置。
@@ -277,9 +277,6 @@ func wordAndPrevWord(content string, line, char int) (word, prevWord string) {
 	return
 }
 
-var subFuncRe = regexp.MustCompile(`(?i)^\s*(Sub|Function)\s+(\w+)`)
-var endSubFuncRe = regexp.MustCompile(`(?i)^\s*End\s+(Sub|Function)`)
-
 func scopeAtLine(content string, targetLine int) string {
 	lines := strings.Split(content, "\n")
 	scope := "module"
@@ -287,10 +284,10 @@ func scopeAtLine(content string, targetLine int) string {
 		if i >= targetLine {
 			break
 		}
-		if m := subFuncRe.FindStringSubmatch(line); m != nil {
+		if m := procStartRe.FindStringSubmatch(line); m != nil {
 			kind := strings.Title(strings.ToLower(m[1])) //nolint:staticcheck
 			scope = kind + ":" + m[2]
-		} else if endSubFuncRe.MatchString(line) {
+		} else if procEndRe.MatchString(line) {
 			scope = "module"
 		}
 	}
