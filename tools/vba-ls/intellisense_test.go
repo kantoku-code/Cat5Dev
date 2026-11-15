@@ -89,7 +89,7 @@ func TestCompletionTable(t *testing.T) {
 		{"UDT のメンバー", "Type TInfo\n    doc As PartDocument\n    n As Long\nEnd Type\nSub A()\n    Dim v As TInfo\n    v.|\nEnd Sub\n", []string{"doc", "n"}, nil},
 		{"UDT のメンバーの先", "Type TInfo\n    doc As PartDocument\nEnd Type\nSub A()\n    Dim v As TInfo\n    v.doc.|\nEnd Sub\n", partDocMembers, nil},
 		{"Enum のメンバー", "Enum Color\n    Red = 1\n    Green\nEnd Enum\nSub A()\n    x = Color.|\nEnd Sub\n", []string{"Red", "Green"}, nil},
-		{"Me. は 2-0 では候補なし", "Sub A()\n    Me.|\nEnd Sub\n", nil, nil},
+		{"標準モジュール相当（拡張子 .bas）では Me. の候補なし", "Sub A()\n    Me.|\nEnd Sub\n", nil, nil},
 		{"Set New 由来", "Sub A()\n    Set d = New PartDocument\n    d.|\nEnd Sub\n", partDocMembers, nil},
 	})
 }

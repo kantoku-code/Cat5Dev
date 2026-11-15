@@ -119,7 +119,7 @@ func runWSCompletionCases(t *testing.T, types *CompositeResolver, dir string, ca
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			lfAndCRLF(t, tc.src, func(t *testing.T, src string) {
+			lfAndCRLF(t, withFixture(tc.file, tc.src), func(t *testing.T, src string) {
 				doc, line, char := wsDocAt(t, types, dir, tc.file, src)
 				items := BuildCompletions(doc, line, char)
 				if tc.want == nil {
@@ -219,7 +219,7 @@ func TestWorkspaceCompletion(t *testing.T) {
 		{"チェーン", "Module1.bas_utf", "Sub T()\n    Dim o As clsA\n    o.Clone.Clone.Doc.|\nEnd Sub\n", []string{"Part"}, nil},
 		{"大文字小文字無視", "Module1.bas_utf", "Sub T()\n    Dim o As CLSA\n    o.|\nEnd Sub\n", []string{"Name"}, nil},
 		{"WS のクラスが TLB より優先", "Module1.bas_utf", "Sub T()\n    Dim p As Part\n    p.|\nEnd Sub\n", []string{"Mine"}, []string{"Bodies"}},
-		{"ローカル UDT が WS より優先", "Module1.bas_utf", "Private Type clsA\n    z As Long\nEnd Type\nSub T()\n    Dim v As clsA\n    v.|\nEnd Sub\n", []string{"z"}, []string{"Name"}},
+		{"ローカル UDT が WS より優先", "Other.bas_utf", "Private Type clsA\n    z As Long\nEnd Type\nSub T()\n    Dim v As clsA\n    v.|\nEnd Sub\n", []string{"z"}, []string{"Name"}},
 		{"日本語", "Module1.bas_utf", "Sub T()\n    Dim p As New cls部品\n    p.|\nEnd Sub\n", []string{"名前"}, nil},
 		{"Public UDT（他モジュール）", "frmA.frm_utf", "Sub T()\n    Dim v As TInfo\n    v.doc.|\nEnd Sub\n", partDocMembers, nil},
 		// 自モジュールの Enum 型の変数と同じ扱い（Enum のメンバーを返す）
@@ -253,4 +253,91 @@ func TestWorkspaceCompletionBeforeIndex(t *testing.T) {
 	nilWS.PutBuffer(nil)
 	nilWS.CloseBuffer("file:///c%3A/a.cls_utf")
 	nilWS.FilesChanged(nil)
+}
+
+func TestWorkspaceMeAndModuleAccess(t *testing.T) {
+	_, types, dir := newTestWorkspace(t, wsFixture)
+	runWSCompletionCases(t, types, dir, []wsCompletionCase{
+		{"クラスの Me.", "clsA.cls_utf", "Sub T()\n    Me.|\nEnd Sub\n", []string{"m_n", "PrivSub", "Class_Initialize", "Name"}, []string{"Changed"}},
+		{"フォームの Me.", "frmA.frm_utf", "Sub T()\n    Me.|\nEnd Sub\n", []string{"m_x", "SetData", "Hide", "Show", "Caption"}, nil},
+		{"With Me", "clsA.cls_utf", "Sub T()\n    With Me\n        .|\n    End With\nEnd Sub\n", []string{"m_n"}, nil},
+		{"標準モジュールの Me. は候補なし", "Module1.bas_utf", "Sub T()\n    Me.|\nEnd Sub\n", nil, nil},
+		{"他モジュールから Module1.", "clsA.cls_utf", "Sub T()\n    Module1.|\nEnd Sub\n", []string{"Pub", "NewA", "g", "C"}, []string{"Priv", "P"}},
+		{"自モジュールの Module1.", "Module1.bas_utf", "Sub T()\n    Module1.|\nEnd Sub\n", []string{"Priv", "Pub"}, nil},
+		{"Module1.NewA().", "frmA.frm_utf", "Sub T()\n    Module1.NewA().|\nEnd Sub\n", []string{"Name", "Doc"}, []string{"m_n"}},
+		{"非修飾の NewA().", "frmA.frm_utf", "Sub T()\n    NewA().|\nEnd Sub\n", []string{"Name", "Doc"}, []string{"m_n"}},
+		{"非修飾の NewA.", "frmA.frm_utf", "Sub T()\n    NewA.|\nEnd Sub\n", []string{"Name"}, nil},
+		{"フォームの既定インスタンス", "clsA.cls_utf", "Sub T()\n    frmA.|\nEnd Sub\n", []string{"SetData", "Hide"}, []string{"m_x"}},
+		{"他モジュールの Enum", "clsA.cls_utf", "Sub T()\n    x = EKind.|\nEnd Sub\n", []string{"kA", "kB"}, nil},
+		{"クラスに既定インスタンスは無い", "Module1.bas_utf", "Sub T()\n    clsA.|\nEnd Sub\n", nil, nil},
+		{"ローカル変数がモジュール名より優先", "clsA.cls_utf", "Sub T()\n    Dim Module1 As clsA\n    Module1.|\nEnd Sub\n", []string{"Name"}, []string{"Pub"}},
+	})
+}
+
+func TestWorkspaceDiagnostics(t *testing.T) {
+	files := map[string]string{"clsBad.cls_utf": "Public Sub A(\nEnd Sub\nPublic Sub B()\nEnd Sub\n"}
+	for k, v := range wsFixture {
+		files[k] = v
+	}
+	_, types, dir := newTestWorkspace(t, files)
+	for _, tc := range []struct {
+		name, file, src string
+		want            []string // メッセージ
+	}{
+		{"クラスの存在しないメンバー", "Module1.bas_utf", "Sub T()\n    Dim o As clsA\n    o.Bogus\nEnd Sub\n", []string{"'clsA' に 'Bogus' は存在しません"}},
+		{"他モジュールから Private", "Module1.bas_utf", "Sub T()\n    Dim o As clsA\n    o.PrivSub\nEnd Sub\n", []string{"'clsA' に 'PrivSub' は存在しません"}},
+		{"標準モジュール（#module を出さない）", "clsA.cls_utf", "Sub T()\n    Module1.Bogus\nEnd Sub\n", []string{"'Module1' に 'Bogus' は存在しません"}},
+		{"標準モジュールの Private（他から）", "clsA.cls_utf", "Sub T()\n    Module1.Priv\nEnd Sub\n", []string{"'Module1' に 'Priv' は存在しません"}},
+		{"正しいアクセスは 0 件", "frmA.frm_utf", "Sub T()\n    Dim o As New clsA\n    o.Name = Module1.NewA().Name\n    Module1.Pub\n    o.Value = Module1.C\n    o.FriendSub\nEnd Sub\n", nil},
+		{"フォームの Me.コントロールは 0 件", "frmA.frm_utf", "Sub T()\n    Me.lstX.Clear\n    Me.Hide\n    frmA.lstY.AddItem 1\nEnd Sub\n", nil},
+		{"クラスの Me.Bogus は 1 件", "clsA.cls_utf", "Sub T()\n    Me.Bogus\n    Me.PrivSub\nEnd Sub\n", []string{"'clsA' に 'Bogus' は存在しません"}},
+		{"構文エラーのあるクラスは 0 件", "Module1.bas_utf", "Sub T()\n    Dim b As clsBad\n    b.Bogus\nEnd Sub\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, _, _ := wsDocAt(t, types, dir, tc.file, withFixture(tc.file, tc.src)+"|")
+			var got []string
+			for _, d := range BuildDiagnostics(doc) {
+				got = append(got, d.Message)
+			}
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("診断 = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// WS のクラス型はセマンティックトークンで type になる。
+func TestWorkspaceSemanticType(t *testing.T) {
+	_, types, dir := newTestWorkspace(t, wsFixture)
+	src := "Dim o As clsA\n"
+	doc, _, _ := wsDocAt(t, types, dir, "Module1.bas_utf", src+"|")
+	toks := decodeSemanticTokens(t, BuildSemanticTokens(doc))
+	found := false
+	for _, tk := range toks {
+		if tk.line == 0 && tk.col == u16("Dim o As ") && tk.tokenType == 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("clsA が type トークンになっていない: %+v", toks)
+	}
+}
+
+// withFixture は開くファイルが基本フィクスチャにあれば、その本文の後ろに src を足す
+// （エディタのバッファはファイル全体なので、Me. や自モジュールのメンバーはこの本文から求まる）。
+func withFixture(file, src string) string {
+	if body, ok := wsFixture[file]; ok {
+		return body + "\n" + src
+	}
+	return src
+}
+
+// 既知の差: クラス内では同じクラスの別インスタンス経由でも Private が候補に出る（VBA ではコンパイルエラー）。
+// 誤った診断は出ない方向の緩さなので許容する。
+func TestWorkspaceSelfClassPrivateIsLoose(t *testing.T) {
+	_, types, dir := newTestWorkspace(t, wsFixture)
+	doc, line, char := wsDocAt(t, types, dir, "clsA.cls_utf", withFixture("clsA.cls_utf", "Sub T()\n    Dim o As clsA\n    o.|\nEnd Sub\n"))
+	if !labelsOf(BuildCompletions(doc, line, char))["m_n"] {
+		t.Error("クラス内では自クラス型の Private も見える（現仕様）")
+	}
 }

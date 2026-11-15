@@ -171,6 +171,58 @@
           ]
         }
       ]
+    },
+    {
+      "name": "MSForms",
+      "types": [
+        {
+          "name": "UserForm", "kind": "class", "complete": false,
+          "doc": "UserForm の基本メンバー（コントロールはファイルに定義が無いため網羅しない）",
+          "members": [
+            {"name": "ActiveControl", "kind": "property", "type": "Object", "readOnly": true},
+            {"name": "Copy", "kind": "method"},
+            {"name": "BackColor", "kind": "property", "type": "Long"},
+            {"name": "BorderColor", "kind": "property", "type": "Long"},
+            {"name": "BorderStyle", "kind": "property", "type": "Long"},
+            {"name": "Caption", "kind": "property", "type": "String"},
+            {"name": "Controls", "kind": "property", "type": "Object", "readOnly": true},
+            {"name": "Cut", "kind": "method"},
+            {"name": "Enabled", "kind": "property", "type": "Boolean"},
+            {"name": "Font", "kind": "property", "type": "Object", "readOnly": true},
+            {"name": "ForeColor", "kind": "property", "type": "Long"},
+            {"name": "Height", "kind": "property", "type": "Single"},
+            {"name": "Hide", "kind": "method"},
+            {"name": "InsideHeight", "kind": "property", "type": "Single", "readOnly": true},
+            {"name": "InsideWidth", "kind": "property", "type": "Single", "readOnly": true},
+            {"name": "KeepScrollBarsVisible", "kind": "property", "type": "Long"},
+            {"name": "Left", "kind": "property", "type": "Single"},
+            {"name": "MousePointer", "kind": "property", "type": "Long"},
+            {"name": "Move", "kind": "method", "params": [{"name": "Left", "type": "Variant", "optional": true}, {"name": "Top", "type": "Variant", "optional": true}, {"name": "Width", "type": "Variant", "optional": true}, {"name": "Height", "type": "Variant", "optional": true}, {"name": "Layout", "type": "Variant", "optional": true}]},
+            {"name": "Name", "kind": "property", "type": "String"},
+            {"name": "Paste", "kind": "method"},
+            {"name": "Picture", "kind": "property", "type": "Object"},
+            {"name": "PrintForm", "kind": "method"},
+            {"name": "RedoAction", "kind": "method"},
+            {"name": "Repaint", "kind": "method"},
+            {"name": "Scroll", "kind": "method", "params": [{"name": "ActionX", "type": "Variant", "optional": true}, {"name": "ActionY", "type": "Variant", "optional": true}]},
+            {"name": "ScrollBars", "kind": "property", "type": "Long"},
+            {"name": "ScrollHeight", "kind": "property", "type": "Single"},
+            {"name": "ScrollLeft", "kind": "property", "type": "Single"},
+            {"name": "ScrollTop", "kind": "property", "type": "Single"},
+            {"name": "ScrollWidth", "kind": "property", "type": "Single"},
+            {"name": "SetDefaultTabOrder", "kind": "method"},
+            {"name": "Show", "kind": "method", "params": [{"name": "Modal", "type": "Variant", "optional": true}]},
+            {"name": "SpecialEffect", "kind": "property", "type": "Long"},
+            {"name": "StartUpPosition", "kind": "property", "type": "Long"},
+            {"name": "Tag", "kind": "property", "type": "String"},
+            {"name": "Top", "kind": "property", "type": "Single"},
+            {"name": "UndoAction", "kind": "method"},
+            {"name": "Visible", "kind": "property", "type": "Boolean"},
+            {"name": "Width", "kind": "property", "type": "Single"},
+            {"name": "Zoom", "kind": "property", "type": "Integer"}
+          ]
+        }
+      ]
     }
   ]
 }

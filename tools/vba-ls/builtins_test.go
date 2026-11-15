@@ -10,7 +10,7 @@ func TestEmbeddedBuiltinsParse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vba_builtins.json の解析に失敗: %v", err)
 	}
-	for _, lib := range []string{"VBA", "Scripting"} {
+	for _, lib := range []string{"VBA", "Scripting", "MSForms"} {
 		if s.Library(lib) == nil {
 			t.Fatalf("ライブラリ %s がない", lib)
 		}

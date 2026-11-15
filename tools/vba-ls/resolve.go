@@ -12,7 +12,7 @@ const maxWithDepth = 8
 type exprResolver struct {
 	table *SymbolTable
 	types *CompositeResolver
-	self  TypeRef // 2-3: Me の型。2-0 ではゼロ値（Me. は解決しない）
+	self  TypeRef // Me の型（標準モジュールではゼロ値＝Me. は解決しない）
 	depth int
 	// viaTLBMember は解決の途中で TLB（CATIA）型のメンバーの戻り値・既定メンバーを経由したかを記録する。
 	// typelib は戻り値に基底型（Collection / Factory / Viewer など）を宣言していることが多く、
@@ -73,8 +73,37 @@ func (r *exprResolver) step(cur TypeRef, sg ExprSegment) (TypeRef, bool) {
 	return r.applyIndex(t, calls)
 }
 
-// resolveHead は連鎖の先頭（変数・引数・定数・関数・グローバル）の型を返す。
+// resolveHead は連鎖の先頭の型を返す。解決順:
+// Me → 自モジュールのシンボル（ローカル・引数・モジュール変数・プロシージャ）→ モジュール名・フォームの既定インスタンス（Main. / frmMenu.）
+// → 標準モジュールの Public（修飾なし）→ ライブラリのグローバル（VBA でもプロジェクトの名前が参照設定より優先）→ Public Enum（EKind.kA）。
 func (r *exprResolver) resolveHead(sg ExprSegment, line int) (TypeRef, bool) {
+	if strings.EqualFold(sg.Name, "Me") || r.table.Lookup(sg.Name, line) != nil {
+		return r.resolveLocalHead(sg, line)
+	}
+	// 修飾子としてのモジュール名。同名のプロシージャがあっても、括弧なしならモジュールを優先する
+	if sg.Calls == 0 {
+		if t, ok := r.types.ModuleRef(sg.Name); ok {
+			return t, true
+		}
+	}
+	// 標準モジュールの Public メンバー（修飾なし）。呼び出し分の調整は step に任せる
+	if owner, _, ok := r.types.ProjectMember(sg.Name); ok {
+		return r.step(owner, sg)
+	}
+	if t, ok := r.types.Global(sg.Name); ok {
+		return r.applyIndex(t, sg.Calls)
+	}
+	// 他モジュールの Public Enum
+	if sg.Calls == 0 {
+		if ti, _, ok := r.types.Resolve(TypeRef{Name: sg.Name}); ok && ti.Kind == TypeKindEnum {
+			return ti.Ref, true
+		}
+	}
+	return TypeRef{}, false
+}
+
+// resolveLocalHead は Me と自モジュールのシンボル表で連鎖の先頭を解決する。
+func (r *exprResolver) resolveLocalHead(sg ExprSegment, line int) (TypeRef, bool) {
 	if strings.EqualFold(sg.Name, "Me") {
 		if r.self.IsZero() {
 			return TypeRef{}, false
@@ -101,9 +130,6 @@ func (r *exprResolver) resolveHead(sg ExprSegment, line int) (TypeRef, bool) {
 			return TypeRef{Name: sym.Name}, sg.Calls == 0
 		}
 		return TypeRef{}, false
-	}
-	if t, ok := r.types.Global(sg.Name); ok {
-		return r.applyIndex(t, sg.Calls)
 	}
 	return TypeRef{}, false
 }
