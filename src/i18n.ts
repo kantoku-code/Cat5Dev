@@ -89,6 +89,7 @@ export const messages = {
         'warning.newUserForms': '以下のUserFormはCATIA側に存在しないため新規作成できません。CATIA側で空の同名UserFormを事前に作成してください。これらのファイルはスキップされます:\n{0}',
         'warning.noMoreFiles': 'プッシュ対象のファイルがなくなったため、処理を終了します。',
         'warning.longModuleNames': '以下のモジュール名は31文字を超えています（VBAエディタの上限）:\n{0}\n\nこのままプッシュを続行しますか？',
+        'warning.unsavedModules': '以下のファイルに未保存の変更があります。プッシュはディスクに保存された内容を送信するため、未保存の変更は含まれません:\n{0}\n\nこのままプッシュを続行しますか？',
 
         // Dialog options
         'dialog.delete': 'はい（削除する）',
@@ -202,6 +203,7 @@ export const messages = {
         'warning.newUserForms': 'The following UserForms do not exist in CATIA and cannot be created. Create empty UserForms with these names in CATIA first. These files will be skipped:\n{0}',
         'warning.noMoreFiles': 'No more files to push. Finishing.',
         'warning.longModuleNames': 'The following module names exceed 31 characters (VBA editor limit):\n{0}\n\nProceed with push anyway?',
+        'warning.unsavedModules': 'The following files have unsaved changes. Push sends the content saved on disk, so unsaved edits will not be included:\n{0}\n\nProceed with push anyway?',
 
         // Dialog options
         'dialog.delete': 'Yes (Delete)',
@@ -315,6 +317,7 @@ export const messages = {
         'warning.newUserForms': '以下 Forms 在 CATIA 中不存在，无法新建。请先在 CATIA 中创建同名的空 Forms。这些文件将被跳过:\n{0}',
         'warning.noMoreFiles': '没有更多可 Push 的文件。处理结束。',
         'warning.longModuleNames': '以下 Module 名称超过了 31 个字符（VBA 编辑器的限制）:\n{0}\n\n是否仍要继续 Push？',
+        'warning.unsavedModules': '以下文件有未保存的更改。Push 发送的是磁盘上已保存的内容，未保存的更改不会被包含:\n{0}\n\n是否仍要继续 Push？',
 
         // Dialog options
         'dialog.delete': '是 (删除)',

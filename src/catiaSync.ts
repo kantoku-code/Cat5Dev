@@ -109,10 +109,15 @@ export class CatiaSync {
         return this.run('push', async (context, root) => {
             const directory = path.join(root, 'modules');
             if (!fs.existsSync(directory)) { await vscode.window.showInformationMessage(t('error.noModulesDir')); return; }
-            const project = await this.target(context, root); if (!project) { return; }
-            const encoding = this.encoding(root);
             const files = fs.readdirSync(directory).filter(name => moduleExtension.test(name));
             if (!files.length) { await vscode.window.showInformationMessage(t('error.noModuleFiles')); return; }
+            // Push sends the content saved on disk; warn before selecting a project or contacting CATIA.
+            const unsaved = files.filter(file => this.dirty(path.join(directory, file)));
+            if (unsaved.length && await vscode.window.showWarningMessage(t('warning.unsavedModules', unsaved.join('\n')), { modal: true }, t('dialog.continue')) !== t('dialog.continue')) {
+                await vscode.window.showInformationMessage(t('info.pushCancelled')); return;
+            }
+            const project = await this.target(context, root); if (!project) { return; }
+            const encoding = this.encoding(root);
             // text is sent as-is; comparable ignores line-ending differences (CATIA exports CRLF, Pull writes LF).
             const local: { name: string; type: 1 | 2 | 3; text: string; comparable: string }[] = [];
             const seen = new Set<string>();

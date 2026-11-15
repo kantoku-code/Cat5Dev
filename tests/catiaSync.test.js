@@ -20,6 +20,7 @@ const vscode = {
         showErrorMessage: async message => { state.events.push(['error', message]); },
         showWarningMessage: async (message, _options, ...actions) => {
             state.events.push(['warning', message]);
+            if (state.choice === 'continue') return actions.find(action => action === '続行');
             return state.choice === 'delete' ? actions[0] : state.choice === 'keep' ? actions[1] : undefined;
         },
         showQuickPick: async () => state.selection
@@ -214,4 +215,63 @@ test('Push deletion-only failure reports error, no success, and releases lock', 
     assert.ok(!has(events, 'info', 'プッシュしました'));
     assert.ok(!events.some(e => e[0] === 'command' && e[1] === 'cat5dev.refreshTree'));
     assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')));
+});
+const unsavedWarning = '未保存の変更があります';
+const dirtyDoc = fsPath => ({ isDirty: true, uri: { fsPath } });
+test('Push with unsaved module files asks first and cancels before contacting CATIA', async t => {
+    const { sync, steps, events, root } = setup(t);
+    state.documents = [dirtyDoc(path.join(root, 'modules', 'C5D_UserModule.bas_utf'))];
+    await sync.push();
+    assert.deepEqual(steps, []);
+    assert.ok(events.some(e => e[0] === 'warning' && e[1].includes(unsavedWarning) && e[1].includes('C5D_UserModule.bas_utf')), JSON.stringify(events));
+    assert.ok(!events.some(e => e[0] === 'warning' && e[1].includes('LocalOnly.cls_utf')));
+    assert.ok(has(events, 'info', 'プッシュを中止しました。'), JSON.stringify(events));
+    assert.ok(!events.some(e => e[0] === 'error'));
+    assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')));
+});
+test('Push with unsaved module files continues with the content saved on disk', async t => {
+    let sent;
+    const { sync, steps, events, root } = setup(t, {
+        choice: 'continue',
+        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+    });
+    state.documents = [dirtyDoc(path.join(root, 'modules', 'C5D_UserModule.bas_utf'))];
+    await sync.push();
+    assert.ok(has(events, 'warning', unsavedWarning), JSON.stringify(events));
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.equal(sent, 'old');
+    assert.ok(!has(events, 'info', 'プッシュを中止しました。'));
+    assert.ok(!events.some(e => e[0] === 'error'));
+});
+test('Push without unsaved module files shows no unsaved warning', async t => {
+    const { sync, steps, events } = setup(t, { choice: 'continue' });
+    await sync.push();
+    assert.ok(!has(events, 'warning', unsavedWarning), JSON.stringify(events));
+    assert.deepEqual(steps, ['check', 'push']);
+});
+test('Push ignores dirty documents that are not Push targets', async t => {
+    const { sync, steps, events, root } = setup(t, { choice: 'continue' });
+    state.documents = [
+        dirtyDoc(path.join(root, 'cat5dev.toml')),
+        dirtyDoc('Untitled-1'),
+        dirtyDoc(path.join(root, 'modules', 'x.bas'))
+    ];
+    await sync.push();
+    assert.ok(!has(events, 'warning', unsavedWarning), JSON.stringify(events));
+    assert.deepEqual(steps, ['check', 'push']);
+});
+test('Push detects unsaved module files regardless of path case', async t => {
+    const { sync, steps, events, root } = setup(t);
+    state.documents = [dirtyDoc(path.join(root, 'modules', 'C5D_UserModule.bas_utf').toUpperCase())];
+    await sync.push();
+    assert.ok(has(events, 'warning', unsavedWarning), JSON.stringify(events));
+    assert.deepEqual(steps, []);
+});
+test('Push unsaved warning comes before project selection', async t => {
+    const { sync, steps, events, root } = setup(t, { noTarget: true, selection: 'Review' });
+    state.documents = [dirtyDoc(path.join(root, 'modules', 'C5D_UserModule.bas_utf'))];
+    await sync.push();
+    assert.deepEqual(steps, []);
+    assert.ok(has(events, 'warning', unsavedWarning), JSON.stringify(events));
+    assert.ok(has(events, 'info', 'プッシュを中止しました。'));
 });
