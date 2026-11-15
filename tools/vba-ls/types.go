@@ -122,6 +122,7 @@ type TypeInfo struct {
 	Base          TypeRef     // 自プロバイダで見つからないメンバーの委譲先（フォーム → MSForms.UserForm）
 	Origin        *DeclOrigin // ワークスペースの型なら宣言の場所（定義ジャンプ用）
 	Creatable     bool        // New で作れる（ワークスペースのクラス・フォーム、組み込みの Collection / Dictionary など）
+	Container     string      // 表示用の所属（TLB のライブラリ名 "INFITF" など）。無ければ ""
 }
 
 // DeclOrigin は宣言の場所（定義ジャンプ・ホバー用）。Syms が空ならモジュールの先頭（0:0）。
@@ -152,6 +153,7 @@ type TLBParam struct {
 	ParamArray bool
 	Array      bool
 	Default    string
+	Doc        string // 引数の説明（signatureHelp）
 }
 
 // MemberInfo は型のメンバー 1 件の情報。
@@ -161,7 +163,7 @@ type MemberInfo struct {
 	Kind       MemberKind
 	Params     []TLBParam
 	ReadOnly   bool
-	Doc        string      // 2-1: helpstring
+	Doc        string      // 説明（TLB は V5Automation.chm から生成した DB のときだけ入る）
 	Visibility Visibility  // Private メンバーは自モジュール（Me.）からだけ見える
 	Owner      TypeRef     // 定義元（継承元の表示用）
 	Origin     *DeclOrigin // ワークスペースのメンバーなら宣言（TLB / 組み込みは nil）

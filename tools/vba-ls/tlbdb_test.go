@@ -141,6 +141,9 @@ func TestBundledDatabaseUnchanged(t *testing.T) {
 	if db == nil {
 		t.Fatal("loadDB が nil")
 	}
+	if v := db.Schema().Version; v != 2 {
+		t.Errorf("同梱 DB のスキーマ = v%d, want v2", v)
+	}
 	h := newLSPHandler(NewDefaultResolver(db, nil))
 	const uri = "file:///m.bas"
 	src := "Sub M()\n    Dim d As PartDocument\n    d.Part.Bodies.Item(1).Name\n    d.Bogus\n    d.\nEnd Sub\n"
@@ -173,4 +176,68 @@ func TestBundledDatabaseUnchanged(t *testing.T) {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// realTLBPaths は実 DB の確認に使う DB（同梱の bin/catia_api.db と、CAT5DEV_TEST_TLB_DB があればそれ）を返す。
+// CAT5DEV_TEST_TLB_DB に旧スキーマ（v1）の DB を指定すると、後方互換を確かめられる。
+func realTLBPaths(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	if p, err := filepath.Abs(filepath.Join("..", "..", "bin", "catia_api.db")); err == nil && fileExists(p) {
+		out = append(out, p)
+	}
+	if p := os.Getenv("CAT5DEV_TEST_TLB_DB"); p != "" {
+		if !fileExists(p) {
+			t.Fatalf("CAT5DEV_TEST_TLB_DB=%q が無い", p)
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		t.Skip("実 DB が無い")
+	}
+	return out
+}
+
+// 実 DB（v1 / v2）で、補完に内部関数が出ず、継承込みのメンバーが引け、DB を変更しない。
+func TestRealDatabaseMembers(t *testing.T) {
+	for _, path := range realTLBPaths(t) {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			before := stampOf(t, path)
+			db, err := LoadTLBDatabase(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			v := db.Schema().Version
+			t.Logf("%s: スキーマ v%d", path, v)
+			p := newTLBProvider(db).(*TLBProvider)
+			got := memberNames(p.Members(TypeRef{Name: "PartDocument"}))
+			for _, want := range []string{"Part", "FullName", "Close", "Name", "Parent"} {
+				if !got[want] {
+					t.Errorf("PartDocument.%s が無い", want)
+				}
+			}
+			for _, bad := range []string{"QueryInterface", "AddRef", "Release", "GetTypeInfo", "Invoke", "Destructor", "IsAKindOf", "GetImpl", "_NewEnum"} {
+				if got[bad] {
+					t.Errorf("PartDocument の候補に %s がある", bad)
+				}
+			}
+			if _, ok := p.LookupType("Application"); !ok {
+				t.Error("Application が無い")
+			}
+			if v >= 2 {
+				if m, ok := p.Member(TypeRef{Name: "InstanceFactory"}, "InstantiationMode"); !ok || !strings.HasPrefix(m.Doc, "（書き込み専用）") {
+					t.Errorf("InstanceFactory.InstantiationMode = %+v, %v", m, ok)
+				}
+				if ti, _ := p.LookupType("PartDocument"); ti.Container != "MECMOD" {
+					t.Errorf("PartDocument の所属 = %q", ti.Container)
+				}
+			}
+			db.Close()
+			if after := stampOf(t, path); after != before {
+				t.Errorf("DB が変更された")
+			}
+			assertNoSideFiles(t, path)
+		})
+	}
 }

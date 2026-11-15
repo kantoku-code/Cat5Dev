@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -15,7 +16,9 @@ import (
 
 // TLBDatabase は catia_api.db への読み取り専用アクセスを提供する。
 type TLBDatabase struct {
-	db *sql.DB
+	db         *sql.DB
+	schemaOnce sync.Once
+	schema     *tlbSchema
 }
 
 // LoadTLBDatabase は SQLite ファイルを読み取り専用（mode=ro）で開く。
@@ -54,6 +57,81 @@ func readOnlyDSN(path string) (string, error) {
 	return u.String(), nil
 }
 
+// tlbSchema は DB のテーブル・列の有無とスキーマの版（読み取りだけで検出する）。
+// v1（2-0 までの抽出器）は interfaces / methods / properties / parameters の 4 テーブルで、継承・Enum・説明を持たない。
+// v2（tools/tlb-extractor/schema.sql）は列とテーブルを足したもので、meta.schema_version = '2'。
+type tlbSchema struct {
+	Version int                        // meta.schema_version（無ければ 1）
+	tables  map[string]bool            // 小文字のテーブル名
+	cols    map[string]map[string]bool // テーブル → 小文字の列名
+}
+
+// HasTable はテーブルがあるかを返す。
+func (s *tlbSchema) HasTable(t string) bool { return s.tables[strings.ToLower(t)] }
+
+// Has はテーブル t に列 col があるかを返す。
+func (s *tlbSchema) Has(t, col string) bool { return s.cols[strings.ToLower(t)][strings.ToLower(col)] }
+
+// Hierarchy は継承（parent_id）と自前メンバーだけの構成か（v2 以上）を返す。
+// v1 は parent_id が空で各型に平坦なメンバーを持つため、継承をたどる判定に使えない。
+func (s *tlbSchema) Hierarchy() bool { return s.Version >= 2 }
+
+// col は SELECT 句の列の式を返す。列が無ければ fallback（定数の式）にする。
+func (s *tlbSchema) col(table, col, fallback string) string {
+	if s.Has(table, col) {
+		return col
+	}
+	return fallback
+}
+
+// Schema はスキーマを返す（初回にだけ sqlite_master と pragma_table_info を読む。DB は変更しない）。
+func (t *TLBDatabase) Schema() *tlbSchema {
+	t.schemaOnce.Do(func() { t.schema = detectSchema(t.db) })
+	return t.schema
+}
+
+func detectSchema(db *sql.DB) *tlbSchema {
+	s := &tlbSchema{Version: 1, tables: map[string]bool{}, cols: map[string]map[string]bool{}}
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vba-ls: TLB データベースのスキーマを読めない: %v\n", err)
+		return s
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil {
+			names = append(names, n)
+		}
+	}
+	rows.Close()
+	for _, n := range names {
+		key := strings.ToLower(n)
+		s.tables[key] = true
+		s.cols[key] = map[string]bool{}
+		r, err := db.Query(`SELECT name FROM pragma_table_info(?)`, n)
+		if err != nil {
+			continue
+		}
+		for r.Next() {
+			var c string
+			if r.Scan(&c) == nil {
+				s.cols[key][strings.ToLower(c)] = true
+			}
+		}
+		r.Close()
+	}
+	if s.tables["meta"] {
+		var v string
+		if db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&v) == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				s.Version = n
+			}
+		}
+	}
+	return s
+}
+
 // Close はデータベース接続を閉じる。
 func (t *TLBDatabase) Close() {
 	if t != nil && t.db != nil {
@@ -61,8 +139,8 @@ func (t *TLBDatabase) Close() {
 	}
 }
 
-// tlbLibraries は TLBProvider が担当する修飾子（大文字小文字無視）。推定のリストで、
-// 2-1 で DB に libraries テーブルを持たせたらそこから作るように置き換える。
+// tlbLibraries は v1 の DB（libraries テーブルが無い）で TLBProvider が担当する修飾子（大文字小文字無視）。
+// v2 は libraries テーブルの名前（INFITF / MECMOD …）と "CATIA" を使う。
 var tlbLibraries = map[string]bool{
 	"catia": true, "infitf": true, "mecmod": true, "partitf": true, "hybridshapetypelib": true,
 	"productstructuretypelib": true, "draftingitf": true, "knowledgewaretypelib": true,
@@ -75,30 +153,58 @@ var tlbOpenTypes = map[string]bool{
 	"idispatch": true, "iunknown": true, "variant": true,
 }
 
-// tlbHiddenMembers は IUnknown / IDispatch のメソッド。VBA からは使わないため候補から除く（根本対処は 2-1）。
+// tlbHiddenMembers は v1 の DB で候補から除く名前。v1 は各型に IUnknown / IDispatch と CATBaseUnknown の
+// restricted な関数が平坦に入っているため名前で除く。v2 は抽出時に restricted を除いてあるので使わない
+// （TreeVizManipSettingAtt.GetTypeInfo のような正当な同名メンバーを隠さない）。
 var tlbHiddenMembers = map[string]bool{
 	"queryinterface": true, "addref": true, "release": true, "gettypeinfocount": true,
 	"gettypeinfo": true, "getidsofnames": true, "invoke": true,
+	"destructor": true, "getmetaobject": true, "isa": true, "isakindof": true, "getimpl": true, "setimpl": true,
+	"isnull": true, "isequal": true, "surchargeqi": true, "changecomponentstate": true, "_newenum": true,
 }
+
+// TLB の flags・access のビット。
+const (
+	tlbTypeFlagHidden = 0x10 // TYPEFLAG_FHIDDEN
+	tlbFuncFlagHidden = 0x40 // FUNCFLAG_FHIDDEN
+	tlbParamFlagOpt   = 0x10 // PARAMFLAG_FOPT
+	tlbAccessGet      = 1
+	tlbAccessPut      = 2
+	tlbAccessPutRef   = 4
+)
 
 type tlbIface struct {
 	id     int64
 	name   string
 	parent sql.NullInt64
+	lib    sql.NullInt64 // v2: libraries.id
+	flags  int64         // v2: TYPEFLAGS（0x10 = hidden）
+	doc    string        // v2
 }
 
+// memberSet は継承込みのメンバー。list は補完用（hidden を除く）、all と byName は hidden を含む（診断・ホバー用）。
 type memberSet struct {
 	list   []MemberInfo
-	byName map[string]int
+	all    []MemberInfo
+	byName map[string]int // 小文字名 → all の添字
+}
+
+// ownMember は型自身のメンバー 1 件（hidden の印付き）。
+type ownMember struct {
+	info   MemberInfo
+	hidden bool
 }
 
 // TLBProvider は catia_api.db の型を TypeProvider として提供する。
 // interfaces は初回に全件ロードし、継承込みのメンバーは interface ごとにメモ化する（DB は読み取り専用なので無効化不要）。
 type TLBProvider struct {
-	db     *TLBDatabase
-	once   sync.Once
-	byName map[string]tlbIface // 小文字名 → iface
-	byID   map[int64]tlbIface
+	db      *TLBDatabase
+	once    sync.Once
+	schema  *tlbSchema
+	byName  map[string]tlbIface // 小文字名 → iface
+	byID    map[int64]tlbIface
+	libs    map[string]bool  // OwnsLibrary の対象（小文字）
+	libName map[int64]string // libraries.id → 名前（表示用）
 
 	mu     sync.Mutex
 	merged map[int64]*memberSet
@@ -107,7 +213,7 @@ type TLBProvider struct {
 	names     map[string]bool // 全インターフェースのメンバー名（小文字）。読み込みに失敗したら nil
 
 	typesOnce sync.Once
-	typeList  []TypeInfo // 全インターフェース（IUnknown / IDispatch を除く）。名前順
+	typeList  []TypeInfo // 型補完用の型（IUnknown / IDispatch・hidden を除く）。名前順
 }
 
 // newTLBProvider は db が nil なら interface の nil を返す（typed nil を作らない）。
@@ -120,9 +226,16 @@ func newTLBProvider(db *TLBDatabase) TypeProvider {
 
 func (p *TLBProvider) load() {
 	p.once.Do(func() {
+		p.schema = p.db.Schema()
 		p.byName = map[string]tlbIface{}
 		p.byID = map[int64]tlbIface{}
-		rows, err := p.db.db.Query(`SELECT id, name, parent_id FROM interfaces ORDER BY id`)
+		p.libs = map[string]bool{}
+		p.libName = map[int64]string{}
+		s := p.schema
+		p.loadLibraries()
+		q := `SELECT id, name, parent_id, ` + s.col("interfaces", "library_id", "NULL") + `, ` +
+			s.col("interfaces", "flags", "0") + `, ` + s.col("interfaces", "doc", "''") + ` FROM interfaces ORDER BY id`
+		rows, err := p.db.db.Query(q)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "vba-ls: interfaces の読み込みに失敗: %v\n", err)
 			return
@@ -130,7 +243,7 @@ func (p *TLBProvider) load() {
 		defer rows.Close()
 		for rows.Next() {
 			var it tlbIface
-			if err := rows.Scan(&it.id, &it.name, &it.parent); err != nil {
+			if err := rows.Scan(&it.id, &it.name, &it.parent, &it.lib, &it.flags, &it.doc); err != nil {
 				continue
 			}
 			key := strings.ToLower(it.name)
@@ -142,7 +255,41 @@ func (p *TLBProvider) load() {
 	})
 }
 
-func (p *TLBProvider) OwnsLibrary(lib string) bool { return tlbLibraries[strings.ToLower(lib)] }
+// loadLibraries は libraries テーブルから修飾子の集合を作る（無ければ v1 の固定リスト）。
+func (p *TLBProvider) loadLibraries() {
+	p.libs["catia"] = true
+	if !p.schema.HasTable("libraries") {
+		for k := range tlbLibraries {
+			p.libs[k] = true
+		}
+		return
+	}
+	rows, err := p.db.db.Query(`SELECT id, name FROM libraries`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vba-ls: libraries の読み込みに失敗: %v\n", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n string
+		if rows.Scan(&id, &n) == nil && n != "" {
+			p.libs[strings.ToLower(n)] = true
+			p.libName[id] = n
+		}
+	}
+}
+
+// HasHierarchy は DB が継承（parent_id と自前メンバー）を持つ v2 以上かを返す。
+func (p *TLBProvider) HasHierarchy() bool {
+	p.load()
+	return p.schema.Hierarchy()
+}
+
+func (p *TLBProvider) OwnsLibrary(lib string) bool {
+	p.load()
+	return p.libs[strings.ToLower(lib)]
+}
 
 func (p *TLBProvider) LookupType(name string) (TypeInfo, bool) {
 	p.load()
@@ -152,9 +299,11 @@ func (p *TLBProvider) LookupType(name string) (TypeInfo, bool) {
 		return TypeInfo{}, false
 	}
 	return TypeInfo{
-		Ref:      TypeRef{Lib: "CATIA", Name: it.name},
-		Kind:     TypeKindInterface,
-		Complete: !tlbOpenTypes[key],
+		Ref:       TypeRef{Lib: "CATIA", Name: it.name},
+		Kind:      TypeKindInterface,
+		Complete:  !tlbOpenTypes[key],
+		Doc:       it.doc,
+		Container: p.libName[it.lib.Int64],
 	}, true
 }
 
@@ -165,6 +314,7 @@ func (p *TLBProvider) Members(t TypeRef) []MemberInfo {
 	return nil
 }
 
+// Member は hidden のメンバーも引ける（補完には出さないが、書かれていれば診断しない・ホバーできる）。
 func (p *TLBProvider) Member(t TypeRef, name string) (MemberInfo, bool) {
 	ms := p.memberSetOf(t)
 	if ms == nil {
@@ -174,7 +324,7 @@ func (p *TLBProvider) Member(t TypeRef, name string) (MemberInfo, bool) {
 	if !ok {
 		return MemberInfo{}, false
 	}
-	return ms.list[i], true
+	return ms.all[i], true
 }
 
 func (p *TLBProvider) MemberType(t TypeRef, name string) (TypeRef, bool) {
@@ -210,77 +360,124 @@ func (p *TLBProvider) memberSetOf(t TypeRef) *memberSet {
 
 // buildMerged は parent を最大 20 段・循環ガード付きでたどり、派生側優先で重複を除いて名前順に並べる。
 func (p *TLBProvider) buildMerged(it tlbIface) *memberSet {
-	ms := &memberSet{byName: map[string]int{}}
+	v1 := !p.schema.Hierarchy()
+	var all []ownMember
+	byName := map[string]bool{}
 	seen := map[int64]bool{}
 	cur, ok := it, true
 	for depth := 0; ok && depth <= 20 && !seen[cur.id]; depth++ {
 		seen[cur.id] = true
-		for _, m := range p.ownMembers(cur) {
-			key := strings.ToLower(m.Name)
-			if _, dup := ms.byName[key]; dup || tlbHiddenMembers[key] {
+		for _, om := range p.ownMembers(cur) {
+			key := strings.ToLower(om.info.Name)
+			if byName[key] || (v1 && tlbHiddenMembers[key]) {
 				continue
 			}
-			ms.byName[key] = len(ms.list)
-			ms.list = append(ms.list, m)
+			byName[key] = true
+			all = append(all, om)
 		}
 		if !cur.parent.Valid {
 			break
 		}
 		cur, ok = p.byID[cur.parent.Int64]
 	}
-	sort.SliceStable(ms.list, func(i, j int) bool {
-		return strings.ToLower(ms.list[i].Name) < strings.ToLower(ms.list[j].Name)
+	sort.SliceStable(all, func(i, j int) bool {
+		return strings.ToLower(all[i].info.Name) < strings.ToLower(all[j].info.Name)
 	})
-	for i, m := range ms.list {
-		ms.byName[strings.ToLower(m.Name)] = i
+	ms := &memberSet{all: make([]MemberInfo, len(all)), byName: make(map[string]int, len(all))}
+	for i, om := range all {
+		ms.all[i] = om.info
+		ms.byName[strings.ToLower(om.info.Name)] = i
+		if !om.hidden {
+			ms.list = append(ms.list, om.info)
+		}
 	}
 	return ms
 }
 
 // ownMembers は interface 自身のメソッド（引数付き）とプロパティを返す（メソッドが先）。
-func (p *TLBProvider) ownMembers(it tlbIface) []MemberInfo {
+// v2 の列（flags / vararg / access / default_value / doc）が無い DB では既定値で埋める。
+func (p *TLBProvider) ownMembers(it tlbIface) []ownMember {
+	s := p.schema
 	owner := TypeRef{Lib: "CATIA", Name: it.name}
-	var out []MemberInfo
+	var out []ownMember
 	byMethodID := map[int64]int{}
+	var varargIDs []int64
 
-	rows, err := p.db.db.Query(`SELECT id, name, return_type FROM methods WHERE interface_id = ? ORDER BY id`, it.id)
+	rows, err := p.db.db.Query(`SELECT id, name, return_type, `+s.col("methods", "flags", "0")+`, `+
+		s.col("methods", "vararg", "0")+`, `+s.col("methods", "doc", "''")+
+		` FROM methods WHERE interface_id = ? ORDER BY id`, it.id)
 	if err == nil {
 		for rows.Next() {
-			var id int64
-			var name, ret string
-			if err := rows.Scan(&id, &name, &ret); err != nil {
+			var id, flags, vararg int64
+			var name, ret, doc string
+			if err := rows.Scan(&id, &name, &ret, &flags, &vararg, &doc); err != nil {
 				continue
 			}
 			byMethodID[id] = len(out)
-			out = append(out, MemberInfo{Name: name, ReturnType: ret, Kind: MemberKindMethod, Visibility: VisPublic, Owner: owner})
+			if vararg != 0 {
+				varargIDs = append(varargIDs, id)
+			}
+			out = append(out, ownMember{
+				info:   MemberInfo{Name: name, ReturnType: ret, Kind: MemberKindMethod, Visibility: VisPublic, Owner: owner, Doc: doc},
+				hidden: flags&tlbFuncFlagHidden != 0,
+			})
 		}
 		rows.Close()
 	}
 
-	rows, err = p.db.db.Query(`SELECT pa.method_id, pa.name, pa.type FROM parameters pa JOIN methods m ON m.id = pa.method_id
-WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
+	pcol := func(col, fallback string) string {
+		if s.Has("parameters", col) {
+			return "pa." + col
+		}
+		return fallback
+	}
+	rows, err = p.db.db.Query(`SELECT pa.method_id, pa.name, pa.type, `+pcol("flags", "0")+`, `+
+		pcol("default_value", "NULL")+`, `+pcol("doc", "''")+
+		` FROM parameters pa JOIN methods m ON m.id = pa.method_id WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
 	if err == nil {
 		for rows.Next() {
-			var mid int64
-			var name, typ string
-			if err := rows.Scan(&mid, &name, &typ); err != nil {
+			var mid, flags int64
+			var name, typ, doc string
+			var def sql.NullString
+			if err := rows.Scan(&mid, &name, &typ, &flags, &def, &doc); err != nil {
 				continue
 			}
 			if i, ok := byMethodID[mid]; ok {
-				out[i].Params = append(out[i].Params, TLBParam{Name: name, Type: typ})
+				out[i].info.Params = append(out[i].info.Params, TLBParam{
+					Name: name, Type: typ, Doc: doc,
+					Optional: flags&tlbParamFlagOpt != 0 || def.Valid,
+					Default:  def.String,
+				})
 			}
 		}
 		rows.Close()
 	}
+	for _, id := range varargIDs {
+		if ps := out[byMethodID[id]].info.Params; len(ps) > 0 {
+			ps[len(ps)-1].ParamArray = true
+			ps[len(ps)-1].Array = true
+		}
+	}
 
-	rows, err = p.db.db.Query(`SELECT name, type FROM properties WHERE interface_id = ? ORDER BY id`, it.id)
+	// v1 には access が無い（読み書きの区別が分からない）ので get|put とみなす
+	rows, err = p.db.db.Query(`SELECT name, type, `+s.col("properties", "access", "3")+`, `+
+		s.col("properties", "flags", "0")+`, `+s.col("properties", "doc", "''")+
+		` FROM properties WHERE interface_id = ? ORDER BY id`, it.id)
 	if err == nil {
 		for rows.Next() {
-			var name, typ string
-			if err := rows.Scan(&name, &typ); err != nil {
+			var name, typ, doc string
+			var access, flags int64
+			if err := rows.Scan(&name, &typ, &access, &flags, &doc); err != nil {
 				continue
 			}
-			out = append(out, MemberInfo{Name: name, ReturnType: typ, Kind: MemberKindProperty, Visibility: VisPublic, Owner: owner})
+			if access&tlbAccessGet == 0 {
+				doc = strings.TrimSpace("（書き込み専用） " + doc)
+			}
+			out = append(out, ownMember{
+				info: MemberInfo{Name: name, ReturnType: typ, Kind: MemberKindProperty, Visibility: VisPublic, Owner: owner,
+					Doc: doc, ReadOnly: access&(tlbAccessPut|tlbAccessPutRef) == 0},
+				hidden: flags&tlbFuncFlagHidden != 0,
+			})
 		}
 		rows.Close()
 	}
@@ -288,10 +485,11 @@ WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
 }
 
 // HasMemberNamed は、どれかのインターフェースに name（大文字小文字無視）というメンバーがあるかを返す。
-// CATIA は遅延バインディングなので、宣言型が基底型でも派生型のメンバーが実行時に動く。診断ではこの集合に無い名前
-// （typo か型情報の欠落）だけを警告にする。初回にメソッドとプロパティの名前を一度だけ読み込む。
+// CATIA は遅延バインディングなので、宣言型が基底型でも派生型のメンバーが実行時に動く。v1 の DB では、
+// 診断はこの集合に無い名前（typo か型情報の欠落）だけを警告にする。初回にメソッドとプロパティの名前を一度だけ読み込む。
 // 読み込みに失敗したときは常に true を返す（安全側＝診断しない）。
 func (p *TLBProvider) HasMemberNamed(name string) bool {
+	p.load()
 	p.namesOnce.Do(func() {
 		rows, err := p.db.db.Query(`SELECT name FROM methods UNION SELECT name FROM properties`)
 		if err != nil {
@@ -299,13 +497,14 @@ func (p *TLBProvider) HasMemberNamed(name string) bool {
 			return
 		}
 		defer rows.Close()
+		v1 := !p.schema.Hierarchy()
 		names := map[string]bool{}
 		for rows.Next() {
 			var n string
 			if err := rows.Scan(&n); err != nil {
 				continue
 			}
-			if key := strings.ToLower(n); !tlbHiddenMembers[key] {
+			if key := strings.ToLower(n); !v1 || !tlbHiddenMembers[key] {
 				names[key] = true
 			}
 		}
@@ -321,12 +520,12 @@ func (p *TLBProvider) HasMemberNamed(name string) bool {
 	return p.names[strings.ToLower(name)]
 }
 
-// Types は全インターフェース（IUnknown / IDispatch を除く）を名前順に返す（型補完用）。
+// Types は型補完用の型（IUnknown / IDispatch と hidden のインターフェースを除く）を名前順に返す。
 func (p *TLBProvider) Types() []TypeInfo {
 	p.typesOnce.Do(func() {
 		p.load()
-		for key := range p.byName {
-			if key == "iunknown" || key == "idispatch" {
+		for key, it := range p.byName {
+			if key == "iunknown" || key == "idispatch" || it.flags&tlbTypeFlagHidden != 0 {
 				continue
 			}
 			if ti, ok := p.LookupType(key); ok {

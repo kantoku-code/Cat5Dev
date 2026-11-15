@@ -451,10 +451,13 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 	runtime.KeepAlive(ws)
 }
 
-// sampleTLB は同梱の bin/catia_api.db を読み取り専用で開く（無ければ nil）。
+// sampleTLB は同梱の bin/catia_api.db（CAT5DEV_TEST_TLB_DB があればそれ）を読み取り専用で開く（無ければ nil）。
 func sampleTLB(t *testing.T) *TLBDatabase {
 	t.Helper()
 	p := filepath.Join("..", "..", "bin", "catia_api.db")
+	if env := os.Getenv("CAT5DEV_TEST_TLB_DB"); env != "" {
+		p = env
+	}
 	if _, err := os.Stat(p); err != nil {
 		return nil
 	}
