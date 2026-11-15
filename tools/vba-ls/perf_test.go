@@ -294,6 +294,8 @@ func TestTypedReservedNameKeepsFollowingSymbols(t *testing.T) {
 // CAT5DEV_SAMPLE_DIR が modules を指していれば、その親をワークスペースのルートにして modules の自動検出も確かめる。
 // CAT5DEV_WS_DIAG_BUDGET が設定されていれば、ワークスペース由来の診断の増分がそれを超えたら失敗にする。
 // CAT5DEV_DIAG_ERROR_BUDGET が設定されていれば、Error の診断の件数がそれを超えたら失敗にする。
+// CAT5DEV_DIAG_WARNING_BUDGET が設定されていれば、Warning の診断の件数がそれを超えたら失敗にする。
+// 型ヒント注釈（'As 型）の件数と、そのうち型が解決できた件数も記録する。
 func TestWorkspaceIndexSampleDir(t *testing.T) {
 	files := sampleFiles(t)
 	dir := os.Getenv("CAT5DEV_SAMPLE_DIR")
@@ -385,7 +387,8 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 	var extra []string
 	totalWS, totalBase := 0, 0
 	bySev := map[DiagnosticSeverity]int{}
-	var errSamples []string
+	var errSamples, warnSamples []string
+	hints, hintsResolved := 0, 0
 	for _, f := range files {
 		e := ws.Entry(f)
 		if e == nil {
@@ -402,6 +405,17 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 			bySev[d.Severity]++
 			if d.Severity == DiagnosticSeverityError && len(errSamples) < 20 {
 				errSamples = append(errSamples, fmt.Sprintf("%s:%d: %s", filepath.Base(f), d.Range.Start.Line+1, d.Message))
+			}
+			if d.Severity == DiagnosticSeverityWarning && len(warnSamples) < 20 {
+				warnSamples = append(warnSamples, fmt.Sprintf("%s:%d: %s | %s", filepath.Base(f), d.Range.Start.Line+1, d.Message, strings.TrimSpace(lines[d.Range.Start.Line])))
+			}
+		}
+		for i := range e.Table.Symbols {
+			if h := e.Table.Symbols[i].HintRef(); !h.IsZero() {
+				hints++
+				if types.TypeExists(h) {
+					hintsResolved++
+				}
 			}
 		}
 		seen := map[string]int{}
@@ -429,6 +443,19 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 		bySev[DiagnosticSeverityError], bySev[DiagnosticSeverityWarning], totalWS-bySev[DiagnosticSeverityError]-bySev[DiagnosticSeverityWarning])
 	for _, s := range errSamples {
 		t.Logf("  Error: %s", s)
+	}
+	for _, s := range warnSamples {
+		t.Logf("  Warning: %s", s)
+	}
+	t.Logf("型ヒント注釈: %d 件（型が解決できたもの %d 件）", hints, hintsResolved)
+	if b := os.Getenv("CAT5DEV_DIAG_WARNING_BUDGET"); b != "" {
+		n, err := strconv.Atoi(b)
+		if err != nil {
+			t.Fatalf("CAT5DEV_DIAG_WARNING_BUDGET=%q: %v", b, err)
+		}
+		if w := bySev[DiagnosticSeverityWarning]; w > n {
+			t.Fatalf("Warning の診断 %d 件が予算 %d 件を超えた", w, n)
+		}
 	}
 	if b := os.Getenv("CAT5DEV_DIAG_ERROR_BUDGET"); b != "" {
 		n, err := strconv.Atoi(b)
@@ -472,7 +499,8 @@ func sampleTLB(t *testing.T) *TLBDatabase {
 
 // TestCompletionLatencySample は実サンプルの最大のモジュールを索引付きで開いた状態で、識別子補完・型補完・
 // signatureHelp・空白の起動（文脈外）の応答時間と応答の大きさを計測する。
-// CAT5DEV_COMPLETION_BUDGET_MS が設定されていれば、識別子補完・型補完・signatureHelp の p95 がそれを超えたら失敗にする。
+// CAT5DEV_COMPLETION_BUDGET_MS が設定されていれば、識別子補完・型補完・signatureHelp・CATIA. の補完・resolve の p95 が
+// それを超えたら失敗にする。CAT5DEV_COMPLETION_SIZE_KB が設定されていれば、識別子補完・型補完の応答の最大がそれを超えたら失敗にする。
 func TestCompletionLatencySample(t *testing.T) {
 	files := sampleFiles(t)
 	dir := os.Getenv("CAT5DEV_SAMPLE_DIR")
@@ -537,6 +565,8 @@ func TestCompletionLatencySample(t *testing.T) {
 	typ := &series{name: "型補完（As の後）"}
 	sig := &series{name: "signatureHelp"}
 	space := &series{name: "空白の起動（文脈外）"}
+	catia := &series{name: "CATIA. のメンバー補完"}
+	resolve := &series{name: "completionItem/resolve（型と Enum 定数）"}
 	// 初回だけの準備（組み込みの候補・TLB の型一覧）を計測から外す
 	if d, _ := docWith(picked[0], "    Dim zz As "); d != nil {
 		BuildCompletions(d, picked[0], utf16Len("    Dim zz As "))
@@ -552,6 +582,14 @@ func TestCompletionLatencySample(t *testing.T) {
 		measure(sig, func() interface{} { return BuildSignatureHelp(d, ln, ch) })
 		d, ch = docWith(ln, "    x = 1 ")
 		measure(space, func() interface{} { return BuildCompletionsTrigger(d, ln, ch, " ") })
+		d, ch = docWith(ln, "    x = CATIA.ActiveDocument.")
+		measure(catia, func() interface{} { return BuildCompletions(d, ln, ch) })
+		measure(resolve, func() interface{} {
+			return []CompletionItem{
+				ResolveCompletionItem(types, CompletionItem{Label: "PartDocument", Kind: CompletionItemKindInterface, Data: completionDataType}),
+				ResolveCompletionItem(types, CompletionItem{Label: "catPaperA4", Kind: CompletionItemKindEnumMember, Data: completionDataConst}),
+			}
+		})
 	}
 	pct := func(ds []time.Duration, p float64) time.Duration {
 		s := append([]time.Duration(nil), ds...)
@@ -576,12 +614,27 @@ func TestCompletionLatencySample(t *testing.T) {
 		}
 		budget = time.Duration(ms * float64(time.Millisecond))
 	}
-	for _, s := range []*series{ident, typ, sig, space} {
+	var sizeBudget float64
+	if b := os.Getenv("CAT5DEV_COMPLETION_SIZE_KB"); b != "" {
+		kb, err := strconv.ParseFloat(b, 64)
+		if err != nil {
+			t.Fatalf("CAT5DEV_COMPLETION_SIZE_KB=%q: %v", b, err)
+		}
+		sizeBudget = kb
+	}
+	for _, s := range []*series{ident, typ, sig, space, catia, resolve} {
 		p95 := pct(s.durs, 0.95)
-		t.Logf("  %s: p50 %v / p95 %v / 最大 %v、応答 最大 %.1f KB", s.name, pct(s.durs, 0.5), p95, pct(s.durs, 1), float64(maxInt(s.bytes))/1024)
+		kb := float64(maxInt(s.bytes)) / 1024
+		t.Logf("  %s: p50 %v / p95 %v / 最大 %v、応答 最大 %.1f KB", s.name, pct(s.durs, 0.5), p95, pct(s.durs, 1), kb)
 		if budget > 0 && s != space && p95 > budget {
 			t.Errorf("%s の p95 %v が予算 %v を超えた", s.name, p95, budget)
 		}
+		if sizeBudget > 0 && (s == ident || s == typ) && kb > sizeBudget {
+			t.Errorf("%s の応答 %.1f KB が予算 %.0f KB を超えた", s.name, kb, sizeBudget)
+		}
+	}
+	if maxInt(catia.bytes) <= len("null") {
+		t.Errorf("CATIA.ActiveDocument. の補完が空")
 	}
 	if maxInt(space.bytes) > len("null") {
 		t.Errorf("空白の起動（文脈外）は null を返すはず")
