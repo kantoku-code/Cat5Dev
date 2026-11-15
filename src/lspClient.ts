@@ -10,6 +10,22 @@ import {
 
 let client: LanguageClient | undefined;
 
+/** サーバーの索引対象（標準モジュール・クラス・フォーム）。 */
+export const MODULE_GLOB = '**/*.{bas_utf,cls_utf,frm_utf}';
+
+/** クライアント設定を作る（テスト用に切り出し）。
+ *  scheme を file に限るのは、git の差分ビューなどのバッファをモジュールとして扱わないため。 */
+export function buildClientOptions(watcher: vscode.FileSystemWatcher): LanguageClientOptions {
+    return {
+        documentSelector: [
+            { scheme: 'file', language: 'vb', pattern: '**/*.bas_utf' },
+            { scheme: 'file', language: 'vb', pattern: '**/*.cls_utf' },
+            { scheme: 'file', language: 'vb', pattern: '**/*.frm_utf' },
+        ],
+        synchronize: { fileEvents: watcher },
+    };
+}
+
 /** vba-ls.exe のパスを解決する。
  *  優先順位: 環境変数 CAT5DEV_VBA_LS → 拡張の bin/ ディレクトリ */
 function resolveServerPath(context: vscode.ExtensionContext): string | undefined {
@@ -41,14 +57,10 @@ export function startLspClient(context: vscode.ExtensionContext): void {
         debug: { command: serverExe, transport: TransportKind.stdio },
     };
 
-    const clientOptions: LanguageClientOptions = {
-        documentSelector: [
-            { language: 'vb', pattern: '**/*.bas_utf' },
-            { language: 'vb', pattern: '**/*.cls_utf' },
-            { language: 'vb', pattern: '**/*.frm_utf' },
-        ],
-        synchronize: {},
-    };
+    // モジュールの作成・削除・リネーム（Pull による書き換えを含む）をサーバーの索引に通知する
+    const watcher = vscode.workspace.createFileSystemWatcher(MODULE_GLOB);
+    context.subscriptions.push(watcher);
+    const clientOptions = buildClientOptions(watcher);
 
     client = new LanguageClient(
         'vba-ls',
