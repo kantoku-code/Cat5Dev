@@ -116,6 +116,14 @@ export const messages = {
         'file.deleteConfirm': '{0} を削除しますか？',
         'file.deleteButton': '削除',
         'file.copySuccess': 'パスをコピーしました: {0}',
+        'file.noTarget': '対象のモジュールが指定されていません。ツリーから右クリックで実行してください。',
+        'file.invalidTarget': 'modules フォルダ内のVBAファイルではありません: {0}',
+        'file.invalidName': 'モジュール名として使用できません: {0}',
+        'file.exists': '同名のモジュールが既に存在します: {0}',
+        'file.dirty': '{0} に未保存の変更があります。保存してから再実行してください。',
+        'file.formRenameWarning': 'UserFormの名前を変更するとCATIA側に新規作成できず、Push時に旧フォームの削除確認が表示されます（削除を選ぶとフォームが失われます）。続行しますか？',
+        'file.renameFailed': '名前変更に失敗しました ({0}): {1}',
+        'file.deleteFailed': '削除に失敗しました ({0}): {1}',
 
         // Language switch
         'language.description': '(現在の言語)',
@@ -230,6 +238,14 @@ export const messages = {
         'file.deleteConfirm': 'Delete {0}?',
         'file.deleteButton': 'Delete',
         'file.copySuccess': 'Path copied: {0}',
+        'file.noTarget': 'No target module was specified. Run this command from the tree context menu.',
+        'file.invalidTarget': 'Not a VBA file in the modules folder: {0}',
+        'file.invalidName': 'Cannot be used as a module name: {0}',
+        'file.exists': 'A module with the same name already exists: {0}',
+        'file.dirty': '{0} has unsaved changes. Save it and try again.',
+        'file.formRenameWarning': 'A renamed UserForm cannot be created in CATIA, and Push will ask to delete the old form (choosing Delete loses the form). Continue?',
+        'file.renameFailed': 'Rename failed ({0}): {1}',
+        'file.deleteFailed': 'Delete failed ({0}): {1}',
 
         // Language switch
         'language.description': '(Current language)',
@@ -344,6 +360,14 @@ export const messages = {
         'file.deleteConfirm': '确定要删除 {0} 吗？',
         'file.deleteButton': '删除',
         'file.copySuccess': '已复制路径: {0}',
+        'file.noTarget': '未指定目标模块。请在树视图中右键执行。',
+        'file.invalidTarget': '不是 modules 文件夹中的 VBA 文件: {0}',
+        'file.invalidName': '不能用作模块名称: {0}',
+        'file.exists': '已存在同名模块: {0}',
+        'file.dirty': '{0} 有未保存的更改。请保存后重试。',
+        'file.formRenameWarning': '重命名 UserForm 后无法在 CATIA 中新建，Push 时会显示删除旧窗体的确认（选择删除将丢失该窗体）。是否继续？',
+        'file.renameFailed': '重命名失败 ({0}): {1}',
+        'file.deleteFailed': '删除失败 ({0}): {1}',
 
         // Language switch
         'language.description': '(当前语言)',

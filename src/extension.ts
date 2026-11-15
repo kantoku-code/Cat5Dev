@@ -10,6 +10,7 @@ import { registerLinter } from './linter';
 import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { startLspClient } from './lspClient';
 import { CatiaSync } from './catiaSync';
+import { registerFileCommands } from './fileCommands';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
 
@@ -54,40 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    let renameFileCmd = vscode.commands.registerCommand('cat5dev.renameFile', async (fileUri: vscode.Uri) => {
-        const filePath = fileUri.fsPath;
-        const fileName = path.basename(filePath);
-        const newName = await vscode.window.showInputBox({
-            prompt: t('file.rename'),
-            value: fileName
-        });
-        if (newName && newName !== fileName) {
-            const newPath = path.join(path.dirname(filePath), newName);
-            fs.renameSync(filePath, newPath);
-            vscode.commands.executeCommand('cat5dev.refreshTree');
-        }
-    });
-
-    let deleteFileCmd = vscode.commands.registerCommand('cat5dev.deleteFile', async (fileUri: vscode.Uri) => {
-        const filePath = fileUri.fsPath;
-        const fileName = path.basename(filePath);
-        const deleteBtn = t('file.deleteButton');
-        const confirmed = await vscode.window.showWarningMessage(
-            t('file.deleteConfirm', fileName),
-            { modal: true },
-            deleteBtn
-        );
-        if (confirmed === deleteBtn) {
-            fs.unlinkSync(filePath);
-            vscode.commands.executeCommand('cat5dev.refreshTree');
-        }
-    });
-
-    let copyPathCmd = vscode.commands.registerCommand('cat5dev.copyPath', async (fileUri: vscode.Uri) => {
-        const filePath = fileUri.fsPath;
-        await vscode.env.clipboard.writeText(filePath);
-        vscode.window.showInformationMessage(t('file.copySuccess', filePath));
-    });
+    registerFileCommands(context);
 
     const VBA_SELECTOR = ['bas_utf', 'cls_utf', 'frm_utf'].map(l => ({ language: 'vb', pattern: `**/*.${l}` }));
     context.subscriptions.push(
@@ -189,7 +157,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(t('init.success'));
     });
 
-    context.subscriptions.push(pullCmd, pushCmd, selectCmd, switchLanguageCmd, renameFileCmd, deleteFileCmd, copyPathCmd, initCmd);
+    context.subscriptions.push(pullCmd, pushCmd, selectCmd, switchLanguageCmd, initCmd);
 }
 
 export function deactivate() { }

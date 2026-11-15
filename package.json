@@ -37,6 +37,20 @@
             ]
         },
         "menus": {
+            "commandPalette": [
+                {
+                    "command": "cat5dev.renameFile",
+                    "when": "false"
+                },
+                {
+                    "command": "cat5dev.deleteFile",
+                    "when": "false"
+                },
+                {
+                    "command": "cat5dev.copyPath",
+                    "when": "false"
+                }
+            ],
             "view/title": [
                 {
                     "command": "cat5dev.pullFromCatia",
