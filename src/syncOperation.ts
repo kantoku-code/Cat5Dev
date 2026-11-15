@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
-import { CatiaExpectation, validateCatiaResult } from './catiaTypes';
+import { CatiaExpectation, stripBom, validateCatiaResult } from './catiaTypes';
 
 type Phase = 'prepared' | 'external-running' | 'settled';
 interface Owner {
@@ -33,7 +33,7 @@ function catiaRunning(): Promise<boolean> {
             windowsHide: true, timeout: 10000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8'
         }, (error, stdout) => {
             if (error) { reject(error); return; }
-            const lines = stdout.replace(/^\uFEFF/, '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+            const lines = stripBom(stdout).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
             if (!lines.length || lines.some(x => !/^"[^"]+","\d+"(?:,|$)/.test(x))) {
                 reject(new Error('Cannot verify Windows process list')); return;
             }

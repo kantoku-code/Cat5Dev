@@ -275,3 +275,19 @@ test('Push unsaved warning comes before project selection', async t => {
     assert.ok(has(events, 'warning', unsavedWarning), JSON.stringify(events));
     assert.ok(has(events, 'info', 'プッシュを中止しました。'));
 });
+test('Push strips a UTF-8 BOM before comparing and sending', async t => {
+    const same = setup(t, { localFiles: { 'C5D_UserModule.bas_utf': '﻿Sub A()\r\n    x = 1\r\nEnd Sub\r\n' }, remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n' });
+    await same.sync.push();
+    assert.deepEqual(same.steps, ['check']);
+    assert.ok(has(same.events, 'info', '変更されていません'), JSON.stringify(same.events));
+    let sent;
+    const changed = setup(t, {
+        localFiles: { 'C5D_UserModule.bas_utf': '﻿Sub B()\r\n    x = 2\r\nEnd Sub\r\n' },
+        remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n',
+        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+    });
+    await changed.sync.push();
+    assert.deepEqual(changed.steps, ['check', 'push']);
+    assert.equal(sent, 'Sub B()\r\n    x = 2\r\nEnd Sub');
+    assert.ok(!changed.events.some(e => e[0] === 'error'), JSON.stringify(changed.events));
+});

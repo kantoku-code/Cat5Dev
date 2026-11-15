@@ -35,9 +35,14 @@ export function normalizeModuleText(text: string): string {
     return text.replace(/\r\n?/g, '\n').trimEnd();
 }
 
+/** Removes a leading BOM (U+FEFF) that editors may add when saving as UTF-8 with BOM. */
+export function stripBom(text: string): string {
+    return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+}
+
 /** Validates terminal results, including confirmed partial failures. */
 export function validateCatiaResult(text: string, expected: CatiaExpectation): CatiaResult {
-    const r = JSON.parse(text.replace(/^\uFEFF/, ''));
+    const r = JSON.parse(stripBom(text));
     const bad = (): never => { throw new Error('Invalid CATIA execution result'); };
     if (!r || typeof r !== 'object' || r.version !== 1) { return bad(); }
     for (const key of ['operationId', 'stepId', 'kind', 'targetProject'] as const) {

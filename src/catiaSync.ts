@@ -8,7 +8,7 @@ import { t, getLanguage } from './i18n';
 import { defaultEncodingFor, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { OperationContext, SyncBusyError, SyncOperationManager } from './syncOperation';
 import { CatiaExecutionError, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
-import { CatiaItem, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName } from './catiaTypes';
+import { CatiaItem, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName, stripBom } from './catiaTypes';
 import { PullConflictError, PullRecoveryError, applyPull, captureModules, listPullDeletions } from './pullTransaction';
 
 const moduleExtension = /\.(bas_utf|cls_utf|frm_utf)$/i;
@@ -128,7 +128,8 @@ export class CatiaSync {
                 const fullPath = path.join(directory, file);
                 const stat = fs.lstatSync(fullPath);
                 if (!stat.isFile() || stat.isSymbolicLink()) { throw new Error(`Not a regular module: ${file}`); }
-                const text = fs.readFileSync(fullPath, 'utf8').trimEnd();
+                // Editors may save UTF-8 with BOM; strip it so it is neither compared nor sent to CATIA.
+                const text = stripBom(fs.readFileSync(fullPath, 'utf8')).trimEnd();
                 local.push({ name, type: /\.cls_utf$/i.test(file) ? 2 : /\.frm_utf$/i.test(file) ? 3 : 1,
                     text, comparable: normalizeModuleText(text) });
             }
