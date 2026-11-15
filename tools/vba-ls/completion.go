@@ -8,23 +8,26 @@ import (
 // dotPattern はカーソル前の "識別子." パターンを検出する。
 var dotPattern = regexp.MustCompile(`([` + identPartClass + `.]+)\.$`)
 
-// BuildCompletions はカーソル前テキストを解析して補完候補を返す。
-func BuildCompletions(linePrefix string, table *SymbolTable, db *TLBDatabase, scope string) []CompletionItem {
-	m := dotPattern.FindStringSubmatch(linePrefix)
+// BuildCompletions はカーソル位置（行と UTF-16 位置）の補完候補を返す。
+func BuildCompletions(doc *Document, line, utf16Char int) []CompletionItem {
+	m := dotPattern.FindStringSubmatch(doc.lineAt(line, utf16Char))
 	if m == nil {
 		return nil
 	}
-	varName := m[1]
-
-	typeName := resolveChainType(varName, table, db, scope)
-	if typeName == "" {
+	t, ok := resolveChainType(m[1], doc, scopeAtLine(doc.Lines, line))
+	if !ok {
 		return nil
 	}
+	return memberItems(doc.Types.Members(t))
+}
 
-	members := db.Members(typeName)
+// memberItems はメンバー一覧を補完候補に変換する。
+func memberItems(members []MemberInfo) []CompletionItem {
+	if len(members) == 0 {
+		return nil
+	}
 	items := make([]CompletionItem, 0, len(members))
 	for _, mem := range members {
-		sig := mem.Signature()
 		kind := CompletionItemKindProperty
 		if mem.Kind == MemberKindMethod {
 			kind = CompletionItemKindMethod
@@ -32,51 +35,53 @@ func BuildCompletions(linePrefix string, table *SymbolTable, db *TLBDatabase, sc
 		items = append(items, CompletionItem{
 			Label:  mem.Name,
 			Kind:   kind,
-			Detail: sig,
+			Detail: mem.Signature(),
 		})
 	}
 	return items
 }
 
-// resolveChainType は "oDoc" や "CATIA.ActiveDocument" のような式の最終型名を返す。
-func resolveChainType(expr string, table *SymbolTable, db *TLBDatabase, scope string) string {
+// resolveChainType は "oDoc" や "oDoc.Part" のような式の最終型を返す。
+func resolveChainType(expr string, doc *Document, scope string) (TypeRef, bool) {
 	parts := strings.Split(expr, ".")
-	// 最初のトークンをシンボルテーブルで解決
-	sym := table.FindByName(parts[0], scope)
+	sym := doc.Table.FindByName(parts[0], scope)
 	if sym == nil || sym.TypeName == "" {
-		return ""
+		return TypeRef{}, false
 	}
-	current := sym.TypeName
-	// 残りのトークンを DB でチェーン解決
+	current := sym.TypeRef()
 	for _, part := range parts[1:] {
-		current = db.GetReturnType(current, part)
-		if current == "" {
-			return ""
+		next, ok := doc.Types.MemberType(current, part)
+		if !ok {
+			return TypeRef{}, false
 		}
+		current = next
 	}
-	return current
+	return current, true
 }
 
-// ResolveHoverMarkdown はホバー対象のシンボル情報を Markdown 文字列で返す。
-func ResolveHoverMarkdown(wordAtCursor, prevWord string, table *SymbolTable, db *TLBDatabase, scope string) string {
+// ResolveHover はカーソル位置のホバー Markdown を返す。対象がなければ ""。
+func ResolveHover(doc *Document, line, utf16Char int) string {
+	if line < 0 || line >= len(doc.Lines) {
+		return ""
+	}
+	word, prevWord := wordAndPrevWordInLine(doc.Lines[line], utf16Char)
+	if word == "" {
+		return ""
+	}
+	scope := scopeAtLine(doc.Lines, line)
 	if prevWord == "" {
-		sym := table.FindByName(wordAtCursor, scope)
+		sym := doc.Table.FindByName(word, scope)
 		if sym == nil {
 			return ""
 		}
 		return "**" + sym.Name + "** As " + sym.TypeName
 	}
-
-	sym := table.FindByName(prevWord, scope)
+	sym := doc.Table.FindByName(prevWord, scope)
 	if sym == nil || sym.TypeName == "" {
 		return ""
 	}
-	members := db.Members(sym.TypeName)
-	lword := strings.ToLower(wordAtCursor)
-	for _, m := range members {
-		if strings.ToLower(m.Name) == lword {
-			return "```vba\n" + m.Signature() + "\n```"
-		}
+	if m, ok := doc.Types.Member(sym.TypeRef(), word); ok {
+		return "```vba\n" + m.Signature() + "\n```"
 	}
 	return ""
 }

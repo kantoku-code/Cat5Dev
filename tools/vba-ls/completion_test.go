@@ -4,137 +4,69 @@ import (
 	"testing"
 )
 
-// stubDB は TLBDatabase のスタブ実装。
-type stubDB struct {
-	// typeName → members
-	data map[string][]MemberInfo
-}
-
-func (s *stubDB) Members(typeName string) []MemberInfo {
-	return s.data[typeName]
-}
-
-func (s *stubDB) GetReturnType(typeName, memberName string) string {
-	for _, m := range s.data[typeName] {
-		if m.Name == memberName {
-			return m.ReturnType
-		}
-	}
-	return ""
-}
-
-// stubTLB は *TLBDatabase の代わりに使える薄いラッパー。
-// TLBDatabase はインタフェースではないため、テスト用にインタフェースを定義。
-type memberResolver interface {
-	Members(typeName string) []MemberInfo
-	GetReturnType(typeName, memberName string) string
-}
-
-// BuildCompletionsFromResolver はテスト用の補完ビルダー。
-func BuildCompletionsFromResolver(linePrefix string, table *SymbolTable, db memberResolver, scope string) []CompletionItem {
-	m := dotPattern.FindStringSubmatch(linePrefix)
-	if m == nil {
-		return nil
-	}
-	varName := m[1]
-	typeName := resolveChainTypeWithDB(varName, table, db, scope)
-	if typeName == "" {
-		return nil
-	}
-	members := db.Members(typeName)
-	items := make([]CompletionItem, 0, len(members))
-	for _, mem := range members {
-		kind := CompletionItemKindProperty
-		if mem.Kind == MemberKindMethod {
-			kind = CompletionItemKindMethod
-		}
-		items = append(items, CompletionItem{
-			Label:  mem.Name,
-			Kind:   kind,
-			Detail: mem.Signature(),
-		})
-	}
-	return items
-}
-
-func resolveChainTypeWithDB(expr string, table *SymbolTable, db memberResolver, scope string) string {
-	parts := splitDot(expr)
-	sym := table.FindByName(parts[0], scope)
-	if sym == nil || sym.TypeName == "" {
-		return ""
-	}
-	current := sym.TypeName
-	for _, part := range parts[1:] {
-		current = db.GetReturnType(current, part)
-		if current == "" {
-			return ""
-		}
-	}
-	return current
-}
-
-func splitDot(s string) []string {
-	result := []string{}
-	cur := ""
-	for _, c := range s {
-		if c == '.' {
-			result = append(result, cur)
-			cur = ""
-		} else {
-			cur += string(c)
-		}
-	}
-	result = append(result, cur)
-	return result
-}
-
 func TestChainCompletion(t *testing.T) {
-	db := &stubDB{
-		data: map[string][]MemberInfo{
-			"PartDocument": {
-				{Name: "Part", ReturnType: "Part", Kind: MemberKindProperty},
-				{Name: "Path", ReturnType: "String", Kind: MemberKindProperty},
-			},
-			"Part": {
-				{Name: "Bodies", ReturnType: "Bodies", Kind: MemberKindProperty},
-				{Name: "Name", ReturnType: "String", Kind: MemberKindProperty},
-			},
-		},
-	}
-	table := &SymbolTable{
-		Symbols: []Symbol{
-			{Name: "partDocument1", TypeName: "PartDocument", Scope: "module"},
-		},
-	}
+	const decl = "Dim partDocument1 As PartDocument\n"
 
 	t.Run("直接補完", func(t *testing.T) {
-		items := BuildCompletionsFromResolver("partDocument1.", table, db, "module")
-		if len(items) != 2 {
-			t.Fatalf("want 2 items, got %d", len(items))
-		}
-		if items[0].Label != "Part" {
-			t.Errorf("want Part, got %s", items[0].Label)
+		labels := labelsOf(completeAt(t, nil, decl+"partDocument1.|"))
+		if len(labels) != 3 || !labels["Part"] || !labels["Name"] || !labels["Save"] {
+			t.Fatalf("候補 = %v, want Part/Name/Save", labels)
 		}
 	})
 
 	t.Run("チェーン補完", func(t *testing.T) {
-		items := BuildCompletionsFromResolver("partDocument1.Part.", table, db, "module")
-		if len(items) != 2 {
-			t.Fatalf("want 2 items, got %d", len(items))
-		}
-		labels := map[string]bool{}
-		for _, item := range items {
-			labels[item.Label] = true
-		}
-		if !labels["Bodies"] || !labels["Name"] {
-			t.Errorf("want Bodies and Name, got %v", labels)
+		labels := labelsOf(completeAt(t, nil, decl+"partDocument1.Part.|"))
+		if len(labels) != 2 || !labels["Bodies"] || !labels["Name"] {
+			t.Errorf("候補 = %v, want Bodies と Name", labels)
 		}
 	})
 
 	t.Run("存在しないメンバーでチェーン", func(t *testing.T) {
-		items := BuildCompletionsFromResolver("partDocument1.Unknown.", table, db, "module")
-		if items != nil {
+		if items := completeAt(t, nil, decl+"partDocument1.Unknown.|"); items != nil {
 			t.Errorf("want nil, got %v", items)
+		}
+	})
+
+	t.Run("IUnknownのメソッドは候補に出さない", func(t *testing.T) {
+		labels := labelsOf(completeAt(t, nil, "Dim b As Bodies\nb.|"))
+		if labels["QueryInterface"] || !labels["Item"] || !labels["Count"] {
+			t.Errorf("候補 = %v, want Item/Count のみ", labels)
+		}
+	})
+}
+
+// DB がなくても VBA / Scripting の組み込み型は補完できる。
+func TestCompletionWithoutDB(t *testing.T) {
+	noDB := NewDefaultResolver(nil, nil)
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"CreateObjectのDictionary", "Sub M()\n    Set d = CreateObject(\"Scripting.Dictionary\")\n    d.|\nEnd Sub\n", []string{"Add", "Exists", "Keys", "Count"}},
+		{"Dim As New Collection", "Sub M()\n    Dim c As New Collection\n    c.|\nEnd Sub\n", []string{"Add", "Count", "Item", "Remove"}},
+		{"As Scripting.FileSystemObject", "Dim fso As Scripting.FileSystemObject\nfso.|\n", []string{"OpenTextFile", "GetFile", "FileExists"}},
+	} {
+		lfAndCRLF(t, tc.src, func(t *testing.T, src string) {
+			labels := labelsOf(completeAt(t, noDB, src))
+			for _, w := range tc.want {
+				if !labels[w] {
+					t.Errorf("%s: 候補に %s がない: %v", tc.name, w, labels)
+				}
+			}
+		})
+	}
+
+	t.Run("handler", func(t *testing.T) {
+		h := newLSPHandler(noDB)
+		const uri = "file:///a.bas"
+		src := "Dim d As New Scripting.Dictionary\nd."
+		h.didOpen(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, Text: src}})
+		var p CompletionParams
+		p.TextDocument.URI = uri
+		p.Position = Position{Line: 1, Character: 2}
+		if items := h.completion(p); items == nil || !labelsOf(items)["Exists"] {
+			t.Fatalf("handler の補完 = %v, want Exists を含む", items)
 		}
 	})
 }

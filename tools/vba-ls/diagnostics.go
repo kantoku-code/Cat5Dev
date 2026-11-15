@@ -9,14 +9,13 @@ import (
 // 末尾側は貪欲マッチで識別子の終わりまで取るため \b 不要。先頭側は precededByIdentPart で判定する。
 var memberAccessPattern = regexp.MustCompile(`(` + identPattern + `)\.(` + identPattern + `)`)
 
-// BuildDiagnostics はソース全体を走査して不正なメンバーアクセスを診断として返す。
-func BuildDiagnostics(src string, table *SymbolTable, db *TLBDatabase) []Diagnostic {
+// BuildDiagnostics は文書全体を走査して、存在しないメンバーへのアクセスを診断として返す。
+// メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
+func BuildDiagnostics(doc *Document) []Diagnostic {
 	var diags []Diagnostic
-	lines := strings.Split(src, "\n")
 	curScope := "module"
 
-	for lineIdx, line := range lines {
-		line = strings.TrimSuffix(line, "\r")
+	for lineIdx, line := range doc.Lines {
 		if m := procStartRe.FindStringSubmatch(line); m != nil {
 			kind := strings.Title(strings.ToLower(m[1])) //nolint:staticcheck
 			curScope = kind + ":" + m[2]
@@ -34,28 +33,29 @@ func BuildDiagnostics(src string, table *SymbolTable, db *TLBDatabase) []Diagnos
 			varName := stripped[match[2]:match[3]]
 			memberName := stripped[match[4]:match[5]]
 
-			sym := table.FindByName(varName, curScope)
+			sym := doc.Table.FindByName(varName, curScope)
 			if sym == nil || sym.TypeName == "" {
 				continue
 			}
-			if db.TypeExists(sym.TypeName) && !hasMember(db, sym.TypeName, memberName) {
-				diags = append(diags, Diagnostic{
-					Range: Range{
-						Start: Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[4]))},
-						End:   Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[5]))},
-					},
-					Severity: DiagnosticSeverityError,
-					Source:   "vba-ls",
-					Message:  "'" + sym.TypeName + "' に '" + memberName + "' は存在しません",
-				})
+			ti, _, ok := doc.Types.Resolve(sym.TypeRef())
+			if !ok || ti.Kind == TypeKindPrimitive || !ti.Complete || ti.Ref.Array {
+				continue
 			}
+			if _, ok := doc.Types.Member(ti.Ref, memberName); ok {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Range: Range{
+					Start: Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[4]))},
+					End:   Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[5]))},
+				},
+				Severity: DiagnosticSeverityError,
+				Source:   "vba-ls",
+				Message:  "'" + sym.TypeName + "' に '" + memberName + "' は存在しません",
+			})
 		}
 	}
 	return diags
-}
-
-func hasMember(db *TLBDatabase, typeName, memberName string) bool {
-	return db.HasMember(typeName, memberName)
 }
 
 // stripCommentAndStrings はコメント（'）と文字列リテラルの中身を空白で置換する。

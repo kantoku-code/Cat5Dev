@@ -31,10 +31,11 @@ var identRe = regexp.MustCompile(identPattern)
 
 // BuildSemanticTokens は LSP の flat uint32 配列（5-tuple の deltaLine/deltaChar/length/type/modifier）を返す。
 // SymbolTable の宣言情報と本文スキャンの両方から CATIA 型関連トークンを収集する。
-func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint32 {
-	if table == nil || db == nil {
+func BuildSemanticTokens(doc *Document) []uint32 {
+	if doc == nil || doc.Table == nil {
 		return []uint32{}
 	}
+	table := doc.Table
 
 	// CATIA 型を持つシンボルのセットを構築（大文字小文字無視）
 	type catiaVar struct {
@@ -45,7 +46,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 		if sym.TypeName == "" {
 			continue
 		}
-		if !db.TypeExists(sym.TypeName) {
+		if !doc.Types.TypeExists(sym.TypeRef()) {
 			continue
 		}
 		catiaVars[strings.ToLower(sym.Name)] = catiaVar{typeName: sym.TypeName}
@@ -55,7 +56,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 
 	// --- 1. 宣言箇所のトークン ---
 	for _, sym := range table.Symbols {
-		if sym.TypeName == "" || !db.TypeExists(sym.TypeName) {
+		if sym.TypeName == "" || !doc.Types.TypeExists(sym.TypeRef()) {
 			continue
 		}
 		// 変数名トークン（variable + declaration）
@@ -80,9 +81,7 @@ func BuildSemanticTokens(src string, table *SymbolTable, db *TLBDatabase) []uint
 
 	// --- 2. 使用箇所のトークン（宣言以外の識別子出現を走査）---
 	// 正規表現・コメント判定はバイト位置で行い、トークンの列は UTF-16 位置に変換して扱う。
-	lines := strings.Split(src, "\n")
-	for lineIdx, line := range lines {
-		line = strings.TrimSuffix(line, "\r")
+	for lineIdx, line := range doc.Lines {
 		// コメントと文字列リテラルの中身を空白に置換してから走査する。
 		// stripped は line とバイト長が等しいので、バイト位置は line でもそのまま有効。
 		stripped := stripCommentAndStrings(line)

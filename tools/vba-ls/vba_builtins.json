@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "libraries": [
+    {
+      "name": "VBA",
+      "primitives": ["Boolean", "Byte", "Integer", "Long", "LongLong", "LongPtr", "Single", "Double", "Currency", "Decimal", "Date", "String", "Variant", "Object"],
+      "types": [
+        {
+          "name": "Collection", "kind": "class", "complete": true, "defaultMember": "Item",
+          "members": [
+            {"name": "Add", "kind": "method", "params": [{"name": "Item", "type": "Variant"}, {"name": "Key", "type": "Variant", "optional": true}, {"name": "Before", "type": "Variant", "optional": true}, {"name": "After", "type": "Variant", "optional": true}]},
+            {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Item", "kind": "method", "type": "Variant", "params": [{"name": "Index", "type": "Variant"}]},
+            {"name": "Remove", "kind": "method", "params": [{"name": "Index", "type": "Variant"}]}
+          ]
+        }
+      ],
+      "globals": [],
+      "functions": []
+    },
+    {
+      "name": "Scripting",
+      "types": [
+        {
+          "name": "Dictionary", "kind": "class", "complete": true, "defaultMember": "Item",
+          "members": [
+            {"name": "Add", "kind": "method", "params": [{"name": "Key", "type": "Variant"}, {"name": "Item", "type": "Variant"}]},
+            {"name": "CompareMode", "kind": "property", "type": "Long"},
+            {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Exists", "kind": "method", "type": "Boolean", "params": [{"name": "Key", "type": "Variant"}]},
+            {"name": "Item", "kind": "property", "type": "Variant", "params": [{"name": "Key", "type": "Variant"}]},
+            {"name": "Items", "kind": "method", "type": "Variant"},
+            {"name": "Key", "kind": "property", "type": "Variant", "params": [{"name": "Key", "type": "Variant"}]},
+            {"name": "Keys", "kind": "method", "type": "Variant"},
+            {"name": "Remove", "kind": "method", "params": [{"name": "Key", "type": "Variant"}]},
+            {"name": "RemoveAll", "kind": "method"}
+          ]
+        },
+        {
+          "name": "FileSystemObject", "kind": "class", "complete": true,
+          "members": [
+            {"name": "BuildPath", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}, {"name": "Name", "type": "String"}]},
+            {"name": "CopyFile", "kind": "method", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}, {"name": "OverWriteFiles", "type": "Boolean", "optional": true, "default": "True"}]},
+            {"name": "CopyFolder", "kind": "method", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}, {"name": "OverWriteFiles", "type": "Boolean", "optional": true, "default": "True"}]},
+            {"name": "CreateFolder", "kind": "method", "type": "Folder", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "CreateTextFile", "kind": "method", "type": "TextStream", "params": [{"name": "FileName", "type": "String"}, {"name": "Overwrite", "type": "Boolean", "optional": true, "default": "True"}, {"name": "Unicode", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "DeleteFile", "kind": "method", "params": [{"name": "FileSpec", "type": "String"}, {"name": "Force", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "DeleteFolder", "kind": "method", "params": [{"name": "FolderSpec", "type": "String"}, {"name": "Force", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "DriveExists", "kind": "method", "type": "Boolean", "params": [{"name": "DriveSpec", "type": "String"}]},
+            {"name": "Drives", "kind": "property", "type": "Drives", "readOnly": true},
+            {"name": "FileExists", "kind": "method", "type": "Boolean", "params": [{"name": "FileSpec", "type": "String"}]},
+            {"name": "FolderExists", "kind": "method", "type": "Boolean", "params": [{"name": "FolderSpec", "type": "String"}]},
+            {"name": "GetAbsolutePathName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetBaseName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetDrive", "kind": "method", "type": "Drive", "params": [{"name": "DriveSpec", "type": "String"}]},
+            {"name": "GetDriveName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetExtensionName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetFile", "kind": "method", "type": "File", "params": [{"name": "FilePath", "type": "String"}]},
+            {"name": "GetFileName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetFileVersion", "kind": "method", "type": "String", "params": [{"name": "FileName", "type": "String"}]},
+            {"name": "GetFolder", "kind": "method", "type": "Folder", "params": [{"name": "FolderPath", "type": "String"}]},
+            {"name": "GetParentFolderName", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}]},
+            {"name": "GetSpecialFolder", "kind": "method", "type": "Folder", "params": [{"name": "SpecialFolder", "type": "Long"}]},
+            {"name": "GetStandardStream", "kind": "method", "type": "TextStream", "params": [{"name": "StandardStreamType", "type": "Long"}, {"name": "Unicode", "type": "Boolean", "optional": true}]},
+            {"name": "GetTempName", "kind": "method", "type": "String"},
+            {"name": "MoveFile", "kind": "method", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}]},
+            {"name": "MoveFolder", "kind": "method", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}]},
+            {"name": "OpenTextFile", "kind": "method", "type": "TextStream", "params": [{"name": "FileName", "type": "String"}, {"name": "IOMode", "type": "Long", "optional": true, "default": "ForReading"}, {"name": "Create", "type": "Boolean", "optional": true, "default": "False"}, {"name": "Format", "type": "Long", "optional": true, "default": "TristateFalse"}]}
+          ]
+        },
+        {
+          "name": "TextStream", "kind": "class", "complete": true,
+          "members": [
+            {"name": "AtEndOfLine", "kind": "property", "type": "Boolean", "readOnly": true},
+            {"name": "AtEndOfStream", "kind": "property", "type": "Boolean", "readOnly": true},
+            {"name": "Close", "kind": "method"},
+            {"name": "Column", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Line", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Read", "kind": "method", "type": "String", "params": [{"name": "Characters", "type": "Long"}]},
+            {"name": "ReadAll", "kind": "method", "type": "String"},
+            {"name": "ReadLine", "kind": "method", "type": "String"},
+            {"name": "Skip", "kind": "method", "params": [{"name": "Characters", "type": "Long"}]},
+            {"name": "SkipLine", "kind": "method"},
+            {"name": "Write", "kind": "method", "params": [{"name": "Text", "type": "String"}]},
+            {"name": "WriteBlankLines", "kind": "method", "params": [{"name": "Lines", "type": "Long"}]},
+            {"name": "WriteLine", "kind": "method", "params": [{"name": "Text", "type": "String", "optional": true}]}
+          ]
+        },
+        {
+          "name": "File", "kind": "class", "complete": true,
+          "members": [
+            {"name": "Attributes", "kind": "property", "type": "Long"},
+            {"name": "Copy", "kind": "method", "params": [{"name": "Destination", "type": "String"}, {"name": "OverWriteFiles", "type": "Boolean", "optional": true, "default": "True"}]},
+            {"name": "DateCreated", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "DateLastAccessed", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "DateLastModified", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "Delete", "kind": "method", "params": [{"name": "Force", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "Drive", "kind": "property", "type": "Drive", "readOnly": true},
+            {"name": "Move", "kind": "method", "params": [{"name": "Destination", "type": "String"}]},
+            {"name": "Name", "kind": "property", "type": "String"},
+            {"name": "OpenAsTextStream", "kind": "method", "type": "TextStream", "params": [{"name": "IOMode", "type": "Long", "optional": true, "default": "ForReading"}, {"name": "Format", "type": "Long", "optional": true, "default": "TristateFalse"}]},
+            {"name": "ParentFolder", "kind": "property", "type": "Folder", "readOnly": true},
+            {"name": "Path", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "ShortName", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "ShortPath", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "Size", "kind": "property", "type": "Variant", "readOnly": true},
+            {"name": "Type", "kind": "property", "type": "String", "readOnly": true}
+          ]
+        },
+        {
+          "name": "Folder", "kind": "class", "complete": true,
+          "members": [
+            {"name": "Attributes", "kind": "property", "type": "Long"},
+            {"name": "Copy", "kind": "method", "params": [{"name": "Destination", "type": "String"}, {"name": "OverWriteFiles", "type": "Boolean", "optional": true, "default": "True"}]},
+            {"name": "CreateTextFile", "kind": "method", "type": "TextStream", "params": [{"name": "FileName", "type": "String"}, {"name": "Overwrite", "type": "Boolean", "optional": true, "default": "True"}, {"name": "Unicode", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "DateCreated", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "DateLastAccessed", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "DateLastModified", "kind": "property", "type": "Date", "readOnly": true},
+            {"name": "Delete", "kind": "method", "params": [{"name": "Force", "type": "Boolean", "optional": true, "default": "False"}]},
+            {"name": "Drive", "kind": "property", "type": "Drive", "readOnly": true},
+            {"name": "Files", "kind": "property", "type": "Files", "readOnly": true},
+            {"name": "IsRootFolder", "kind": "property", "type": "Boolean", "readOnly": true},
+            {"name": "Move", "kind": "method", "params": [{"name": "Destination", "type": "String"}]},
+            {"name": "Name", "kind": "property", "type": "String"},
+            {"name": "ParentFolder", "kind": "property", "type": "Folder", "readOnly": true},
+            {"name": "Path", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "ShortName", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "ShortPath", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "Size", "kind": "property", "type": "Variant", "readOnly": true},
+            {"name": "SubFolders", "kind": "property", "type": "Folders", "readOnly": true},
+            {"name": "Type", "kind": "property", "type": "String", "readOnly": true}
+          ]
+        },
+        {
+          "name": "Files", "kind": "class", "complete": true, "defaultMember": "Item",
+          "members": [
+            {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Item", "kind": "property", "type": "File", "readOnly": true, "params": [{"name": "Key", "type": "Variant"}]}
+          ]
+        },
+        {
+          "name": "Folders", "kind": "class", "complete": true, "defaultMember": "Item",
+          "members": [
+            {"name": "Add", "kind": "method", "type": "Folder", "params": [{"name": "Name", "type": "String"}]},
+            {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Item", "kind": "property", "type": "Folder", "readOnly": true, "params": [{"name": "Key", "type": "Variant"}]}
+          ]
+        },
+        {
+          "name": "Drive", "kind": "class", "complete": true,
+          "members": [
+            {"name": "AvailableSpace", "kind": "property", "type": "Variant", "readOnly": true},
+            {"name": "DriveLetter", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "DriveType", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "FileSystem", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "FreeSpace", "kind": "property", "type": "Variant", "readOnly": true},
+            {"name": "IsReady", "kind": "property", "type": "Boolean", "readOnly": true},
+            {"name": "Path", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "RootFolder", "kind": "property", "type": "Folder", "readOnly": true},
+            {"name": "SerialNumber", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "ShareName", "kind": "property", "type": "String", "readOnly": true},
+            {"name": "TotalSize", "kind": "property", "type": "Variant", "readOnly": true},
+            {"name": "VolumeName", "kind": "property", "type": "String"}
+          ]
+        },
+        {
+          "name": "Drives", "kind": "class", "complete": true, "defaultMember": "Item",
+          "members": [
+            {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
+            {"name": "Item", "kind": "property", "type": "Drive", "readOnly": true, "params": [{"name": "Key", "type": "Variant"}]}
+          ]
+        }
+      ]
+    }
+  ]
+}

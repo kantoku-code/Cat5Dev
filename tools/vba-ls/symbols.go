@@ -39,3 +39,17 @@ func (st *SymbolTable) FindByName(name, curScope string) *Symbol {
 	}
 	return moduleLevel
 }
+
+// TypeRef はシンボルの型参照を返す。
+func (s *Symbol) TypeRef() TypeRef { return ParseTypeName(s.TypeName) }
+
+// Visibility は宣言の公開範囲。
+type Visibility int
+
+const (
+	VisPrivate Visibility = iota
+	VisPublic
+	VisFriend
+	VisGlobal
+	VisLocal
+)

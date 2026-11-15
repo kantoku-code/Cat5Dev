@@ -3,379 +3,280 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
 
-// TLBParam はメソッドのパラメータ情報。
-type TLBParam struct {
-	Name string
-	Type string
-}
-
-// MemberKind はメンバーの種類。
-type MemberKind int
-
-const (
-	MemberKindProperty MemberKind = iota
-	MemberKindMethod
-)
-
-// MemberInfo は補完候補1件の情報。
-type MemberInfo struct {
-	Name       string
-	ReturnType string
-	Kind       MemberKind
-	Params     []TLBParam
-}
-
-// Signature はホバー表示用のシグネチャ文字列を生成する。
-func (m MemberInfo) Signature() string {
-	if m.Kind == MemberKindProperty {
-		return m.Name + " As " + m.ReturnType
-	}
-	params := make([]string, len(m.Params))
-	for i, p := range m.Params {
-		params[i] = p.Name + " As " + p.Type
-	}
-	ret := ""
-	if m.ReturnType != "" && m.ReturnType != "void" {
-		ret = " As " + m.ReturnType
-	}
-	return m.Name + "(" + strings.Join(params, ", ") + ")" + ret
-}
-
-// TLBDatabase は catia_api.db へのアクセスを提供する。
+// TLBDatabase は catia_api.db への読み取り専用アクセスを提供する。
 type TLBDatabase struct {
 	db *sql.DB
 }
 
-// LoadTLBDatabase は SQLite ファイルを開いてデータベースを返す。
+// LoadTLBDatabase は SQLite ファイルを読み取り専用（mode=ro）で開く。
+// ファイルがなければエラーを返し、新しく作ることはない。DB への書き込みは一切行わない。
 func LoadTLBDatabase(path string) (*TLBDatabase, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn, err := readOnlyDSN(path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("SQLite open: %w", err)
 	}
-	// 読み取り専用で使うため接続数は1で十分
 	db.SetMaxOpenConns(1)
+	// sql.Open は接続を遅延するため、ここで実際に開いて存在を確かめる
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite open(ro): %w", err)
+	}
 	return &TLBDatabase{db: db}, nil
+}
+
+// readOnlyDSN は "file:///C:/.../catia_api.db?mode=ro" 形式の URI を作る。
+// modernc sqlite は "file:" で始まる DSN を URI としてそのまま sqlite3_open_v2 に渡すため mode=ro が効く。
+// 日本語・空白・#・% などは url.URL が % エスケープする。
+func readOnlyDSN(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // Windows: "/C:/..."（SQLite の win VFS が先頭の "/" を除く）
+	}
+	u := url.URL{Scheme: "file", Path: p, RawQuery: "mode=ro"}
+	return u.String(), nil
 }
 
 // Close はデータベース接続を閉じる。
 func (t *TLBDatabase) Close() {
-	if t.db != nil {
+	if t != nil && t.db != nil {
 		_ = t.db.Close()
 	}
 }
 
-// Members は型名（継承チェーン含む）のメンバー一覧を返す。
-// Cat5Dev2 と同じ再帰 CTE を使用。
-func (t *TLBDatabase) Members(typeName string) []MemberInfo {
-	const q = `
-WITH RECURSIVE parents(id, level) AS (
-    SELECT id, 0 FROM interfaces WHERE name = ? COLLATE NOCASE
-    UNION ALL
-    SELECT i.id, p.level + 1
-    FROM interfaces i
-    JOIN parents p ON i.id = (
-        SELECT parent_id FROM interfaces WHERE id = p.id
-    )
-    WHERE p.level < 20
-)
-SELECT m.name, m.return_type, 0 AS is_prop, '' AS params_placeholder
-FROM methods m
-WHERE m.interface_id IN (SELECT id FROM parents)
-UNION ALL
-SELECT p.name, p.type, 1, ''
-FROM properties p
-WHERE p.interface_id IN (SELECT id FROM parents)
-ORDER BY 1;`
+// tlbLibraries は TLBProvider が担当する修飾子（大文字小文字無視）。推定のリストで、
+// 2-1 で DB に libraries テーブルを持たせたらそこから作るように置き換える。
+var tlbLibraries = map[string]bool{
+	"catia": true, "infitf": true, "mecmod": true, "partitf": true, "hybridshapetypelib": true,
+	"productstructuretypelib": true, "draftingitf": true, "knowledgewaretypelib": true,
+	"spatypelib": true, "navigatortypelib": true,
+}
 
-	rows, err := t.db.Query(q, typeName)
-	if err != nil {
+// tlbOpenTypes は多態的な基底型。補完は出すが「存在しない」診断は出さない（Complete=false）。
+var tlbOpenTypes = map[string]bool{
+	"anyobject": true, "catbasedispatch": true, "catbaseunknown": true, "object": true,
+	"idispatch": true, "iunknown": true, "variant": true,
+}
+
+// tlbHiddenMembers は IUnknown / IDispatch のメソッド。VBA からは使わないため候補から除く（根本対処は 2-1）。
+var tlbHiddenMembers = map[string]bool{
+	"queryinterface": true, "addref": true, "release": true, "gettypeinfocount": true,
+	"gettypeinfo": true, "getidsofnames": true, "invoke": true,
+}
+
+type tlbIface struct {
+	id     int64
+	name   string
+	parent sql.NullInt64
+}
+
+type memberSet struct {
+	list   []MemberInfo
+	byName map[string]int
+}
+
+// TLBProvider は catia_api.db の型を TypeProvider として提供する。
+// interfaces は初回に全件ロードし、継承込みのメンバーは interface ごとにメモ化する（DB は読み取り専用なので無効化不要）。
+type TLBProvider struct {
+	db     *TLBDatabase
+	once   sync.Once
+	byName map[string]tlbIface // 小文字名 → iface
+	byID   map[int64]tlbIface
+
+	mu     sync.Mutex
+	merged map[int64]*memberSet
+}
+
+// newTLBProvider は db が nil なら interface の nil を返す（typed nil を作らない）。
+func newTLBProvider(db *TLBDatabase) TypeProvider {
+	if db == nil || db.db == nil {
 		return nil
 	}
-	defer rows.Close()
-
-	var items []MemberInfo
-	for rows.Next() {
-		var name, retType, placeholder string
-		var isProp int
-		if err := rows.Scan(&name, &retType, &isProp, &placeholder); err != nil {
-			continue
-		}
-		kind := MemberKindMethod
-		if isProp == 1 {
-			kind = MemberKindProperty
-		}
-		items = append(items, MemberInfo{
-			Name:       name,
-			ReturnType: retType,
-			Kind:       kind,
-		})
-	}
-
-	// メソッドのパラメータを別クエリで取得（まとめて取得してマージ）
-	t.fillParams(items, typeName)
-	return items
+	return &TLBProvider{db: db, merged: map[int64]*memberSet{}}
 }
 
-// fillParams は Members で取得したメソッドのパラメータを補完する。
-func (t *TLBDatabase) fillParams(items []MemberInfo, typeName string) {
-	const q = `
-WITH RECURSIVE parents(id, level) AS (
-    SELECT id, 0 FROM interfaces WHERE name = ? COLLATE NOCASE
-    UNION ALL
-    SELECT i.id, p.level + 1
-    FROM interfaces i
-    JOIN parents p ON i.id = (SELECT parent_id FROM interfaces WHERE id = p.id)
-    WHERE p.level < 20
-)
-SELECT m.name, pa.name, pa.type
-FROM methods m
-JOIN parameters pa ON pa.method_id = m.id
-WHERE m.interface_id IN (SELECT id FROM parents)
-ORDER BY m.name, pa.position;`
-
-	rows, err := t.db.Query(q, typeName)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	// メソッド名 → インデックスのマップ
-	idx := make(map[string]int)
-	for i, item := range items {
-		if item.Kind == MemberKindMethod {
-			idx[strings.ToLower(item.Name)] = i
+func (p *TLBProvider) load() {
+	p.once.Do(func() {
+		p.byName = map[string]tlbIface{}
+		p.byID = map[int64]tlbIface{}
+		rows, err := p.db.db.Query(`SELECT id, name, parent_id FROM interfaces ORDER BY id`)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vba-ls: interfaces の読み込みに失敗: %v\n", err)
+			return
 		}
-	}
-
-	for rows.Next() {
-		var methodName, paramName, paramType string
-		if err := rows.Scan(&methodName, &paramName, &paramType); err != nil {
-			continue
-		}
-		if i, ok := idx[strings.ToLower(methodName)]; ok {
-			items[i].Params = append(items[i].Params, TLBParam{
-				Name: paramName,
-				Type: paramType,
-			})
-		}
-	}
-}
-
-// GetReturnType はオブジェクトのメンバーアクセス時の戻り値型を返す。
-// 補完チェーン解決（oDoc.Part.Bodies 等）に使用。
-func (t *TLBDatabase) GetReturnType(typeName, memberName string) string {
-	const q = `
-WITH RECURSIVE parents(id, level) AS (
-    SELECT id, 0 FROM interfaces WHERE name = ? COLLATE NOCASE
-    UNION ALL
-    SELECT i.id, p.level + 1
-    FROM interfaces i
-    JOIN parents p ON i.id = (SELECT parent_id FROM interfaces WHERE id = p.id)
-    WHERE p.level < 20
-)
-SELECT return_type FROM methods
-WHERE interface_id IN (SELECT id FROM parents) AND name = ? COLLATE NOCASE
-UNION ALL
-SELECT type FROM properties
-WHERE interface_id IN (SELECT id FROM parents) AND name = ? COLLATE NOCASE
-LIMIT 1;`
-
-	var ret string
-	_ = t.db.QueryRow(q, typeName, memberName, memberName).Scan(&ret)
-	return ret
-}
-
-// HasMember は型名が指定メンバーを持つか（継承含む）確認する。
-func (t *TLBDatabase) HasMember(typeName, memberName string) bool {
-	const q = `
-WITH RECURSIVE parents(id, level) AS (
-    SELECT id, 0 FROM interfaces WHERE name = ? COLLATE NOCASE
-    UNION ALL
-    SELECT i.id, p.level + 1
-    FROM interfaces i
-    JOIN parents p ON i.id = (SELECT parent_id FROM interfaces WHERE id = p.id)
-    WHERE p.level < 20
-)
-SELECT COUNT(*) FROM (
-    SELECT 1 FROM methods   WHERE interface_id IN (SELECT id FROM parents) AND name = ? COLLATE NOCASE
-    UNION ALL
-    SELECT 1 FROM properties WHERE interface_id IN (SELECT id FROM parents) AND name = ? COLLATE NOCASE
-) LIMIT 1;`
-
-	var count int
-	_ = t.db.QueryRow(q, typeName, memberName, memberName).Scan(&count)
-	return count > 0
-}
-
-// EnsureScriptingTypes は Scripting.Dictionary / FileSystemObject 等の
-// Windows Scripting ランタイム型、および VBA 組み込み型（Collection 等）が
-// DB に未登録または不足メンバーがあれば挿入する。
-func (t *TLBDatabase) EnsureScriptingTypes() {
-	if t == nil || t.db == nil {
-		return
-	}
-
-	type memberDef struct {
-		name       string
-		returnType string
-		isProp     bool
-		params     []TLBParam
-	}
-	type typeDef struct {
-		name    string
-		members []memberDef
-	}
-
-	types := []typeDef{
-		{
-			// VBA 組み込み Collection: CATIA 固有型として DB に存在するが
-			// VBA 標準メソッド Add/Item/Remove が未登録のため補完する。
-			name: "Collection",
-			members: []memberDef{
-				{name: "Add", returnType: "", isProp: false, params: []TLBParam{
-					{Name: "Item", Type: "Variant"}, {Name: "Key", Type: "String"},
-					{Name: "Before", Type: "Variant"}, {Name: "After", Type: "Variant"},
-				}},
-				{name: "Item", returnType: "Variant", isProp: false, params: []TLBParam{
-					{Name: "Index", Type: "Variant"},
-				}},
-				{name: "Remove", returnType: "", isProp: false, params: []TLBParam{
-					{Name: "Index", Type: "Variant"},
-				}},
-			},
-		},
-		{
-			name: "Dictionary",
-			members: []memberDef{
-				{name: "Add", returnType: "", isProp: false, params: []TLBParam{{Name: "Key", Type: "Variant"}, {Name: "Item", Type: "Variant"}}},
-				{name: "Remove", returnType: "", isProp: false, params: []TLBParam{{Name: "Key", Type: "Variant"}}},
-				{name: "RemoveAll", returnType: "", isProp: false},
-				{name: "Exists", returnType: "Boolean", isProp: false, params: []TLBParam{{Name: "Key", Type: "Variant"}}},
-				{name: "Keys", returnType: "Variant", isProp: false},
-				{name: "Items", returnType: "Variant", isProp: false},
-				{name: "Count", returnType: "Long", isProp: true},
-				{name: "Item", returnType: "Variant", isProp: true},
-				{name: "Key", returnType: "Variant", isProp: true},
-				{name: "CompareMode", returnType: "Long", isProp: true},
-			},
-		},
-		{
-			name: "FileSystemObject",
-			members: []memberDef{
-				{name: "OpenTextFile", returnType: "TextStream", isProp: false, params: []TLBParam{{Name: "filename", Type: "String"}, {Name: "iomode", Type: "Long"}, {Name: "create", Type: "Boolean"}, {Name: "format", Type: "Long"}}},
-				{name: "CreateTextFile", returnType: "TextStream", isProp: false, params: []TLBParam{{Name: "filename", Type: "String"}, {Name: "overwrite", Type: "Boolean"}, {Name: "unicode", Type: "Boolean"}}},
-				{name: "FileExists", returnType: "Boolean", isProp: false, params: []TLBParam{{Name: "filespec", Type: "String"}}},
-				{name: "FolderExists", returnType: "Boolean", isProp: false, params: []TLBParam{{Name: "folderspec", Type: "String"}}},
-				{name: "DriveExists", returnType: "Boolean", isProp: false, params: []TLBParam{{Name: "drivespec", Type: "String"}}},
-				{name: "GetFile", returnType: "File", isProp: false, params: []TLBParam{{Name: "filespec", Type: "String"}}},
-				{name: "GetFolder", returnType: "Folder", isProp: false, params: []TLBParam{{Name: "folderspec", Type: "String"}}},
-				{name: "GetDrive", returnType: "Drive", isProp: false, params: []TLBParam{{Name: "drivespec", Type: "String"}}},
-				{name: "GetAbsolutePathName", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}}},
-				{name: "GetBaseName", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}}},
-				{name: "GetExtensionName", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}}},
-				{name: "GetFileName", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}}},
-				{name: "GetParentFolderName", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}}},
-				{name: "GetTempName", returnType: "String", isProp: false},
-				{name: "CopyFile", returnType: "", isProp: false, params: []TLBParam{{Name: "source", Type: "String"}, {Name: "destination", Type: "String"}}},
-				{name: "MoveFile", returnType: "", isProp: false, params: []TLBParam{{Name: "source", Type: "String"}, {Name: "destination", Type: "String"}}},
-				{name: "DeleteFile", returnType: "", isProp: false, params: []TLBParam{{Name: "filespec", Type: "String"}}},
-				{name: "CopyFolder", returnType: "", isProp: false, params: []TLBParam{{Name: "source", Type: "String"}, {Name: "destination", Type: "String"}}},
-				{name: "MoveFolder", returnType: "", isProp: false, params: []TLBParam{{Name: "source", Type: "String"}, {Name: "destination", Type: "String"}}},
-				{name: "DeleteFolder", returnType: "", isProp: false, params: []TLBParam{{Name: "folderspec", Type: "String"}}},
-				{name: "CreateFolder", returnType: "Folder", isProp: false, params: []TLBParam{{Name: "folderpath", Type: "String"}}},
-				{name: "BuildPath", returnType: "String", isProp: false, params: []TLBParam{{Name: "path", Type: "String"}, {Name: "name", Type: "String"}}},
-				{name: "Drives", returnType: "Drives", isProp: true},
-			},
-		},
-		{
-			name: "TextStream",
-			members: []memberDef{
-				{name: "ReadLine", returnType: "String", isProp: false},
-				{name: "ReadAll", returnType: "String", isProp: false},
-				{name: "Read", returnType: "String", isProp: false, params: []TLBParam{{Name: "characters", Type: "Long"}}},
-				{name: "Write", returnType: "", isProp: false, params: []TLBParam{{Name: "text", Type: "String"}}},
-				{name: "WriteLine", returnType: "", isProp: false, params: []TLBParam{{Name: "text", Type: "String"}}},
-				{name: "WriteBlankLines", returnType: "", isProp: false, params: []TLBParam{{Name: "lines", Type: "Long"}}},
-				{name: "Skip", returnType: "", isProp: false, params: []TLBParam{{Name: "characters", Type: "Long"}}},
-				{name: "SkipLine", returnType: "", isProp: false},
-				{name: "Close", returnType: "", isProp: false},
-				{name: "AtEndOfStream", returnType: "Boolean", isProp: true},
-				{name: "AtEndOfLine", returnType: "Boolean", isProp: true},
-				{name: "Line", returnType: "Long", isProp: true},
-				{name: "Column", returnType: "Long", isProp: true},
-			},
-		},
-	}
-
-	for _, td := range types {
-		var ifaceID int64
-		if t.TypeExists(td.name) {
-			// 既存型: interface_id を取得して不足メンバーだけ追加する
-			if err := t.db.QueryRow(
-				"SELECT id FROM interfaces WHERE name = ? COLLATE NOCASE LIMIT 1", td.name,
-			).Scan(&ifaceID); err != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var it tlbIface
+			if err := rows.Scan(&it.id, &it.name, &it.parent); err != nil {
 				continue
 			}
-		} else {
-			// 新規型: 登録してから interface_id を取得する
-			if err := t.db.QueryRow(
-				"INSERT INTO interfaces(name, parent_id) VALUES(?, NULL) RETURNING id", td.name,
-			).Scan(&ifaceID); err != nil {
-				continue
+			key := strings.ToLower(it.name)
+			if _, dup := p.byName[key]; !dup {
+				p.byName[key] = it
 			}
+			p.byID[it.id] = it
 		}
-		for _, m := range td.members {
-			// そのインターフェース自身に同名メンバーが既にあればスキップ
-			var count int
-			if m.isProp {
-				_ = t.db.QueryRow(
-					"SELECT COUNT(*) FROM properties WHERE interface_id = ? AND name = ? COLLATE NOCASE",
-					ifaceID, m.name,
-				).Scan(&count)
-			} else {
-				_ = t.db.QueryRow(
-					"SELECT COUNT(*) FROM methods WHERE interface_id = ? AND name = ? COLLATE NOCASE",
-					ifaceID, m.name,
-				).Scan(&count)
-			}
-			if count > 0 {
-				continue
-			}
-			if m.isProp {
-				_, _ = t.db.Exec(
-					"INSERT INTO properties(interface_id, name, type) VALUES(?, ?, ?)",
-					ifaceID, m.name, m.returnType,
-				)
-			} else {
-				var methodID int64
-				err := t.db.QueryRow(
-					"INSERT INTO methods(interface_id, name, return_type) VALUES(?, ?, ?) RETURNING id",
-					ifaceID, m.name, m.returnType,
-				).Scan(&methodID)
-				if err != nil {
-					continue
-				}
-				for pos, p := range m.params {
-					_, _ = t.db.Exec(
-						"INSERT INTO parameters(method_id, name, type, position) VALUES(?, ?, ?, ?)",
-						methodID, p.Name, p.Type, pos,
-					)
-				}
-			}
-		}
-	}
+	})
 }
 
-// TypeExists は型名が DB に存在するか確認する。
-func (t *TLBDatabase) TypeExists(typeName string) bool {
-	var count int
-	_ = t.db.QueryRow(
-		"SELECT COUNT(*) FROM interfaces WHERE name = ? COLLATE NOCASE", typeName,
-	).Scan(&count)
-	return count > 0
+func (p *TLBProvider) OwnsLibrary(lib string) bool { return tlbLibraries[strings.ToLower(lib)] }
+
+func (p *TLBProvider) LookupType(name string) (TypeInfo, bool) {
+	p.load()
+	key := strings.ToLower(name)
+	it, ok := p.byName[key]
+	if !ok {
+		return TypeInfo{}, false
+	}
+	return TypeInfo{
+		Ref:      TypeRef{Lib: "CATIA", Name: it.name},
+		Kind:     TypeKindInterface,
+		Complete: !tlbOpenTypes[key],
+	}, true
+}
+
+func (p *TLBProvider) Members(t TypeRef) []MemberInfo {
+	if ms := p.memberSetOf(t); ms != nil {
+		return ms.list
+	}
+	return nil
+}
+
+func (p *TLBProvider) Member(t TypeRef, name string) (MemberInfo, bool) {
+	ms := p.memberSetOf(t)
+	if ms == nil {
+		return MemberInfo{}, false
+	}
+	i, ok := ms.byName[strings.ToLower(name)]
+	if !ok {
+		return MemberInfo{}, false
+	}
+	return ms.list[i], true
+}
+
+func (p *TLBProvider) MemberType(t TypeRef, name string) (TypeRef, bool) {
+	m, ok := p.Member(t, name)
+	if !ok {
+		return TypeRef{}, false
+	}
+	ret := strings.TrimSpace(m.ReturnType)
+	if ret == "" || strings.EqualFold(ret, "void") {
+		return TypeRef{}, false
+	}
+	if it, ok := p.byName[strings.ToLower(ret)]; ok {
+		return TypeRef{Lib: "CATIA", Name: it.name}, true
+	}
+	return ParseTypeName(ret), true
+}
+
+func (p *TLBProvider) memberSetOf(t TypeRef) *memberSet {
+	p.load()
+	it, ok := p.byName[strings.ToLower(t.Name)]
+	if !ok {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ms, ok := p.merged[it.id]; ok {
+		return ms
+	}
+	ms := p.buildMerged(it)
+	p.merged[it.id] = ms
+	return ms
+}
+
+// buildMerged は parent を最大 20 段・循環ガード付きでたどり、派生側優先で重複を除いて名前順に並べる。
+func (p *TLBProvider) buildMerged(it tlbIface) *memberSet {
+	ms := &memberSet{byName: map[string]int{}}
+	seen := map[int64]bool{}
+	cur, ok := it, true
+	for depth := 0; ok && depth <= 20 && !seen[cur.id]; depth++ {
+		seen[cur.id] = true
+		for _, m := range p.ownMembers(cur) {
+			key := strings.ToLower(m.Name)
+			if _, dup := ms.byName[key]; dup || tlbHiddenMembers[key] {
+				continue
+			}
+			ms.byName[key] = len(ms.list)
+			ms.list = append(ms.list, m)
+		}
+		if !cur.parent.Valid {
+			break
+		}
+		cur, ok = p.byID[cur.parent.Int64]
+	}
+	sort.SliceStable(ms.list, func(i, j int) bool {
+		return strings.ToLower(ms.list[i].Name) < strings.ToLower(ms.list[j].Name)
+	})
+	for i, m := range ms.list {
+		ms.byName[strings.ToLower(m.Name)] = i
+	}
+	return ms
+}
+
+// ownMembers は interface 自身のメソッド（引数付き）とプロパティを返す（メソッドが先）。
+func (p *TLBProvider) ownMembers(it tlbIface) []MemberInfo {
+	owner := TypeRef{Lib: "CATIA", Name: it.name}
+	var out []MemberInfo
+	byMethodID := map[int64]int{}
+
+	rows, err := p.db.db.Query(`SELECT id, name, return_type FROM methods WHERE interface_id = ? ORDER BY id`, it.id)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			var name, ret string
+			if err := rows.Scan(&id, &name, &ret); err != nil {
+				continue
+			}
+			byMethodID[id] = len(out)
+			out = append(out, MemberInfo{Name: name, ReturnType: ret, Kind: MemberKindMethod, Visibility: VisPublic, Owner: owner})
+		}
+		rows.Close()
+	}
+
+	rows, err = p.db.db.Query(`SELECT pa.method_id, pa.name, pa.type FROM parameters pa JOIN methods m ON m.id = pa.method_id
+WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
+	if err == nil {
+		for rows.Next() {
+			var mid int64
+			var name, typ string
+			if err := rows.Scan(&mid, &name, &typ); err != nil {
+				continue
+			}
+			if i, ok := byMethodID[mid]; ok {
+				out[i].Params = append(out[i].Params, TLBParam{Name: name, Type: typ})
+			}
+		}
+		rows.Close()
+	}
+
+	rows, err = p.db.db.Query(`SELECT name, type FROM properties WHERE interface_id = ? ORDER BY id`, it.id)
+	if err == nil {
+		for rows.Next() {
+			var name, typ string
+			if err := rows.Scan(&name, &typ); err != nil {
+				continue
+			}
+			out = append(out, MemberInfo{Name: name, ReturnType: typ, Kind: MemberKindProperty, Visibility: VisPublic, Owner: owner})
+		}
+		rows.Close()
+	}
+	return out
 }

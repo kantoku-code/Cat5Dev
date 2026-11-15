@@ -13,26 +13,36 @@ import (
 const serverName = "vba-ls"
 const serverVersion = "0.5.2"
 
+// docState はオープン中の文書 1 件の状態（テキスト・行・最後に解析したシンボル表）。
+type docState struct {
+	text  string
+	lines []string
+	table *SymbolTable
+}
+
 // documentStore はオープン中のドキュメントを保持する。
 type documentStore struct {
 	mu   sync.RWMutex
-	docs map[string]string
+	docs map[string]*docState
 }
 
 func newDocumentStore() *documentStore {
-	return &documentStore{docs: make(map[string]string)}
+	return &documentStore{docs: make(map[string]*docState)}
 }
-func (s *documentStore) set(uri, content string) {
+
+func (s *documentStore) set(uri string, st *docState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.docs[uri] = content
+	s.docs[uri] = st
 }
-func (s *documentStore) get(uri string) (string, bool) {
+
+func (s *documentStore) get(uri string) (*docState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	v, ok := s.docs[uri]
 	return v, ok
 }
+
 func (s *documentStore) delete(uri string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -41,22 +51,25 @@ func (s *documentStore) delete(uri string) {
 
 // lspHandler は jsonrpc2.Handler を実装する LSP サーバー。
 type lspHandler struct {
-	store  *documentStore
-	db     *TLBDatabase
-	tables sync.Map // uri → *SymbolTable
+	store     *documentStore
+	types     *CompositeResolver // 全文書で共有する型解決（Workspace → VBA → TLB → Scripting）
+	workspace TypeProvider       // 2-3 の WorkspaceProvider の差し込み口
 }
 
-func newLSPHandler(db *TLBDatabase) *lspHandler {
+func newLSPHandler(types *CompositeResolver) *lspHandler {
+	if types == nil {
+		types = NewDefaultResolver(nil, nil)
+	}
 	return &lspHandler{
 		store: newDocumentStore(),
-		db:    db,
+		types: types,
 	}
 }
 
 func (h *lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	switch req.Method {
 	case "initialize":
-		h.handleInitialize(ctx, conn, req)
+		_ = conn.Reply(ctx, req.ID, h.initializeResult())
 	case "initialized":
 		// no-op
 	case "shutdown":
@@ -64,22 +77,67 @@ func (h *lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 	case "exit":
 		// サーバー終了
 	case "textDocument/didOpen":
-		h.handleDidOpen(ctx, conn, req)
+		var p DidOpenTextDocumentParams
+		if !unmarshalParams(req, &p) {
+			return
+		}
+		h.didOpen(p)
+		h.publishDiagnostics(ctx, conn, p.TextDocument.URI)
 	case "textDocument/didChange":
-		h.handleDidChange(ctx, conn, req)
+		var p DidChangeTextDocumentParams
+		if !unmarshalParams(req, &p) || len(p.ContentChanges) == 0 {
+			return
+		}
+		h.didChange(p)
+		h.publishDiagnostics(ctx, conn, p.TextDocument.URI)
 	case "textDocument/didClose":
-		h.handleDidClose(ctx, conn, req)
+		var p DidCloseTextDocumentParams
+		if !unmarshalParams(req, &p) {
+			return
+		}
+		h.store.delete(p.TextDocument.URI)
 	case "textDocument/completion":
-		h.handleCompletion(ctx, conn, req)
+		var p CompletionParams
+		if !unmarshalParams(req, &p) {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		items := h.completion(p)
+		if items == nil {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		_ = conn.Reply(ctx, req.ID, items)
 	case "textDocument/hover":
-		h.handleHover(ctx, conn, req)
+		var p HoverParams
+		if !unmarshalParams(req, &p) {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		if hv := h.hover(p); hv != nil {
+			_ = conn.Reply(ctx, req.ID, hv)
+			return
+		}
+		_ = conn.Reply(ctx, req.ID, nil)
 	case "textDocument/semanticTokens/full":
-		h.handleSemanticTokens(ctx, conn, req)
+		var p SemanticTokensParams
+		if !unmarshalParams(req, &p) {
+			_ = conn.Reply(ctx, req.ID, SemanticTokens{Data: []uint32{}})
+			return
+		}
+		_ = conn.Reply(ctx, req.ID, SemanticTokens{Data: h.semanticTokens(p)})
 	}
 }
 
-func (h *lspHandler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	result := InitializeResult{
+func unmarshalParams(req *jsonrpc2.Request, v interface{}) bool {
+	if req.Params == nil {
+		return false
+	}
+	return json.Unmarshal(*req.Params, v) == nil
+}
+
+func (h *lspHandler) initializeResult() InitializeResult {
+	return InitializeResult{
 		Capabilities: ServerCapabilities{
 			TextDocumentSync: TextDocumentSyncKindFull,
 			CompletionProvider: &CompletionOptions{
@@ -96,141 +154,75 @@ func (h *lspHandler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, 
 		},
 		ServerInfo: &ServerInfo{Name: serverName, Version: serverVersion},
 	}
-	_ = conn.Reply(ctx, req.ID, result)
 }
 
-func (h *lspHandler) handleDidOpen(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p DidOpenTextDocumentParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		return
-	}
-	uri := p.TextDocument.URI
-	content := p.TextDocument.Text
-	h.store.set(uri, content)
-	h.reparse(uri, content)
-	h.publishDiagnostics(ctx, conn, uri, content)
+func (h *lspHandler) didOpen(p DidOpenTextDocumentParams) {
+	h.update(p.TextDocument.URI, p.TextDocument.Text)
 }
 
-func (h *lspHandler) handleDidChange(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p DidChangeTextDocumentParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		return
-	}
-	if len(p.ContentChanges) == 0 {
-		return
-	}
-	uri := p.TextDocument.URI
-	content := p.ContentChanges[len(p.ContentChanges)-1].Text
-	h.store.set(uri, content)
-	h.reparse(uri, content)
-	h.publishDiagnostics(ctx, conn, uri, content)
+func (h *lspHandler) didChange(p DidChangeTextDocumentParams) {
+	h.update(p.TextDocument.URI, p.ContentChanges[len(p.ContentChanges)-1].Text)
 }
 
-func (h *lspHandler) handleDidClose(_ context.Context, _ *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p DidCloseTextDocumentParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		return
-	}
-	h.store.delete(p.TextDocument.URI)
-	h.tables.Delete(p.TextDocument.URI)
+// update は文書を解析して保存する。
+func (h *lspHandler) update(uri, text string) {
+	h.store.set(uri, &docState{text: text, lines: splitLines(text), table: ParseSymbols(text)})
 }
 
-func (h *lspHandler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p CompletionParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	uri := p.TextDocument.URI
-	content, ok := h.store.get(uri)
-	if !ok {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	table := h.getTable(uri)
-	if table == nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	if h.db == nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	linePrefix := lineAt(content, int(p.Position.Line), int(p.Position.Character))
-	scope := scopeAtLine(content, int(p.Position.Line))
-	items := BuildCompletions(linePrefix, table, h.db, scope)
-	_ = conn.Reply(ctx, req.ID, items)
-}
-
-func (h *lspHandler) handleHover(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p HoverParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	uri := p.TextDocument.URI
-	content, ok := h.store.get(uri)
-	if !ok {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	table := h.getTable(uri)
-	if table == nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	if h.db == nil {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	word, prevWord := wordAndPrevWord(content, int(p.Position.Line), int(p.Position.Character))
-	scope := scopeAtLine(content, int(p.Position.Line))
-	md := ResolveHoverMarkdown(word, prevWord, table, h.db, scope)
-	if md == "" {
-		_ = conn.Reply(ctx, req.ID, nil)
-		return
-	}
-	_ = conn.Reply(ctx, req.ID, Hover{
-		Contents: MarkupContent{Kind: "markdown", Value: md},
-	})
-}
-
-func (h *lspHandler) handleSemanticTokens(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p SemanticTokensParams
-	if err := json.Unmarshal(*req.Params, &p); err != nil {
-		_ = conn.Reply(ctx, req.ID, SemanticTokens{Data: []uint32{}})
-		return
-	}
-	uri := p.TextDocument.URI
-	content, ok := h.store.get(uri)
-	if !ok {
-		_ = conn.Reply(ctx, req.ID, SemanticTokens{Data: []uint32{}})
-		return
-	}
-	table := h.getTable(uri)
-	data := BuildSemanticTokens(content, table, h.db)
-	_ = conn.Reply(ctx, req.ID, SemanticTokens{Data: data})
-}
-
-func (h *lspHandler) reparse(uri, content string) {
-	table := ParseSymbols(content)
-	h.tables.Store(uri, table)
-}
-
-func (h *lspHandler) getTable(uri string) *SymbolTable {
-	v, ok := h.tables.Load(uri)
+// document は uri の最新の Document を返す。開かれていなければ nil。
+func (h *lspHandler) document(uri string) *Document {
+	st, ok := h.store.get(uri)
 	if !ok {
 		return nil
 	}
-	return v.(*SymbolTable)
+	return newDocumentWithLines(uri, st.text, st.lines, st.table, h.types)
 }
 
-func (h *lspHandler) publishDiagnostics(ctx context.Context, conn *jsonrpc2.Conn, uri, content string) {
-	table := h.getTable(uri)
-	if table == nil || h.db == nil {
+func (h *lspHandler) completion(p CompletionParams) []CompletionItem {
+	doc := h.document(p.TextDocument.URI)
+	if doc == nil {
+		return nil
+	}
+	return BuildCompletions(doc, int(p.Position.Line), int(p.Position.Character))
+}
+
+func (h *lspHandler) hover(p HoverParams) *Hover {
+	doc := h.document(p.TextDocument.URI)
+	if doc == nil {
+		return nil
+	}
+	md := ResolveHover(doc, int(p.Position.Line), int(p.Position.Character))
+	if md == "" {
+		return nil
+	}
+	return &Hover{Contents: MarkupContent{Kind: "markdown", Value: md}}
+}
+
+func (h *lspHandler) semanticTokens(p SemanticTokensParams) []uint32 {
+	doc := h.document(p.TextDocument.URI)
+	if doc == nil {
+		return []uint32{}
+	}
+	return BuildSemanticTokens(doc)
+}
+
+func (h *lspHandler) diagnostics(uri string) []Diagnostic {
+	doc := h.document(uri)
+	if doc == nil {
+		return nil
+	}
+	diags := BuildDiagnostics(doc)
+	if diags == nil {
+		diags = []Diagnostic{}
+	}
+	return diags
+}
+
+func (h *lspHandler) publishDiagnostics(ctx context.Context, conn *jsonrpc2.Conn, uri string) {
+	diags := h.diagnostics(uri)
+	if diags == nil {
 		return
 	}
-	diags := BuildDiagnostics(content, table, h.db)
 	_ = conn.Notify(ctx, "textDocument/publishDiagnostics", PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diags,
@@ -238,16 +230,6 @@ func (h *lspHandler) publishDiagnostics(ctx context.Context, conn *jsonrpc2.Conn
 }
 
 // --- ユーティリティ ---
-
-// lineAt は line 行目のカーソル位置より前のテキストを返す。
-// char は LSP の UTF-16 位置。
-func lineAt(content string, line, char int) string {
-	l, ok := lineText(content, line)
-	if !ok {
-		return ""
-	}
-	return l[:utf16ToByteOffset(l, char)]
-}
 
 var wordRe = regexp.MustCompile(`[` + identPartClass + `]+`)
 
@@ -258,6 +240,10 @@ func wordAndPrevWord(content string, line, char int) (word, prevWord string) {
 	if !ok {
 		return
 	}
+	return wordAndPrevWordInLine(l, char)
+}
+
+func wordAndPrevWordInLine(l string, char int) (word, prevWord string) {
 	char = utf16ToByteOffset(l, char)
 	matches := wordRe.FindAllStringIndex(l, -1)
 	for _, m := range matches {
@@ -277,8 +263,7 @@ func wordAndPrevWord(content string, line, char int) (word, prevWord string) {
 	return
 }
 
-func scopeAtLine(content string, targetLine int) string {
-	lines := strings.Split(content, "\n")
+func scopeAtLine(lines []string, targetLine int) string {
 	scope := "module"
 	for i, line := range lines {
 		if i >= targetLine {

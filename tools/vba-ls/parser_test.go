@@ -42,7 +42,7 @@ func assertTokens(t *testing.T, got, want []absToken) {
 // --- 項目13: Set 由来シンボルの位置 ---
 
 func TestSetNewSymbolPositions(t *testing.T) {
-	db := newTestTLBDatabase(t)
+	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Set doc = New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
 		if len(table.Symbols) != 1 {
@@ -53,7 +53,7 @@ func TestSetNewSymbolPositions(t *testing.T) {
 		if s.Line != 1 || s.Col != 8 || s.TypeName != "PartDocument" || !s.HasTypeNamePos || s.TypeNameLine != 1 || s.TypeNameCol != typeCol {
 			t.Fatalf("doc = %+v, want Line1/Col8, TypeName PartDocument, 型位置 (1,%d)", s, typeCol)
 		}
-		toks := decodeSemanticTokens(t, BuildSemanticTokens(src, table, db))
+		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))
 		assertTokens(t, toks, []absToken{
 			{1, 8, 3, tokenTypeVariable, tokenModDeclaration},
 			{1, typeCol, 12, tokenTypeType, 0},
@@ -62,7 +62,7 @@ func TestSetNewSymbolPositions(t *testing.T) {
 }
 
 func TestSetNewAfterJapanese(t *testing.T) {
-	db := newTestTLBDatabase(t)
+	db := newTestResolver(t)
 	const line1 = `    x = "あ": Set doc = New PartDocument`
 	lfAndCRLF(t, "Sub M()\n"+line1+"\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
@@ -72,7 +72,7 @@ func TestSetNewAfterJapanese(t *testing.T) {
 		if s.Line != 1 || s.Col != docCol || s.TypeNameLine != 1 || s.TypeNameCol != typeCol || !s.HasTypeNamePos {
 			t.Fatalf("doc = %+v, want 変数 (1,%d) 型 (1,%d)", s, docCol, typeCol)
 		}
-		toks := decodeSemanticTokens(t, BuildSemanticTokens(src, table, db))
+		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))
 		assertTokens(t, toks, []absToken{
 			{1, docCol, 3, tokenTypeVariable, tokenModDeclaration},
 			{1, typeCol, 12, tokenTypeType, 0},
@@ -81,14 +81,14 @@ func TestSetNewAfterJapanese(t *testing.T) {
 }
 
 func TestSetCreateObjectHasNoTypeToken(t *testing.T) {
-	db := newTestTLBDatabase(t)
+	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Set doc = CreateObject(\"CATIA.PartDocument\")\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
 		s := findSym(t, table, "doc", "Sub:M")
 		if s.TypeName != "PartDocument" || s.HasTypeNamePos || s.Line != 1 || s.Col != 8 {
 			t.Fatalf("doc = %+v, want TypeName PartDocument, HasTypeNamePos=false, (1,8)", s)
 		}
-		toks := decodeSemanticTokens(t, BuildSemanticTokens(src, table, db))
+		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))
 		assertTokens(t, toks, []absToken{
 			{1, 8, 3, tokenTypeVariable, tokenModDeclaration},
 		})
@@ -96,7 +96,7 @@ func TestSetCreateObjectHasNoTypeToken(t *testing.T) {
 }
 
 func TestSetNewFillsUntypedDim(t *testing.T) {
-	db := newTestTLBDatabase(t)
+	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Dim doc\n    Set doc = New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
 		if len(table.Symbols) != 1 {
@@ -107,7 +107,7 @@ func TestSetNewFillsUntypedDim(t *testing.T) {
 		if s.Name != "doc" || s.Line != 1 || s.Col != 8 || s.TypeName != "PartDocument" || !s.HasTypeNamePos || s.TypeNameLine != 2 || s.TypeNameCol != typeCol {
 			t.Fatalf("doc = %+v, want 宣言 (1,8)、型 PartDocument (2,%d)", s, typeCol)
 		}
-		toks := decodeSemanticTokens(t, BuildSemanticTokens(src, table, db))
+		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))
 		assertTokens(t, toks, []absToken{
 			{1, 8, 3, tokenTypeVariable, tokenModDeclaration},
 			{2, 8, 3, tokenTypeVariable, 0},
@@ -157,7 +157,7 @@ func TestDimWithoutAsHasNoTypePos(t *testing.T) {
 }
 
 func TestDimAsNew(t *testing.T) {
-	db := newTestTLBDatabase(t)
+	db := newTestResolver(t)
 	lfAndCRLF(t, "Sub M()\n    Dim o As New PartDocument\nEnd Sub\n", func(t *testing.T, src string) {
 		table := ParseSymbols(src)
 		s := findSym(t, table, "o", "Sub:M")
@@ -165,7 +165,7 @@ func TestDimAsNew(t *testing.T) {
 		if s.TypeName != "PartDocument" || !s.HasTypeNamePos || s.Line != 1 || s.Col != 8 || s.TypeNameLine != 1 || s.TypeNameCol != typeCol {
 			t.Fatalf("o = %+v, want TypeName PartDocument, 型位置 (1,%d)", s, typeCol)
 		}
-		toks := decodeSemanticTokens(t, BuildSemanticTokens(src, table, db))
+		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))
 		assertTokens(t, toks, []absToken{
 			{1, 8, 1, tokenTypeVariable, tokenModDeclaration},
 			{1, typeCol, 12, tokenTypeType, 0},

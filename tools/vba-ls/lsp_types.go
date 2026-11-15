@@ -26,7 +26,7 @@ type Location struct {
 // --- Initialize ---
 
 type InitializeParams struct {
-	RootURI            *string     `json:"rootUri,omitempty"`
+	RootURI               *string     `json:"rootUri,omitempty"`
 	InitializationOptions interface{} `json:"initializationOptions,omitempty"`
 }
 
@@ -53,10 +53,10 @@ type SemanticTokensOptions struct {
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync        TextDocumentSyncKind   `json:"textDocumentSync"`
-	CompletionProvider      *CompletionOptions     `json:"completionProvider,omitempty"`
-	HoverProvider           bool                   `json:"hoverProvider,omitempty"`
-	SemanticTokensProvider  *SemanticTokensOptions `json:"semanticTokensProvider,omitempty"`
+	TextDocumentSync       TextDocumentSyncKind   `json:"textDocumentSync"`
+	CompletionProvider     *CompletionOptions     `json:"completionProvider,omitempty"`
+	HoverProvider          bool                   `json:"hoverProvider,omitempty"`
+	SemanticTokensProvider *SemanticTokensOptions `json:"semanticTokensProvider,omitempty"`
 }
 
 // --- Semantic Tokens ---
