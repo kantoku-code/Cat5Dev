@@ -362,7 +362,7 @@ func TestWorkspaceHover(t *testing.T) {
 		{"モジュール名", "clsA.cls_utf", "Sub T()\n    Mod|ule1.Pub\nEnd Sub\n", "```vba\nModule Module1\n```"},
 		{"フォーム", "clsA.cls_utf", "Sub T()\n    frm|A.Show\nEnd Sub\n", "```vba\nUserForm frmA\n```"},
 		{"他モジュールの Public Enum", "clsA.cls_utf", "Sub T()\n    Dim k As EKi|nd\nEnd Sub\n", "```vba\nPublic Enum EKind\n```"},
-		{"TLB の型名は対象外", "clsA.cls_utf", "Sub T()\n    Dim d As PartDocu|ment\nEnd Sub\n", ""},
+		{"TLB の型名（旧 DB は所属・継承なし）", "clsA.cls_utf", "Sub T()\n    Dim d As PartDocu|ment\nEnd Sub\n", "```vba\nInterface CATIA.PartDocument\n```"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src, line, char := caretPos(t, withFixture(tc.file, tc.src))

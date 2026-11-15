@@ -674,6 +674,25 @@ func (p *TLBProvider) loadHierarchy() {
 	})
 }
 
+// Ancestors は t の祖先を親から順に返す（v2 のみ。循環・20 段で打ち切る）。
+func (p *TLBProvider) Ancestors(t TypeRef) []TypeRef {
+	p.load()
+	it, ok := p.byName[strings.ToLower(t.Name)]
+	if !ok {
+		return nil
+	}
+	var out []TypeRef
+	seen := map[int64]bool{it.id: true}
+	for len(out) < 20 && it.parent.Valid {
+		if it, ok = p.byID[it.parent.Int64]; !ok || seen[it.id] {
+			break
+		}
+		seen[it.id] = true
+		out = append(out, TypeRef{Lib: "CATIA", Name: it.name})
+	}
+	return out
+}
+
 // HasMemberInDescendants は t（とその祖先）か、t の派生型のどれかに name があるかを返す（v2 の診断用）。
 // CATIA は遅延バインディングなので、宣言型 Document の変数で PartDocument.Part を呼ぶのは正しい。
 // 一方、Document の系統に無い Bodies（Part のメンバー）は誤りとして検出できる。

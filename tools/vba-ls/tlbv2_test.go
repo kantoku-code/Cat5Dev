@@ -529,3 +529,53 @@ func TestCompletionResolveOverJSONRPC(t *testing.T) {
 		t.Errorf("resolve = %+v", got)
 	}
 }
+
+func TestTLBTypeHover(t *testing.T) {
+	r := v2resolver(t)
+	p := newTLBProvider(newTestTLBDatabaseV2(t)).(*TLBProvider)
+	if got := p.Ancestors(TypeRef{Name: "Application"}); len(got) != 3 || got[0].Name != "AnyObject" || got[2].Name != "CATBaseUnknown" {
+		t.Errorf("Ancestors(Application) = %+v", got)
+	}
+	for _, tc := range []struct{ name, src, want string }{
+		{"As の後", "Sub M()\n    Dim a As Applica|tion\nEnd Sub\n",
+			"```vba\nInterface CATIA.Application（INFITF）\n```\n\n継承: Application ← AnyObject ← CATBaseDispatch ← CATBaseUnknown\n\nRepresents the current CNext application."},
+		{"修飾付き", "Sub M()\n    Dim d As MECMOD.PartDoc|ument\nEnd Sub\n",
+			"```vba\nInterface CATIA.PartDocument（MECMOD）\n```\n\n継承: PartDocument ← Document ← AnyObject ← CATBaseDispatch ← CATBaseUnknown"},
+		{"Enum", "Sub M()\n    Dim s As CatPaper|Size\nEnd Sub\n", "```vba\nEnum CATIA.CatPaperSize（INFITF）\n```\n\nPaper size."},
+		{"TypeOf … Is", "Sub M()\n    If TypeOf x Is PartDocu|ment Then\nEnd Sub\n", "```vba\nInterface CATIA.PartDocument（MECMOD）\n```\n\n継承: PartDocument ← Document ← AnyObject ← CATBaseDispatch ← CATBaseUnknown"},
+		{"primitive は出さない", "Sub M()\n    Dim s As Str|ing\nEnd Sub\n", ""},
+		{"メンバーの説明", "Sub M()\n    CATIA.Documents.A|dd \"Part\"\nEnd Sub\n", "```vba\nAdd(docType As String) As Document\n```\n\nCreates a Document."},
+		{"書き込み専用", "Sub M()\n    Dim f As InstanceFactory\n    f.Instantiation|Mode = \"After\"\nEnd Sub\n", "```vba\nInstantiationMode As String\n```\n\n（書き込み専用） Sets the mode of instantiation."},
+	} {
+		if got := hoverWith(t, r, tc.src); got != tc.want {
+			t.Errorf("%s: hover = %q\nwant %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestSignatureHelpParamDocs(t *testing.T) {
+	r := v2resolver(t)
+	src, line, char := caretPos(t, "Sub M()\n    s = CATIA.FileSelectionBox(\"a\", \"b\", |\nEnd Sub\n")
+	sh := BuildSignatureHelp(NewDocument("file:///test.bas", src, ParseSymbols(src), r), line, char)
+	if sh == nil || sh.ActiveParameter != 2 {
+		t.Fatalf("signatureHelp = %+v", sh)
+	}
+	ps := sh.Signatures[0].Parameters
+	doc := func(i int) string {
+		if ps[i].Documentation == nil {
+			return ""
+		}
+		return ps[i].Documentation.Value
+	}
+	if doc(0) != "The title." || doc(1) != "" || doc(2) != "The mode.\n値: CatFileSelectionModeOpen, CatFileSelectionModeSave" {
+		t.Errorf("引数の説明 = %q / %q / %q", doc(0), doc(1), doc(2))
+	}
+	if d := sh.Signatures[0].Documentation; d == nil || d.Value != "Displays a modal file selection box." {
+		t.Errorf("シグネチャの説明 = %+v", d)
+	}
+	src, line, char = caretPos(t, "Sub M()\n    s = CATIA.Format(|\nEnd Sub\n")
+	sh = BuildSignatureHelp(NewDocument("file:///test.bas", src, ParseSymbols(src), r), line, char)
+	if sh == nil || sh.Signatures[0].Label != `Format([iFormat As String = "x"], ParamArray iArgs() As Variant) As String` {
+		t.Errorf("省略可能・ParamArray の表示 = %+v", sh)
+	}
+}

@@ -159,8 +159,18 @@ func BuildSignatureHelp(doc *Document, line, utf16Char int) *SignatureHelp {
 		if !ok {
 			continue // 配列の添字・未知の名前は外側へ
 		}
+		si := signatureInfo(m)
+		for i, p := range m.Params {
+			if v := enumValuesText(r.types, p.Type); v != "" {
+				d := v
+				if p.Doc != "" {
+					d = p.Doc + "\n" + v
+				}
+				si.Parameters[i].Documentation = plainDoc(d)
+			}
+		}
 		return &SignatureHelp{
-			Signatures:      []SignatureInformation{signatureInfo(m)},
+			Signatures:      []SignatureInformation{si},
 			ActiveParameter: activeParameter(m.Params, cs),
 		}
 	}
@@ -233,13 +243,41 @@ func signatureInfo(m MemberInfo) SignatureInformation {
 		}
 		start := utf16Len(sb.String())
 		sb.WriteString(formatParam(p))
-		params = append(params, ParameterInformation{Label: [2]uint32{uint32(start), uint32(utf16Len(sb.String()))}})
+		params = append(params, ParameterInformation{Label: [2]uint32{uint32(start), uint32(utf16Len(sb.String()))},
+			Documentation: plainDoc(p.Doc)})
 	}
 	sb.WriteString(")")
 	if ret := m.ReturnType; ret != "" && !strings.EqualFold(ret, "void") {
 		sb.WriteString(" As " + ret)
 	}
 	return SignatureInformation{Label: sb.String(), Documentation: plainDoc(m.Doc), Parameters: params}
+}
+
+// maxEnumValues は引数の説明に並べる Enum の値の数の上限。
+const maxEnumValues = 10
+
+// enumValuesText は引数の型が TLB（CATIA）の Enum なら「値: catA, catB, …」を返す。
+func enumValuesText(types *CompositeResolver, typ string) string {
+	if typ == "" {
+		return ""
+	}
+	ti, _, ok := types.Resolve(ParseTypeName(typ))
+	if !ok || ti.Kind != TypeKindEnum || ti.Ref.Lib != "CATIA" {
+		return ""
+	}
+	ms := types.Members(ti.Ref)
+	if len(ms) == 0 {
+		return ""
+	}
+	names := make([]string, 0, maxEnumValues)
+	for i, m := range ms {
+		if i == maxEnumValues {
+			names = append(names, "…")
+			break
+		}
+		names = append(names, m.Name)
+	}
+	return "値: " + strings.Join(names, ", ")
 }
 
 // activeParameter は強調する引数を決める。名前付き引数は名前で、ParamArray は最後の引数に寄せる。

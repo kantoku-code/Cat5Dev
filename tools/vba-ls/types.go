@@ -259,6 +259,9 @@ type MemberNameIndex interface{ HasMemberNamed(name string) bool }
 // EnumConstantLister は非修飾で参照できるライブラリの Enum 定数（TLB の catPaperA4 など）を名前順に提供する（識別子補完用）。
 type EnumConstantLister interface{ EnumConstants() []MemberInfo }
 
+// TypeAncestry は型の祖先（親から順に）を返す（ホバーの継承表示用）。
+type TypeAncestry interface{ Ancestors(t TypeRef) []TypeRef }
+
 // MemberHierarchyIndex は継承関係を持つライブラリで、宣言型か派生型のどれかにメンバーがあるかを答える
 // （TLB の遅延バインディング対策。HasHierarchy が false なら使わない）。
 type MemberHierarchyIndex interface {

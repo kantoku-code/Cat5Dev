@@ -56,13 +56,23 @@ func ResolveHover(doc *Document, line, utf16Char int) string {
 			return md
 		}
 		if w := strings.ToLower(wordBefore(masked, ch.Start)); w == "as" || w == "new" {
-			return "" // 型名（As String / As Date）は組み込み関数と取り違えない
+			// 型名（As String / As Date）は組み込み関数と取り違えない
+			return libraryTypeHover(doc, TypeRef{Name: last.Name})
 		}
 		name := last.Name
 		if e < len(l) && l[e] == '$' {
 			name += "$" // Left$ など
 		}
-		return builtinHover(doc, name)
+		if md := builtinHover(doc, name); md != "" {
+			return md
+		}
+		return libraryTypeHover(doc, TypeRef{Name: last.Name})
+	}
+	if !ch.LeadingDot && len(ch.Segs) == 2 {
+		// As MECMOD.PartDocument / New Scripting.Dictionary の型名
+		if w := strings.ToLower(wordBefore(masked, ch.Start)); w == "as" || w == "new" {
+			return libraryTypeHover(doc, TypeRef{Lib: ch.Segs[0].Name, Name: last.Name})
+		}
 	}
 	owner := MemberChain{Segs: ch.Segs[:len(ch.Segs)-1], LeadingDot: ch.LeadingDot}
 	t, ok := newExprResolver(doc).resolveChain(owner, line)
@@ -105,6 +115,41 @@ func builtinHover(doc *Document, name string) string {
 		}
 	}
 	return ""
+}
+
+// libraryTypeHover は組み込み・TLB の型（宣言元の無い型）のホバー。primitive・標準モジュール・ワークスペースの型は ""。
+func libraryTypeHover(doc *Document, ref TypeRef) string {
+	ti, prov, ok := doc.Types.Resolve(ref)
+	if !ok || ti.Origin != nil || ti.Kind == TypeKindPrimitive || ti.Kind == TypeKindModule {
+		return ""
+	}
+	kw := "Class"
+	switch ti.Kind {
+	case TypeKindInterface:
+		kw = "Interface"
+	case TypeKindEnum:
+		kw = "Enum"
+	case TypeKindUDT:
+		kw = "Type"
+	}
+	code := kw + " " + ti.Ref.String()
+	if ti.Container != "" {
+		code += "（" + ti.Container + "）"
+	}
+	md := "```vba\n" + code + "\n```"
+	if a, ok := prov.(TypeAncestry); ok {
+		if anc := a.Ancestors(ti.Ref); len(anc) > 0 {
+			names := []string{ti.Ref.Name}
+			for _, t := range anc {
+				names = append(names, t.Name)
+			}
+			md += "\n\n継承: " + strings.Join(names, " ← ")
+		}
+	}
+	if ti.Doc != "" {
+		md += "\n\n" + ti.Doc
+	}
+	return md
 }
 
 // projectType はモジュール名（Main / frmMenu）またはワークスペースの型名（clsA / Public UDT・Enum）を型情報にする。
