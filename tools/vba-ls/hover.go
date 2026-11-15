@@ -52,7 +52,17 @@ func ResolveHover(doc *Document, line, utf16Char int) string {
 		if sym := doc.Table.Lookup(last.Name, line); sym != nil {
 			return symbolHover(sym)
 		}
-		return projectHover(doc, last)
+		if md := projectHover(doc, last); md != "" {
+			return md
+		}
+		if w := strings.ToLower(wordBefore(masked, ch.Start)); w == "as" || w == "new" {
+			return "" // 型名（As String / As Date）は組み込み関数と取り違えない
+		}
+		name := last.Name
+		if e < len(l) && l[e] == '$' {
+			name += "$" // Left$ など
+		}
+		return builtinHover(doc, name)
 	}
 	owner := MemberChain{Segs: ch.Segs[:len(ch.Segs)-1], LeadingDot: ch.LeadingDot}
 	t, ok := newExprResolver(doc).resolveChain(owner, line)
@@ -73,6 +83,26 @@ func projectHover(doc *Document, sg ExprSegment) string {
 	}
 	if ti, ok := projectType(doc, sg.Name); ok {
 		return typeHover(ti)
+	}
+	return ""
+}
+
+// builtinHover は組み込みの関数・定数・Enum メンバー・グローバル（Err / Debug）のホバーを返す。
+func builtinHover(doc *Document, name string) string {
+	if m, ok := doc.Types.Function(name); ok {
+		return codeBlock(m.Signature(), m.Doc)
+	}
+	if m, ok := doc.Types.Constant(name); ok {
+		sig := m.Signature()
+		if m.Kind == MemberKindEnumMember {
+			sig = m.Owner.Name + "." + sig
+		}
+		return codeBlock(sig, m.Doc)
+	}
+	for _, g := range doc.Types.Globals() {
+		if strings.EqualFold(g.Name, name) {
+			return codeBlock(g.Name+" As "+g.Type.Name, g.Doc)
+		}
 	}
 	return ""
 }

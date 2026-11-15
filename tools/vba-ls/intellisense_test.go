@@ -354,3 +354,33 @@ func TestSemanticTokensScopeAndMembers(t *testing.T) {
 		})
 	})
 }
+
+// 組み込みの関数・定数・Enum メンバー・Err / Debug のホバー。
+func TestBuiltinHover(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"関数", "Sub A()\n    MsgB|ox \"a\"\nEnd Sub\n", "```vba\nMsgBox(Prompt, [Buttons As VbMsgBoxStyle = vbOKOnly], [Title], [HelpFile], [Context]) As VbMsgBoxResult\n```\n\nメッセージボックスを表示し、押されたボタンを返す"},
+		{"$ 形", "Sub A()\n    x = Le|ft$(s, 1)\nEnd Sub\n", "```vba\nLeft$(String, Length As Long) As String\n```\n\n文字列の左端から指定した文字数を取り出す（Left$ は String を返す）"},
+		{"定数", "Sub A()\n    x = vbCr|Lf\nEnd Sub\n", "```vba\nvbCrLf As String = Chr(13) & Chr(10)\n```\n\n復帰と改行（CR + LF）"},
+		{"Enum メンバー", "Sub A()\n    If r = vbY|es Then\nEnd Sub\n", "```vba\nVbMsgBoxResult.vbYes = 6\n```\n\nはい"},
+		{"Err", "Sub A()\n    E|rr.Clear\nEnd Sub\n", "```vba\nErr As ErrObject\n```\n\n実行時エラーの情報"},
+		{"自モジュールの名前が優先", "Function Mid(a)\nEnd Function\nSub A()\n    x = Mi|d(1)\nEnd Sub\n", "```vba\nPublic Function Mid(a) As Variant\n```"},
+		{"型名は関数と取り違えない", "Sub A()\n    Dim s As Str|ing\n    Dim d As Da|te\nEnd Sub\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tc.src
+			if strings.Count(src, "|") > 1 {
+				// 2 つ目のカーソルも確かめる
+				i := strings.Index(src, "|")
+				second := src[:i] + src[i+1:]
+				if got := hoverAt(t, second); got != tc.want {
+					t.Errorf("2 つ目: ホバー = %q, want %q", got, tc.want)
+				}
+				j := strings.LastIndex(src, "|")
+				src = src[:j] + src[j+1:]
+			}
+			if got := hoverAt(t, src); got != tc.want {
+				t.Errorf("ホバー = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

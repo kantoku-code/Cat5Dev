@@ -261,6 +261,11 @@ type FunctionProvider interface {
 	Constants() []MemberInfo                 // Kind は MemberKindConst。名前順
 }
 
+// ConstantProvider は非修飾で参照できる組み込みの値（独立した定数・Enum メンバー）を名前で引く（ホバー用）。
+type ConstantProvider interface {
+	Constant(name string) (MemberInfo, bool)
+}
+
 // GlobalLister は暗黙のグローバル（Err / Debug）の一覧を提供する。
 type GlobalLister interface {
 	Globals() []GlobalInfo
@@ -665,4 +670,19 @@ func (c *CompositeResolver) ProjectTypes() []TypeInfo {
 		}
 	}
 	return out
+}
+
+// Constant は ConstantProvider を実装するプロバイダへ順に問い合わせる。
+func (c *CompositeResolver) Constant(name string) (MemberInfo, bool) {
+	if c == nil {
+		return MemberInfo{}, false
+	}
+	for _, p := range c.providers {
+		if cp, ok := p.(ConstantProvider); ok {
+			if m, ok := cp.Constant(name); ok {
+				return m, true
+			}
+		}
+	}
+	return MemberInfo{}, false
 }

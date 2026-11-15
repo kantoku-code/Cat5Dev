@@ -113,13 +113,14 @@ type BuiltinProvider struct {
 	allPrim map[string]string // 全ライブラリの primitive（MemberType の修飾に使う）
 	globals map[string]TypeRef
 
-	globalList []GlobalInfo    // 名前順
-	funcs      []MemberInfo    // 名前順
-	funcIdx    map[string]int  // 小文字名 → funcs の添字
-	strVariant map[string]bool // $ 形のある関数（小文字名）
-	consts     []MemberInfo    // 名前順
-	typeList   []TypeInfo      // 名前順（primitive を含まない）
-	primList   []TypeInfo      // 名前順
+	globalList []GlobalInfo          // 名前順
+	funcs      []MemberInfo          // 名前順
+	funcIdx    map[string]int        // 小文字名 → funcs の添字
+	strVariant map[string]bool       // $ 形のある関数（小文字名）
+	consts     []MemberInfo          // 名前順
+	constIdx   map[string]MemberInfo // 小文字名 → 独立した定数・Enum メンバー（非修飾で参照できる値）
+	typeList   []TypeInfo            // 名前順（primitive を含まない）
+	primList   []TypeInfo            // 名前順
 }
 
 // builtinSet は埋め込み JSON から作った全ライブラリ。
@@ -368,6 +369,17 @@ func newBuiltinProvider(l builtinLibrary, allPrim map[string]string) (*BuiltinPr
 		})
 	}
 	sortMembers(p.consts)
+	p.constIdx = map[string]MemberInfo{}
+	for _, c := range p.consts {
+		p.constIdx[strings.ToLower(c.Name)] = c
+	}
+	for _, idx := range p.types {
+		if idx.info.Kind == TypeKindEnum {
+			for _, m := range idx.members {
+				p.constIdx[strings.ToLower(m.Name)] = m
+			}
+		}
+	}
 	sort.Slice(p.typeList, func(i, j int) bool { return p.typeList[i].Ref.Name < p.typeList[j].Ref.Name })
 	sort.Slice(p.primList, func(i, j int) bool { return p.primList[i].Ref.Name < p.primList[j].Ref.Name })
 	sort.Slice(p.globalList, func(i, j int) bool { return p.globalList[i].Name < p.globalList[j].Name })
@@ -476,3 +488,9 @@ func (p *BuiltinProvider) Function(name string) (MemberInfo, bool) {
 
 // Constants は列挙に属さない組み込み定数を名前順に返す。
 func (p *BuiltinProvider) Constants() []MemberInfo { return p.consts }
+
+// Constant は非修飾で参照できる値（独立した定数・Enum メンバー）を名前で引く（ホバー用）。
+func (p *BuiltinProvider) Constant(name string) (MemberInfo, bool) {
+	m, ok := p.constIdx[strings.ToLower(name)]
+	return m, ok
+}
