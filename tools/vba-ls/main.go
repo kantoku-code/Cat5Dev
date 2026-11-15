@@ -16,8 +16,11 @@ func main() {
 	db := loadDB()
 	defer db.Close()
 
-	// DB がなくても VBA / Scripting の組み込み型で補完できるよう、resolver は常に作る
-	handler := newLSPHandler(NewDefaultResolver(db, nil))
+	// DB がなくても VBA / Scripting の組み込み型で補完できるよう、resolver は常に作る。
+	// ワークスペースのクラス・フォーム・標準モジュールは参照設定（VBA / TLB / Scripting）より優先する。
+	ws := NewWorkspace()
+	handler := newLSPHandler(NewDefaultResolver(db, ws.TypesProvider(), ws.ModulesProvider()))
+	handler.attachWorkspace(ws)
 	codec := jsonrpc2.VSCodeObjectCodec{}
 	stream := jsonrpc2.NewBufferedStream(stdinStdout{}, codec)
 	conn := jsonrpc2.NewConn(context.Background(), stream, handler)

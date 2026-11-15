@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,11 +19,14 @@ const serverVersion = "0.6.0"
 // 解析はバックグラウンドで行い、入力が続く間は最新の版だけを解析する。
 const (
 	defaultReparseDelay = 300 * time.Millisecond
-	semanticTokensWait  = 3 * time.Second // セマンティックトークンは最新の版の解析を待ってから返す（上限）
+	semanticTokensWait  = 3 * time.Second        // セマンティックトークンは最新の版の解析を待ってから返す（上限）
+	definitionWait      = 2 * time.Second        // 定義ジャンプも同様
+	diagnosticsRefresh  = 300 * time.Millisecond // 他モジュールの公開面が変わったときの診断の再通知のデバウンス
 )
 
-// parseMu は再解析を 1 つずつ行うためのロック。ANTLR ランタイムの共有 DFA は内部でロックされているが、
-// 2-0 では複数文書の同時解析を避けて安全側に倒す（2-3 の並列索引で検証してから外す）。
+// parseMu は解析を 1 つずつ行うためのロック（開いている文書の再解析とワークスペース索引で共有）。
+// ANTLR ランタイムの共有 DFA は内部でロックされているが、この環境では -race で検証できないため直列に保つ。
+// 索引はファイルごとにロックを取り直すので、編集中の再解析が待たされるのは最大でファイル 1 つ分。
 var parseMu sync.Mutex
 
 // docState はオープン中の文書 1 件の状態。
@@ -33,6 +39,7 @@ type docState struct {
 	tableGen int           // table の元になった世代
 	timer    *time.Timer   // 予約中の再解析
 	ready    chan struct{} // 最新の世代の解析待ち。解析が追いついたら close して nil にする
+	entry    *ModuleEntry  // table から作った自モジュールの entry（Me. 用。*_utf 以外は nil）
 }
 
 // lspHandler は jsonrpc2.Handler を実装する LSP サーバー。
@@ -40,9 +47,11 @@ type lspHandler struct {
 	mu   sync.Mutex
 	docs map[string]*docState
 
-	types     *CompositeResolver // 全文書で共有する型解決（Workspace → VBA → TLB → Scripting）
-	workspace TypeProvider       // 2-3 の WorkspaceProvider の差し込み口
-	debounce  time.Duration
+	types        *CompositeResolver // 全文書で共有する型解決（Workspace → VBA → TLB → Scripting → MSForms）
+	ws           *Workspace         // ワークスペース索引（nil 可）
+	indexCancel  context.CancelFunc
+	refreshTimer *time.Timer // 他文書の診断の再通知
+	debounce     time.Duration
 
 	conn     *jsonrpc2.Conn                         // バックグラウンドからの診断の通知用
 	onParsed func(uri string, gen int, latest bool) // テスト用フック（解析が終わるたびに呼ぶ）
@@ -50,12 +59,83 @@ type lspHandler struct {
 
 func newLSPHandler(types *CompositeResolver) *lspHandler {
 	if types == nil {
-		types = NewDefaultResolver(nil, nil)
+		types = NewDefaultResolver(nil)
 	}
 	return &lspHandler{
 		docs:     map[string]*docState{},
 		types:    types,
 		debounce: defaultReparseDelay,
+	}
+}
+
+// attachWorkspace はワークスペース索引をつなぐ（types は ws のプロバイダを含めて作っておくこと）。
+// 公開面が変わったら、開いている文書の診断を再通知する。
+func (h *lspHandler) attachWorkspace(ws *Workspace) {
+	h.ws = ws
+	if ws != nil {
+		ws.mu.Lock()
+		ws.onChange = h.scheduleDiagnosticsRefresh
+		ws.mu.Unlock()
+	}
+}
+
+// rootsOf は initialize の引数からワークスペースフォルダのパスを得る（workspaceFolders → rootUri → rootPath）。
+func rootsOf(p InitializeParams) []string {
+	var roots []string
+	for _, f := range p.WorkspaceFolders {
+		if path, ok := uriToPath(f.URI); ok {
+			roots = append(roots, path)
+		}
+	}
+	if len(roots) == 0 && p.RootURI != nil {
+		if path, ok := uriToPath(*p.RootURI); ok {
+			roots = append(roots, path)
+		}
+	}
+	if len(roots) == 0 && p.RootPath != nil && *p.RootPath != "" {
+		roots = append(roots, *p.RootPath)
+	}
+	return roots
+}
+
+// indexWorkspace は初回索引をバックグラウンドで行う（initialized で起動）。終わったら開いている文書の診断を再通知する。
+func (h *lspHandler) indexWorkspace() {
+	if h.ws == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	h.mu.Lock()
+	h.indexCancel = cancel
+	h.mu.Unlock()
+	st := h.ws.IndexAll(ctx)
+	fmt.Fprintf(os.Stderr, "vba-ls: ワークスペース索引 %d 件（std %d / class %d / form %d、失敗 %d、スキップ %d）%v\n",
+		st.Parsed, st.ByKind[ModuleStd], st.ByKind[ModuleClass], st.ByKind[ModuleForm], st.Failed, st.Skipped, st.Duration.Round(time.Millisecond))
+	h.refreshAllDiagnostics()
+}
+
+// scheduleDiagnosticsRefresh は他モジュールの公開面が変わったとき、開いている文書の診断の再通知を予約する。
+func (h *lspHandler) scheduleDiagnosticsRefresh() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.refreshTimer != nil {
+		h.refreshTimer.Stop()
+	}
+	h.refreshTimer = time.AfterFunc(diagnosticsRefresh, h.refreshAllDiagnostics)
+}
+
+// refreshAllDiagnostics は解析済みの開いている文書すべての診断を通知する（再解析はしない）。
+func (h *lspHandler) refreshAllDiagnostics() {
+	h.mu.Lock()
+	var uris []string
+	for uri, st := range h.docs {
+		if st.table != nil {
+			uris = append(uris, uri)
+		}
+	}
+	h.mu.Unlock()
+	sort.Strings(uris)
+	for _, uri := range uris {
+		h.publishDiagnostics(uri)
 	}
 }
 
@@ -65,11 +145,40 @@ func (h *lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 	h.mu.Unlock()
 	switch req.Method {
 	case "initialize":
+		var p InitializeParams
+		if unmarshalParams(req, &p) && h.ws != nil {
+			h.ws.SetRoots(rootsOf(p))
+		}
 		_ = conn.Reply(ctx, req.ID, h.initializeResult())
 	case "initialized":
-		// no-op
+		go h.indexWorkspace()
 	case "shutdown":
+		h.mu.Lock()
+		if h.indexCancel != nil {
+			h.indexCancel()
+		}
+		h.mu.Unlock()
 		_ = conn.Reply(ctx, req.ID, nil)
+	case "workspace/didChangeWatchedFiles":
+		var p DidChangeWatchedFilesParams
+		if unmarshalParams(req, &p) {
+			h.ws.FilesChanged(p.Changes)
+		}
+	case "textDocument/definition":
+		var p DefinitionParams
+		if !unmarshalParams(req, &p) {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		id := req.ID
+		go func() {
+			h.waitParsed(p.TextDocument.URI, definitionWait)
+			if locs := h.definition(p); len(locs) > 0 {
+				_ = conn.Reply(context.Background(), id, locs)
+				return
+			}
+			_ = conn.Reply(context.Background(), id, nil)
+		}()
 	case "exit":
 		// サーバー終了
 	case "textDocument/didOpen":
@@ -140,7 +249,8 @@ func (h *lspHandler) initializeResult() InitializeResult {
 			CompletionProvider: &CompletionOptions{
 				TriggerCharacters: []string{"."},
 			},
-			HoverProvider: true,
+			HoverProvider:      true,
+			DefinitionProvider: true,
 			SemanticTokensProvider: &SemanticTokensOptions{
 				Legend: SemanticTokensLegend{
 					TokenTypes:     []string{"type", "variable"},
@@ -154,6 +264,7 @@ func (h *lspHandler) initializeResult() InitializeResult {
 }
 
 func (h *lspHandler) didOpen(p DidOpenTextDocumentParams) {
+	h.ws.OpenBuffer(p.TextDocument.URI)
 	h.update(p.TextDocument.URI, p.TextDocument.Text, 0)
 }
 
@@ -163,7 +274,6 @@ func (h *lspHandler) didChange(p DidChangeTextDocumentParams) {
 
 func (h *lspHandler) didClose(uri string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if st := h.docs[uri]; st != nil {
 		if st.timer != nil {
 			st.timer.Stop()
@@ -173,6 +283,9 @@ func (h *lspHandler) didClose(uri string) {
 		}
 		delete(h.docs, uri)
 	}
+	h.mu.Unlock()
+	// 索引はディスクの内容に戻す
+	h.ws.CloseBuffer(uri)
 }
 
 // update はテキストを最新にし、delay 後の再解析を予約する（予約済みの古い再解析は取り消す）。
@@ -211,13 +324,14 @@ func (h *lspHandler) reparse(uri string, gen int) {
 	parseMu.Lock()
 	table := ParseSymbolsLines(text, lines)
 	parseMu.Unlock()
+	entry := newModuleEntryForURI(uri, text, lines, table, gen)
 
 	h.mu.Lock()
 	if h.docs[uri] != st || (st.table != nil && gen <= st.tableGen) {
 		h.mu.Unlock()
 		return
 	}
-	st.table, st.tableGen = table, gen
+	st.table, st.tableGen, st.entry = table, gen, entry
 	latest := st.gen == gen
 	if latest && st.ready != nil {
 		close(st.ready)
@@ -226,6 +340,8 @@ func (h *lspHandler) reparse(uri string, gen int) {
 	hook := h.onParsed
 	h.mu.Unlock()
 
+	// 索引の公開面を未保存の編集で置き換える（索引対象外のファイルなら何もしない）
+	h.ws.PutBuffer(entry)
 	if latest {
 		h.publishDiagnostics(uri)
 	}
@@ -269,9 +385,17 @@ func (h *lspHandler) document(uri string) *Document {
 		h.mu.Unlock()
 		return nil
 	}
-	text, lines, table := st.text, st.lines, st.table
+	text, lines, table, entry := st.text, st.lines, st.table, st.entry
 	h.mu.Unlock()
-	return newDocumentWithLines(uri, text, lines, table, h.types)
+	return newDocumentFull(uri, text, lines, table, entry, h.types)
+}
+
+func (h *lspHandler) definition(p DefinitionParams) []Location {
+	doc := h.document(p.TextDocument.URI)
+	if doc == nil {
+		return nil
+	}
+	return ResolveDefinition(doc, int(p.Position.Line), int(p.Position.Character))
 }
 
 func (h *lspHandler) completion(p CompletionParams) []CompletionItem {
