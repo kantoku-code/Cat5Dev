@@ -121,6 +121,7 @@ type TypeInfo struct {
 	Doc           string
 	Base          TypeRef     // 自プロバイダで見つからないメンバーの委譲先（フォーム → MSForms.UserForm）
 	Origin        *DeclOrigin // ワークスペースの型なら宣言の場所（定義ジャンプ用）
+	Creatable     bool        // New で作れる（ワークスペースのクラス・フォーム、組み込みの Collection / Dictionary など）
 }
 
 // DeclOrigin は宣言の場所（定義ジャンプ・ホバー用）。Syms が空ならモジュールの先頭（0:0）。
@@ -139,6 +140,7 @@ const (
 	MemberKindField      // UDT のメンバー
 	MemberKindEnumMember // Enum の値
 	MemberKindEvent
+	MemberKindConst // 組み込みの独立した定数（vbCrLf など）
 )
 
 // TLBParam はメソッドの引数情報。
@@ -163,6 +165,7 @@ type MemberInfo struct {
 	Visibility Visibility  // Private メンバーは自モジュール（Me.）からだけ見える
 	Owner      TypeRef     // 定義元（継承元の表示用）
 	Origin     *DeclOrigin // ワークスペースのメンバーなら宣言（TLB / 組み込みは nil）
+	Value      string      // Enum メンバー・定数の値（表示用の VBA の式）
 }
 
 // Signature はホバー・補完の詳細表示用のシグネチャ文字列を返す。
@@ -177,7 +180,16 @@ func (m MemberInfo) Signature() string {
 			return m.Name + ret
 		}
 	case MemberKindEnumMember:
+		if m.Value != "" {
+			return m.Name + " = " + m.Value
+		}
 		return m.Name
+	case MemberKindConst:
+		s := m.Name + ret
+		if m.Value != "" {
+			s += " = " + m.Value
+		}
+		return s
 	}
 	return m.Name + "(" + formatParams(m.Params) + ")" + ret
 }

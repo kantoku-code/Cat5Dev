@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// vba_builtins.json は VBA / Scripting の組み込み型の定義。2-2 で同じ JSON に組み込み関数（functions）を追加する。
+// vba_builtins.json は VBA / Scripting / MSForms の組み込み型と、VBA の組み込み関数・定数・列挙・キーワードの定義。
 //
 //go:embed vba_builtins.json
 var builtinJSON []byte
@@ -17,6 +17,7 @@ var builtinJSON []byte
 type builtinFile struct {
 	Version   int              `json:"version"`
 	Libraries []builtinLibrary `json:"libraries"`
+	Keywords  []builtinKeyword `json:"keywords,omitempty"`
 }
 
 type builtinLibrary struct {
@@ -24,19 +25,22 @@ type builtinLibrary struct {
 	Aliases    []string        `json:"aliases,omitempty"`
 	Primitives []string        `json:"primitives,omitempty"`
 	Types      []builtinType   `json:"types"`
-	Globals    []builtinGlobal `json:"globals,omitempty"`   // 2-1: {"name":"CATIA","type":"CATIA.Application"}
-	Functions  []builtinMember `json:"functions,omitempty"` // 2-2
+	Globals    []builtinGlobal `json:"globals,omitempty"`   // Err / Debug（2-1: {"name":"CATIA","type":"CATIA.Application"}）
+	Functions  []builtinFunc   `json:"functions,omitempty"` // 組み込み関数・ステートメント
+	Constants  []builtinConst  `json:"constants,omitempty"` // 列挙に属さない定数（vbCrLf など）
 }
 
 type builtinGlobal struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+	Doc  string `json:"doc,omitempty"`
 }
 
 type builtinType struct {
 	Name          string          `json:"name"`
 	Kind          string          `json:"kind"` // class | interface | enum
 	Complete      bool            `json:"complete"`
+	Creatable     bool            `json:"creatable,omitempty"` // New で作れる
 	DefaultMember string          `json:"defaultMember,omitempty"`
 	Doc           string          `json:"doc,omitempty"`
 	Members       []builtinMember `json:"members"`
@@ -44,18 +48,46 @@ type builtinType struct {
 
 type builtinMember struct {
 	Name     string         `json:"name"`
-	Kind     string         `json:"kind"` // method | property
+	Kind     string         `json:"kind"` // method | property（class / interface）、enumMember（enum）
 	Type     string         `json:"type,omitempty"`
 	ReadOnly bool           `json:"readOnly,omitempty"`
 	Params   []builtinParam `json:"params,omitempty"`
+	Value    string         `json:"value,omitempty"` // enumMember の値（表示用の VBA の式）
 	Doc      string         `json:"doc,omitempty"`
 }
 
 type builtinParam struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Optional bool   `json:"optional,omitempty"`
-	Default  string `json:"default,omitempty"`
+	Name       string `json:"name"`
+	Type       string `json:"type,omitempty"` // 省略は Variant（表示では As を付けない）
+	Optional   bool   `json:"optional,omitempty"`
+	Default    string `json:"default,omitempty"`
+	ParamArray bool   `json:"paramArray,omitempty"`
+}
+
+// builtinFunc は組み込み関数・ステートメント 1 つ。
+type builtinFunc struct {
+	Name          string         `json:"name"`
+	Kind          string         `json:"kind"`   // function | sub | property（Date / Now など括弧なしで値を返すもの）
+	Module        string         `json:"module"` // Strings | Conversion | Math | DateTime | Information | Interaction | FileSystem
+	Type          string         `json:"type,omitempty"`
+	Params        []builtinParam `json:"params,omitempty"`
+	StringVariant bool           `json:"stringVariant,omitempty"` // Left$ のように String を返す $ 形もある
+	Doc           string         `json:"doc"`
+}
+
+// builtinConst は列挙に属さない組み込み定数。
+type builtinConst struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Doc   string `json:"doc"`
+}
+
+// builtinKeyword は VBA のキーワード 1 つ（識別子補完の末尾に出す）。
+type builtinKeyword struct {
+	Name  string `json:"name"`
+	Usage string `json:"usage"` // statement（文頭）| expression（式・文の途中）| both
+	Doc   string `json:"doc"`
 }
 
 type builtinTypeIdx struct {
@@ -64,7 +96,15 @@ type builtinTypeIdx struct {
 	byName  map[string]int
 }
 
-// BuiltinProvider は組み込みライブラリ 1 つ（VBA / Scripting）の TypeProvider。
+// GlobalInfo は暗黙のグローバル（Err / Debug）1 つ。
+type GlobalInfo struct {
+	Name string
+	Type TypeRef
+	Doc  string
+}
+
+// BuiltinProvider は組み込みライブラリ 1 つ（VBA / Scripting / MSForms）の TypeProvider。
+// 関数・定数・グローバルの列挙（FunctionProvider / GlobalLister）も提供する。
 type BuiltinProvider struct {
 	lib     string
 	aliases map[string]bool
@@ -72,11 +112,20 @@ type BuiltinProvider struct {
 	prims   map[string]string // このライブラリの primitive（小文字 → 正式名）
 	allPrim map[string]string // 全ライブラリの primitive（MemberType の修飾に使う）
 	globals map[string]TypeRef
+
+	globalList []GlobalInfo    // 名前順
+	funcs      []MemberInfo    // 名前順
+	funcIdx    map[string]int  // 小文字名 → funcs の添字
+	strVariant map[string]bool // $ 形のある関数（小文字名）
+	consts     []MemberInfo    // 名前順
+	typeList   []TypeInfo      // 名前順（primitive を含まない）
+	primList   []TypeInfo      // 名前順
 }
 
 // builtinSet は埋め込み JSON から作った全ライブラリ。
 type builtinSet struct {
-	libs map[string]*BuiltinProvider
+	libs     map[string]*BuiltinProvider
+	keywords []builtinKeyword
 }
 
 // Library は名前（大文字小文字無視）でライブラリのプロバイダを返す。なければ interface の nil。
@@ -86,6 +135,9 @@ func (s *builtinSet) Library(name string) TypeProvider {
 	}
 	return nil
 }
+
+// Keywords は VBA のキーワードを JSON の順で返す。
+func (s *builtinSet) Keywords() []builtinKeyword { return s.keywords }
 
 var (
 	embeddedOnce sync.Once
@@ -103,6 +155,8 @@ func embeddedBuiltins() *builtinSet {
 	})
 	return embeddedSet
 }
+
+var keywordUsages = map[string]bool{"statement": true, "expression": true, "both": true}
 
 func parseBuiltinSet(data []byte) (*builtinSet, error) {
 	var f builtinFile
@@ -123,6 +177,22 @@ func parseBuiltinSet(data []byte) (*builtinSet, error) {
 		}
 		s.libs[strings.ToLower(l.Name)] = p
 	}
+	seen := map[string]bool{}
+	for _, k := range f.Keywords {
+		key := strings.ToLower(k.Name)
+		switch {
+		case k.Name == "":
+			return nil, fmt.Errorf("keyword: name is empty")
+		case !keywordUsages[k.Usage]:
+			return nil, fmt.Errorf("keyword %s: unknown usage %q", k.Name, k.Usage)
+		case k.Doc == "":
+			return nil, fmt.Errorf("keyword %s: doc is empty", k.Name)
+		case seen[key]:
+			return nil, fmt.Errorf("keyword %s: duplicate", k.Name)
+		}
+		seen[key] = true
+		s.keywords = append(s.keywords, k)
+	}
 	return s, nil
 }
 
@@ -139,26 +209,53 @@ func NewBuiltinProviderFromJSON(data []byte, lib string) (*BuiltinProvider, erro
 	return p, nil
 }
 
+func toParams(bps []builtinParam) []TLBParam {
+	var out []TLBParam
+	for _, bp := range bps {
+		out = append(out, TLBParam{Name: bp.Name, Type: bp.Type, Optional: bp.Optional, Default: bp.Default, ParamArray: bp.ParamArray, Array: bp.ParamArray})
+	}
+	return out
+}
+
+func sortMembers(ms []MemberInfo) {
+	sort.SliceStable(ms, func(i, j int) bool { return strings.ToLower(ms[i].Name) < strings.ToLower(ms[j].Name) })
+}
+
 func newBuiltinProvider(l builtinLibrary, allPrim map[string]string) (*BuiltinProvider, error) {
 	if l.Name == "" {
 		return nil, fmt.Errorf("library name is empty")
 	}
 	p := &BuiltinProvider{
-		lib:     l.Name,
-		aliases: map[string]bool{strings.ToLower(l.Name): true},
-		types:   map[string]*builtinTypeIdx{},
-		prims:   map[string]string{},
-		allPrim: allPrim,
-		globals: map[string]TypeRef{},
+		lib:        l.Name,
+		aliases:    map[string]bool{strings.ToLower(l.Name): true},
+		types:      map[string]*builtinTypeIdx{},
+		prims:      map[string]string{},
+		allPrim:    allPrim,
+		globals:    map[string]TypeRef{},
+		funcIdx:    map[string]int{},
+		strVariant: map[string]bool{},
+	}
+	// 非修飾で参照できる名前（関数・定数・Enum メンバー）の重複検査
+	unqualified := map[string]string{}
+	claim := func(name, what string) error {
+		key := strings.ToLower(name)
+		if prev, dup := unqualified[key]; dup {
+			return fmt.Errorf("%s %s: duplicate name (already %s)", what, name, prev)
+		}
+		unqualified[key] = what
+		return nil
 	}
 	for _, a := range l.Aliases {
 		p.aliases[strings.ToLower(a)] = true
 	}
 	for _, name := range l.Primitives {
 		p.prims[strings.ToLower(name)] = name
+		p.primList = append(p.primList, TypeInfo{Ref: TypeRef{Lib: l.Name, Name: name}, Kind: TypeKindPrimitive})
 	}
 	for _, g := range l.Globals {
-		p.globals[strings.ToLower(g.Name)] = ParseTypeName(g.Type)
+		t := ParseTypeName(g.Type)
+		p.globals[strings.ToLower(g.Name)] = t
+		p.globalList = append(p.globalList, GlobalInfo{Name: g.Name, Type: t, Doc: g.Doc})
 	}
 	for _, bt := range l.Types {
 		kind := TypeKindClass
@@ -176,16 +273,23 @@ func newBuiltinProvider(l builtinLibrary, allPrim map[string]string) (*BuiltinPr
 				Ref:           TypeRef{Lib: l.Name, Name: bt.Name},
 				Kind:          kind,
 				Complete:      bt.Complete,
+				Creatable:     bt.Creatable,
 				DefaultMember: bt.DefaultMember,
 				Doc:           bt.Doc,
 			},
 			byName: map[string]int{},
 		}
 		for _, bm := range bt.Members {
-			mk := MemberKindMethod
-			switch bm.Kind {
-			case "method":
-			case "property":
+			var mk MemberKind
+			switch {
+			case kind == TypeKindEnum && bm.Kind == "enumMember":
+				mk = MemberKindEnumMember
+				if err := claim(bm.Name, "enum member"); err != nil {
+					return nil, err
+				}
+			case kind != TypeKindEnum && bm.Kind == "method":
+				mk = MemberKindMethod
+			case kind != TypeKindEnum && bm.Kind == "property":
 				mk = MemberKindProperty
 			default:
 				return nil, fmt.Errorf("%s.%s: unknown member kind %q", bt.Name, bm.Name, bm.Kind)
@@ -198,15 +302,15 @@ func newBuiltinProvider(l builtinLibrary, allPrim map[string]string) (*BuiltinPr
 				Doc:        bm.Doc,
 				Visibility: VisPublic,
 				Owner:      idx.info.Ref,
+				Params:     toParams(bm.Params),
+				Value:      bm.Value,
 			}
-			for _, bp := range bm.Params {
-				mi.Params = append(mi.Params, TLBParam{Name: bp.Name, Type: bp.Type, Optional: bp.Optional, Default: bp.Default})
+			if mk == MemberKindEnumMember {
+				mi.ReturnType, mi.ReadOnly = "Long", true
 			}
 			idx.members = append(idx.members, mi)
 		}
-		sort.SliceStable(idx.members, func(i, j int) bool {
-			return strings.ToLower(idx.members[i].Name) < strings.ToLower(idx.members[j].Name)
-		})
+		sortMembers(idx.members)
 		for i, m := range idx.members {
 			key := strings.ToLower(m.Name)
 			if _, dup := idx.byName[key]; dup {
@@ -215,7 +319,58 @@ func newBuiltinProvider(l builtinLibrary, allPrim map[string]string) (*BuiltinPr
 			idx.byName[key] = i
 		}
 		p.types[strings.ToLower(bt.Name)] = idx
+		p.typeList = append(p.typeList, idx.info)
 	}
+	for _, bf := range l.Functions {
+		mi := MemberInfo{
+			Name: bf.Name, ReturnType: bf.Type, Kind: MemberKindMethod, Params: toParams(bf.Params),
+			Doc: bf.Doc, Visibility: VisPublic, Owner: TypeRef{Lib: l.Name, Name: bf.Module},
+		}
+		switch bf.Kind {
+		case "function":
+		case "property":
+			mi.Kind, mi.ReadOnly = MemberKindProperty, true
+		case "sub":
+			if bf.Type != "" {
+				return nil, fmt.Errorf("function %s: sub has a type", bf.Name)
+			}
+		default:
+			return nil, fmt.Errorf("function %s: unknown kind %q", bf.Name, bf.Kind)
+		}
+		if bf.Kind != "sub" && bf.Type == "" {
+			return nil, fmt.Errorf("function %s: type is empty", bf.Name)
+		}
+		if bf.Doc == "" {
+			return nil, fmt.Errorf("function %s: doc is empty", bf.Name)
+		}
+		if err := claim(bf.Name, "function"); err != nil {
+			return nil, err
+		}
+		if bf.StringVariant {
+			p.strVariant[strings.ToLower(bf.Name)] = true
+		}
+		p.funcs = append(p.funcs, mi)
+	}
+	sortMembers(p.funcs)
+	for i, f := range p.funcs {
+		p.funcIdx[strings.ToLower(f.Name)] = i
+	}
+	for _, bc := range l.Constants {
+		if bc.Doc == "" {
+			return nil, fmt.Errorf("constant %s: doc is empty", bc.Name)
+		}
+		if err := claim(bc.Name, "constant"); err != nil {
+			return nil, err
+		}
+		p.consts = append(p.consts, MemberInfo{
+			Name: bc.Name, ReturnType: bc.Type, Kind: MemberKindConst, ReadOnly: true, Value: bc.Value,
+			Doc: bc.Doc, Visibility: VisPublic, Owner: TypeRef{Lib: l.Name, Name: "Constants"},
+		})
+	}
+	sortMembers(p.consts)
+	sort.Slice(p.typeList, func(i, j int) bool { return p.typeList[i].Ref.Name < p.typeList[j].Ref.Name })
+	sort.Slice(p.primList, func(i, j int) bool { return p.primList[i].Ref.Name < p.primList[j].Ref.Name })
+	sort.Slice(p.globalList, func(i, j int) bool { return p.globalList[i].Name < p.globalList[j].Name })
 	return p, nil
 }
 
@@ -277,18 +432,47 @@ func (p *BuiltinProvider) qualify(typ string) (TypeRef, bool) {
 	return ref, true
 }
 
-// Global は暗黙のグローバル（2-0 では空）を返す。
+// Global は暗黙のグローバル（Err / Debug）の型を返す。
 func (p *BuiltinProvider) Global(name string) (TypeRef, bool) {
 	t, ok := p.globals[strings.ToLower(name)]
 	return t, ok
 }
 
-// Types は型の一覧を返す（2-2 の型補完用）。
-func (p *BuiltinProvider) Types() []TypeInfo {
-	out := make([]TypeInfo, 0, len(p.types))
-	for _, t := range p.types {
-		out = append(out, t.info)
+// Globals は暗黙のグローバルを名前順に返す。
+func (p *BuiltinProvider) Globals() []GlobalInfo { return p.globalList }
+
+// Types は型の一覧（primitive を含まない）を名前順に返す。
+func (p *BuiltinProvider) Types() []TypeInfo { return p.typeList }
+
+// Primitives は primitive 型（Long / String など）を名前順に返す（型補完用）。
+func (p *BuiltinProvider) Primitives() []TypeInfo { return p.primList }
+
+// Functions は組み込み関数・ステートメントを名前順に返す。
+func (p *BuiltinProvider) Functions() []MemberInfo { return p.funcs }
+
+// Function は名前（大文字小文字無視）で組み込み関数を引く。"Left$" のような $ 形は、$ 形のある関数だけ引け、
+// 名前に $ を付けて戻り値を String にしたものを返す。
+func (p *BuiltinProvider) Function(name string) (MemberInfo, bool) {
+	key := strings.ToLower(name)
+	str := false
+	if strings.HasSuffix(key, "$") {
+		key = strings.TrimSuffix(key, "$")
+		if !p.strVariant[key] {
+			return MemberInfo{}, false
+		}
+		str = true
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ref.Name < out[j].Ref.Name })
-	return out
+	i, ok := p.funcIdx[key]
+	if !ok {
+		return MemberInfo{}, false
+	}
+	m := p.funcs[i]
+	if str {
+		m.Name += "$"
+		m.ReturnType = "String"
+	}
+	return m, true
 }
+
+// Constants は列挙に属さない組み込み定数を名前順に返す。
+func (p *BuiltinProvider) Constants() []MemberInfo { return p.consts }

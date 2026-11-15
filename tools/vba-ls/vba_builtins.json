@@ -1,28 +1,372 @@
 {
-  "version": 1,
+  "version": 2,
   "libraries": [
     {
       "name": "VBA",
       "primitives": ["Boolean", "Byte", "Integer", "Long", "LongLong", "LongPtr", "Single", "Double", "Currency", "Decimal", "Date", "String", "Variant", "Object"],
       "types": [
         {
-          "name": "Collection", "kind": "class", "complete": true, "defaultMember": "Item",
+          "name": "Collection", "kind": "class", "complete": true, "creatable": true, "defaultMember": "Item",
           "members": [
             {"name": "Add", "kind": "method", "params": [{"name": "Item", "type": "Variant"}, {"name": "Key", "type": "Variant", "optional": true}, {"name": "Before", "type": "Variant", "optional": true}, {"name": "After", "type": "Variant", "optional": true}]},
             {"name": "Count", "kind": "property", "type": "Long", "readOnly": true},
             {"name": "Item", "kind": "method", "type": "Variant", "params": [{"name": "Index", "type": "Variant"}]},
             {"name": "Remove", "kind": "method", "params": [{"name": "Index", "type": "Variant"}]}
           ]
+        },
+        {
+          "name": "ErrObject", "kind": "class", "complete": true, "doc": "実行時エラーの情報（Err オブジェクト）",
+          "members": [
+            {"name": "Number", "kind": "property", "type": "Long", "doc": "エラー番号（0 ならエラーなし）"},
+            {"name": "Description", "kind": "property", "type": "String", "doc": "エラーの説明"},
+            {"name": "Source", "kind": "property", "type": "String", "doc": "エラーの発生元の名前"},
+            {"name": "HelpFile", "kind": "property", "type": "String", "doc": "ヘルプファイルのパス"},
+            {"name": "HelpContext", "kind": "property", "type": "Long", "doc": "ヘルプのコンテキスト ID"},
+            {"name": "LastDllError", "kind": "property", "type": "Long", "readOnly": true, "doc": "直前の DLL 呼び出しのシステムエラーコード"},
+            {"name": "Clear", "kind": "method", "doc": "Err オブジェクトのプロパティをすべて消去する"},
+            {"name": "Raise", "kind": "method", "params": [{"name": "Number", "type": "Long"}, {"name": "Source", "optional": true}, {"name": "Description", "optional": true}, {"name": "HelpFile", "optional": true}, {"name": "HelpContext", "optional": true}], "doc": "実行時エラーを発生させる"}
+          ]
+        },
+        {
+          "name": "Debug", "kind": "class", "complete": true, "doc": "イミディエイトウィンドウへの出力（Debug オブジェクト）",
+          "members": [
+            {"name": "Print", "kind": "method", "params": [{"name": "OutputList", "paramArray": true}], "doc": "イミディエイトウィンドウに出力する（; で続けて、, で次のタブ位置に出力）"},
+            {"name": "Assert", "kind": "method", "params": [{"name": "Expression", "type": "Boolean"}], "doc": "式が False のとき実行を中断する"}
+          ]
+        },
+        {
+          "name": "VbMsgBoxStyle", "kind": "enum", "complete": true, "doc": "MsgBox の Buttons に指定するボタン・アイコン・既定ボタン・モーダルの組み合わせ",
+          "members": [
+            {"name": "vbOKOnly", "kind": "enumMember", "value": "0", "doc": "OK ボタンのみ"},
+            {"name": "vbOKCancel", "kind": "enumMember", "value": "1", "doc": "OK とキャンセル"},
+            {"name": "vbAbortRetryIgnore", "kind": "enumMember", "value": "2", "doc": "中止・再試行・無視"},
+            {"name": "vbYesNoCancel", "kind": "enumMember", "value": "3", "doc": "はい・いいえ・キャンセル"},
+            {"name": "vbYesNo", "kind": "enumMember", "value": "4", "doc": "はい・いいえ"},
+            {"name": "vbRetryCancel", "kind": "enumMember", "value": "5", "doc": "再試行・キャンセル"},
+            {"name": "vbCritical", "kind": "enumMember", "value": "16", "doc": "警告（×）アイコン"},
+            {"name": "vbQuestion", "kind": "enumMember", "value": "32", "doc": "問い合わせ（?）アイコン"},
+            {"name": "vbExclamation", "kind": "enumMember", "value": "48", "doc": "注意（!）アイコン"},
+            {"name": "vbInformation", "kind": "enumMember", "value": "64", "doc": "情報（i）アイコン"},
+            {"name": "vbDefaultButton1", "kind": "enumMember", "value": "0", "doc": "第 1 ボタンを既定にする"},
+            {"name": "vbDefaultButton2", "kind": "enumMember", "value": "256", "doc": "第 2 ボタンを既定にする"},
+            {"name": "vbDefaultButton3", "kind": "enumMember", "value": "512", "doc": "第 3 ボタンを既定にする"},
+            {"name": "vbApplicationModal", "kind": "enumMember", "value": "0", "doc": "アプリケーションモーダル"},
+            {"name": "vbSystemModal", "kind": "enumMember", "value": "4096", "doc": "システムモーダル"},
+            {"name": "vbMsgBoxSetForeground", "kind": "enumMember", "value": "65536", "doc": "最前面のウィンドウにする"}
+          ]
+        },
+        {
+          "name": "VbMsgBoxResult", "kind": "enum", "complete": true, "doc": "MsgBox で押されたボタン",
+          "members": [
+            {"name": "vbOK", "kind": "enumMember", "value": "1", "doc": "OK"},
+            {"name": "vbCancel", "kind": "enumMember", "value": "2", "doc": "キャンセル"},
+            {"name": "vbAbort", "kind": "enumMember", "value": "3", "doc": "中止"},
+            {"name": "vbRetry", "kind": "enumMember", "value": "4", "doc": "再試行"},
+            {"name": "vbIgnore", "kind": "enumMember", "value": "5", "doc": "無視"},
+            {"name": "vbYes", "kind": "enumMember", "value": "6", "doc": "はい"},
+            {"name": "vbNo", "kind": "enumMember", "value": "7", "doc": "いいえ"}
+          ]
+        },
+        {
+          "name": "VbCompareMethod", "kind": "enum", "complete": true, "doc": "文字列の比較方法",
+          "members": [
+            {"name": "vbBinaryCompare", "kind": "enumMember", "value": "0", "doc": "バイナリ比較（大文字・小文字を区別する）"},
+            {"name": "vbTextCompare", "kind": "enumMember", "value": "1", "doc": "テキスト比較（大文字・小文字を区別しない）"},
+            {"name": "vbDatabaseCompare", "kind": "enumMember", "value": "2", "doc": "データベースの設定に従う（Microsoft Access のみ）"}
+          ]
+        },
+        {
+          "name": "VbVarType", "kind": "enum", "complete": true, "doc": "VarType が返す内部の型",
+          "members": [
+            {"name": "vbEmpty", "kind": "enumMember", "value": "0", "doc": "Empty（未初期化）"},
+            {"name": "vbNull", "kind": "enumMember", "value": "1", "doc": "Null"},
+            {"name": "vbInteger", "kind": "enumMember", "value": "2", "doc": "Integer"},
+            {"name": "vbLong", "kind": "enumMember", "value": "3", "doc": "Long"},
+            {"name": "vbSingle", "kind": "enumMember", "value": "4", "doc": "Single"},
+            {"name": "vbDouble", "kind": "enumMember", "value": "5", "doc": "Double"},
+            {"name": "vbCurrency", "kind": "enumMember", "value": "6", "doc": "Currency"},
+            {"name": "vbDate", "kind": "enumMember", "value": "7", "doc": "Date"},
+            {"name": "vbString", "kind": "enumMember", "value": "8", "doc": "String"},
+            {"name": "vbObject", "kind": "enumMember", "value": "9", "doc": "Object"},
+            {"name": "vbError", "kind": "enumMember", "value": "10", "doc": "エラー値"},
+            {"name": "vbBoolean", "kind": "enumMember", "value": "11", "doc": "Boolean"},
+            {"name": "vbVariant", "kind": "enumMember", "value": "12", "doc": "Variant（Variant の配列でだけ使う）"},
+            {"name": "vbDataObject", "kind": "enumMember", "value": "13", "doc": "データアクセスオブジェクト"},
+            {"name": "vbDecimal", "kind": "enumMember", "value": "14", "doc": "Decimal"},
+            {"name": "vbByte", "kind": "enumMember", "value": "17", "doc": "Byte"},
+            {"name": "vbLongLong", "kind": "enumMember", "value": "20", "doc": "LongLong（64 ビット版のみ）"},
+            {"name": "vbUserDefinedType", "kind": "enumMember", "value": "36", "doc": "ユーザー定義型を格納した Variant"},
+            {"name": "vbArray", "kind": "enumMember", "value": "8192", "doc": "配列（要素の型の値に加算される）"}
+          ]
+        },
+        {
+          "name": "VbStrConv", "kind": "enum", "complete": true, "doc": "StrConv の変換の種類",
+          "members": [
+            {"name": "vbUpperCase", "kind": "enumMember", "value": "1", "doc": "大文字にする"},
+            {"name": "vbLowerCase", "kind": "enumMember", "value": "2", "doc": "小文字にする"},
+            {"name": "vbProperCase", "kind": "enumMember", "value": "3", "doc": "各単語の先頭を大文字にする"},
+            {"name": "vbWide", "kind": "enumMember", "value": "4", "doc": "半角を全角にする"},
+            {"name": "vbNarrow", "kind": "enumMember", "value": "8", "doc": "全角を半角にする"},
+            {"name": "vbKatakana", "kind": "enumMember", "value": "16", "doc": "ひらがなをカタカナにする"},
+            {"name": "vbHiragana", "kind": "enumMember", "value": "32", "doc": "カタカナをひらがなにする"},
+            {"name": "vbUnicode", "kind": "enumMember", "value": "64", "doc": "システムの既定のコードページから Unicode にする"},
+            {"name": "vbFromUnicode", "kind": "enumMember", "value": "128", "doc": "Unicode からシステムの既定のコードページにする"}
+          ]
+        },
+        {
+          "name": "VbTriState", "kind": "enum", "complete": true, "doc": "True / False / 既定値の 3 値",
+          "members": [
+            {"name": "vbTrue", "kind": "enumMember", "value": "-1", "doc": "True"},
+            {"name": "vbFalse", "kind": "enumMember", "value": "0", "doc": "False"},
+            {"name": "vbUseDefault", "kind": "enumMember", "value": "-2", "doc": "地域の設定に従う"}
+          ]
+        },
+        {
+          "name": "VbAppWinStyle", "kind": "enum", "complete": true, "doc": "Shell のウィンドウの表示方法",
+          "members": [
+            {"name": "vbHide", "kind": "enumMember", "value": "0", "doc": "非表示（フォーカスあり）"},
+            {"name": "vbNormalFocus", "kind": "enumMember", "value": "1", "doc": "通常の大きさ・フォーカスあり"},
+            {"name": "vbMinimizedFocus", "kind": "enumMember", "value": "2", "doc": "最小化・フォーカスあり"},
+            {"name": "vbMaximizedFocus", "kind": "enumMember", "value": "3", "doc": "最大化・フォーカスあり"},
+            {"name": "vbNormalNoFocus", "kind": "enumMember", "value": "4", "doc": "通常の大きさ・フォーカスなし"},
+            {"name": "vbMinimizedNoFocus", "kind": "enumMember", "value": "6", "doc": "最小化・フォーカスなし"}
+          ]
+        },
+        {
+          "name": "VbFileAttribute", "kind": "enum", "complete": true, "doc": "ファイル・フォルダの属性",
+          "members": [
+            {"name": "vbNormal", "kind": "enumMember", "value": "0", "doc": "標準"},
+            {"name": "vbReadOnly", "kind": "enumMember", "value": "1", "doc": "読み取り専用"},
+            {"name": "vbHidden", "kind": "enumMember", "value": "2", "doc": "隠しファイル"},
+            {"name": "vbSystem", "kind": "enumMember", "value": "4", "doc": "システムファイル"},
+            {"name": "vbVolume", "kind": "enumMember", "value": "8", "doc": "ボリュームラベル"},
+            {"name": "vbDirectory", "kind": "enumMember", "value": "16", "doc": "フォルダ"},
+            {"name": "vbArchive", "kind": "enumMember", "value": "32", "doc": "アーカイブ"}
+          ]
+        },
+        {
+          "name": "VbDayOfWeek", "kind": "enum", "complete": true, "doc": "週の最初の曜日",
+          "members": [
+            {"name": "vbUseSystemDayOfWeek", "kind": "enumMember", "value": "0", "doc": "システムの設定に従う"},
+            {"name": "vbSunday", "kind": "enumMember", "value": "1", "doc": "日曜日"},
+            {"name": "vbMonday", "kind": "enumMember", "value": "2", "doc": "月曜日"},
+            {"name": "vbTuesday", "kind": "enumMember", "value": "3", "doc": "火曜日"},
+            {"name": "vbWednesday", "kind": "enumMember", "value": "4", "doc": "水曜日"},
+            {"name": "vbThursday", "kind": "enumMember", "value": "5", "doc": "木曜日"},
+            {"name": "vbFriday", "kind": "enumMember", "value": "6", "doc": "金曜日"},
+            {"name": "vbSaturday", "kind": "enumMember", "value": "7", "doc": "土曜日"}
+          ]
+        },
+        {
+          "name": "VbFirstWeekOfYear", "kind": "enum", "complete": true, "doc": "年の最初の週の決め方",
+          "members": [
+            {"name": "vbUseSystem", "kind": "enumMember", "value": "0", "doc": "システムの設定に従う"},
+            {"name": "vbFirstJan1", "kind": "enumMember", "value": "1", "doc": "1 月 1 日を含む週"},
+            {"name": "vbFirstFourDays", "kind": "enumMember", "value": "2", "doc": "新年の日を 4 日以上含む最初の週"},
+            {"name": "vbFirstFullWeek", "kind": "enumMember", "value": "3", "doc": "最初の完全な週"}
+          ]
+        },
+        {
+          "name": "VbDateTimeFormat", "kind": "enum", "complete": true, "doc": "FormatDateTime の書式",
+          "members": [
+            {"name": "vbGeneralDate", "kind": "enumMember", "value": "0", "doc": "日付と時刻（日付のみ・時刻のみの値はその部分だけ）"},
+            {"name": "vbLongDate", "kind": "enumMember", "value": "1", "doc": "長い日付形式"},
+            {"name": "vbShortDate", "kind": "enumMember", "value": "2", "doc": "短い日付形式"},
+            {"name": "vbLongTime", "kind": "enumMember", "value": "3", "doc": "長い時刻形式"},
+            {"name": "vbShortTime", "kind": "enumMember", "value": "4", "doc": "24 時間制の時:分"}
+          ]
+        },
+        {
+          "name": "VbCallType", "kind": "enum", "complete": true, "doc": "CallByName の呼び出しの種類",
+          "members": [
+            {"name": "vbMethod", "kind": "enumMember", "value": "1", "doc": "メソッドを呼び出す"},
+            {"name": "vbGet", "kind": "enumMember", "value": "2", "doc": "プロパティの値を取得する"},
+            {"name": "vbLet", "kind": "enumMember", "value": "4", "doc": "プロパティに値を設定する"},
+            {"name": "vbSet", "kind": "enumMember", "value": "8", "doc": "プロパティにオブジェクト参照を設定する"}
+          ]
+        },
+        {
+          "name": "ColorConstants", "kind": "enum", "complete": true, "doc": "色の定数",
+          "members": [
+            {"name": "vbBlack", "kind": "enumMember", "value": "&H0", "doc": "黒"},
+            {"name": "vbRed", "kind": "enumMember", "value": "&HFF", "doc": "赤"},
+            {"name": "vbGreen", "kind": "enumMember", "value": "&HFF00", "doc": "緑"},
+            {"name": "vbYellow", "kind": "enumMember", "value": "&HFFFF", "doc": "黄"},
+            {"name": "vbBlue", "kind": "enumMember", "value": "&HFF0000", "doc": "青"},
+            {"name": "vbMagenta", "kind": "enumMember", "value": "&HFF00FF", "doc": "マゼンタ"},
+            {"name": "vbCyan", "kind": "enumMember", "value": "&HFFFF00", "doc": "シアン"},
+            {"name": "vbWhite", "kind": "enumMember", "value": "&HFFFFFF", "doc": "白"}
+          ]
+        },
+        {
+          "name": "KeyCodeConstants", "kind": "enum", "complete": true, "doc": "キーコード（抜粋）",
+          "members": [
+            {"name": "vbKeyBack", "kind": "enumMember", "value": "8", "doc": "BackSpace キー"},
+            {"name": "vbKeyTab", "kind": "enumMember", "value": "9", "doc": "Tab キー"},
+            {"name": "vbKeyReturn", "kind": "enumMember", "value": "13", "doc": "Enter キー"},
+            {"name": "vbKeyEscape", "kind": "enumMember", "value": "27", "doc": "Esc キー"},
+            {"name": "vbKeySpace", "kind": "enumMember", "value": "32", "doc": "Space キー"},
+            {"name": "vbKeyPageUp", "kind": "enumMember", "value": "33", "doc": "PageUp キー"},
+            {"name": "vbKeyPageDown", "kind": "enumMember", "value": "34", "doc": "PageDown キー"},
+            {"name": "vbKeyEnd", "kind": "enumMember", "value": "35", "doc": "End キー"},
+            {"name": "vbKeyHome", "kind": "enumMember", "value": "36", "doc": "Home キー"},
+            {"name": "vbKeyLeft", "kind": "enumMember", "value": "37", "doc": "← キー"},
+            {"name": "vbKeyUp", "kind": "enumMember", "value": "38", "doc": "↑ キー"},
+            {"name": "vbKeyRight", "kind": "enumMember", "value": "39", "doc": "→ キー"},
+            {"name": "vbKeyDown", "kind": "enumMember", "value": "40", "doc": "↓ キー"},
+            {"name": "vbKeyDelete", "kind": "enumMember", "value": "46", "doc": "Delete キー"},
+            {"name": "vbKeyF1", "kind": "enumMember", "value": "112", "doc": "F1 キー"}
+          ]
         }
       ],
-      "globals": [],
-      "functions": []
+      "globals": [
+        {"name": "Err", "type": "VBA.ErrObject", "doc": "実行時エラーの情報"},
+        {"name": "Debug", "type": "VBA.Debug", "doc": "イミディエイトウィンドウへの出力"}
+      ],
+      "functions": [
+        {"name": "Asc", "kind": "function", "module": "Strings", "type": "Integer", "params": [{"name": "String", "type": "String"}], "doc": "文字列の先頭文字の文字コードを返す"},
+        {"name": "AscW", "kind": "function", "module": "Strings", "type": "Integer", "params": [{"name": "String", "type": "String"}], "doc": "文字列の先頭文字の Unicode（UTF-16）コードを返す"},
+        {"name": "Chr", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "CharCode", "type": "Long"}], "stringVariant": true, "doc": "文字コードに対応する文字を返す（Chr$ は String を返す）"},
+        {"name": "ChrW", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "CharCode", "type": "Long"}], "stringVariant": true, "doc": "Unicode コードに対応する文字を返す（ChrW$ は String を返す）"},
+        {"name": "Format", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "Expression"}, {"name": "Format", "optional": true}, {"name": "FirstDayOfWeek", "type": "VbDayOfWeek", "optional": true, "default": "vbSunday"}, {"name": "FirstWeekOfYear", "type": "VbFirstWeekOfYear", "optional": true, "default": "vbFirstJan1"}], "stringVariant": true, "doc": "書式指定に従って値を文字列に整形する（Format$ は String を返す）"},
+        {"name": "FormatNumber", "kind": "function", "module": "Strings", "type": "String", "params": [{"name": "Expression"}, {"name": "NumDigitsAfterDecimal", "type": "Long", "optional": true, "default": "-1"}, {"name": "IncludeLeadingDigit", "type": "VbTriState", "optional": true, "default": "vbUseDefault"}, {"name": "UseParensForNegativeNumbers", "type": "VbTriState", "optional": true, "default": "vbUseDefault"}, {"name": "GroupDigits", "type": "VbTriState", "optional": true, "default": "vbUseDefault"}], "doc": "小数部の桁数・桁区切りなどを指定して数値を文字列に整形する"},
+        {"name": "FormatDateTime", "kind": "function", "module": "Strings", "type": "String", "params": [{"name": "Expression"}, {"name": "NamedFormat", "type": "VbDateTimeFormat", "optional": true, "default": "vbGeneralDate"}], "doc": "日付・時刻を名前付きの書式で文字列にする"},
+        {"name": "InStr", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "Start", "optional": true}, {"name": "String1"}, {"name": "String2"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "String1 の中で String2 が最初に現れる位置を返す（見つからなければ 0）。Start を省略すると最初の引数が String1 になる"},
+        {"name": "InStrRev", "kind": "function", "module": "Strings", "type": "Long", "params": [{"name": "StringCheck", "type": "String"}, {"name": "StringMatch", "type": "String"}, {"name": "Start", "type": "Long", "optional": true, "default": "-1"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "文字列の末尾側から部分文字列を探し、その位置を返す（見つからなければ 0）"},
+        {"name": "Join", "kind": "function", "module": "Strings", "type": "String", "params": [{"name": "SourceArray"}, {"name": "Delimiter", "optional": true}], "doc": "配列の要素を区切り文字（省略時は空白）で連結した文字列を返す"},
+        {"name": "LCase", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}], "stringVariant": true, "doc": "小文字に変換した文字列を返す（LCase$ は String を返す）"},
+        {"name": "Left", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}, {"name": "Length", "type": "Long"}], "stringVariant": true, "doc": "文字列の左端から指定した文字数を取り出す（Left$ は String を返す）"},
+        {"name": "Len", "kind": "function", "module": "Strings", "type": "Long", "params": [{"name": "Expression"}], "doc": "文字列の文字数、または変数の格納に必要なバイト数を返す"},
+        {"name": "LTrim", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}], "stringVariant": true, "doc": "先頭の空白を除いた文字列を返す（LTrim$ は String を返す）"},
+        {"name": "Mid", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}, {"name": "Start", "type": "Long"}, {"name": "Length", "optional": true}], "stringVariant": true, "doc": "文字列の指定位置から指定した文字数を取り出す（Length 省略時は末尾まで。Mid$ は String を返す）"},
+        {"name": "Replace", "kind": "function", "module": "Strings", "type": "String", "params": [{"name": "Expression", "type": "String"}, {"name": "Find", "type": "String"}, {"name": "Replace", "type": "String"}, {"name": "Start", "type": "Long", "optional": true, "default": "1"}, {"name": "Count", "type": "Long", "optional": true, "default": "-1"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "部分文字列を別の文字列に置換した文字列を返す"},
+        {"name": "Right", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}, {"name": "Length", "type": "Long"}], "stringVariant": true, "doc": "文字列の右端から指定した文字数を取り出す（Right$ は String を返す）"},
+        {"name": "RTrim", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}], "stringVariant": true, "doc": "末尾の空白を除いた文字列を返す（RTrim$ は String を返す）"},
+        {"name": "Space", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "Number", "type": "Long"}], "stringVariant": true, "doc": "指定した数の空白からなる文字列を返す（Space$ は String を返す）"},
+        {"name": "Split", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "Expression", "type": "String"}, {"name": "Delimiter", "optional": true, "default": "\" \""}, {"name": "Limit", "type": "Long", "optional": true, "default": "-1"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "区切り文字で分割した文字列の配列（0 始まり）を返す"},
+        {"name": "StrComp", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String1"}, {"name": "String2"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "2 つの文字列を比較し、-1 / 0 / 1（どちらかが Null なら Null）を返す"},
+        {"name": "StrConv", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}, {"name": "Conversion", "type": "VbStrConv"}, {"name": "LocaleID", "type": "Long", "optional": true}], "doc": "大文字・小文字・全角・半角・ひらがな・カタカナ・Unicode などに変換した文字列を返す"},
+        {"name": "String", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "Number", "type": "Long"}, {"name": "Character"}], "stringVariant": true, "doc": "同じ文字を指定した数だけ並べた文字列を返す（String$ は String を返す）"},
+        {"name": "StrReverse", "kind": "function", "module": "Strings", "type": "String", "params": [{"name": "Expression", "type": "String"}], "doc": "文字の並びを逆にした文字列を返す"},
+        {"name": "Trim", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}], "stringVariant": true, "doc": "前後の空白を除いた文字列を返す（Trim$ は String を返す）"},
+        {"name": "UCase", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "String"}], "stringVariant": true, "doc": "大文字に変換した文字列を返す（UCase$ は String を返す）"},
+        {"name": "Filter", "kind": "function", "module": "Strings", "type": "Variant", "params": [{"name": "SourceArray"}, {"name": "Match", "type": "String"}, {"name": "Include", "type": "Boolean", "optional": true, "default": "True"}, {"name": "Compare", "type": "VbCompareMethod", "optional": true, "default": "vbBinaryCompare"}], "doc": "文字列の配列から、Match を含む（Include が False なら含まない）要素だけの配列（0 始まり）を返す"},
+        {"name": "CBool", "kind": "function", "module": "Conversion", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "式を Boolean に変換する"},
+        {"name": "CByte", "kind": "function", "module": "Conversion", "type": "Byte", "params": [{"name": "Expression"}], "doc": "式を Byte に変換する"},
+        {"name": "CCur", "kind": "function", "module": "Conversion", "type": "Currency", "params": [{"name": "Expression"}], "doc": "式を Currency に変換する"},
+        {"name": "CDate", "kind": "function", "module": "Conversion", "type": "Date", "params": [{"name": "Expression"}], "doc": "式を Date に変換する"},
+        {"name": "CDbl", "kind": "function", "module": "Conversion", "type": "Double", "params": [{"name": "Expression"}], "doc": "式を Double に変換する"},
+        {"name": "CDec", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Expression"}], "doc": "式を Decimal（Variant の内部型）に変換する"},
+        {"name": "CInt", "kind": "function", "module": "Conversion", "type": "Integer", "params": [{"name": "Expression"}], "doc": "式を Integer に変換する（小数部は偶数丸め）"},
+        {"name": "CLng", "kind": "function", "module": "Conversion", "type": "Long", "params": [{"name": "Expression"}], "doc": "式を Long に変換する（小数部は偶数丸め）"},
+        {"name": "CLngLng", "kind": "function", "module": "Conversion", "type": "LongLong", "params": [{"name": "Expression"}], "doc": "式を LongLong に変換する（64 ビット版の VBA でのみ有効）"},
+        {"name": "CLngPtr", "kind": "function", "module": "Conversion", "type": "LongPtr", "params": [{"name": "Expression"}], "doc": "式を LongPtr に変換する"},
+        {"name": "CSng", "kind": "function", "module": "Conversion", "type": "Single", "params": [{"name": "Expression"}], "doc": "式を Single に変換する"},
+        {"name": "CStr", "kind": "function", "module": "Conversion", "type": "String", "params": [{"name": "Expression"}], "doc": "式を String に変換する"},
+        {"name": "CVar", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Expression"}], "doc": "式を Variant に変換する"},
+        {"name": "CVErr", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Expression"}], "doc": "指定したエラー番号のエラー値（Variant の内部型 Error）を返す"},
+        {"name": "Val", "kind": "function", "module": "Conversion", "type": "Double", "params": [{"name": "String", "type": "String"}], "doc": "文字列の先頭にある数値部分を数値にして返す"},
+        {"name": "Str", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Number"}], "stringVariant": true, "doc": "数値を文字列にする（正の数は先頭に空白が付く。Str$ は String を返す）"},
+        {"name": "Hex", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Number"}], "stringVariant": true, "doc": "数値を 16 進表記の文字列にする（Hex$ は String を返す）"},
+        {"name": "Oct", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Number"}], "stringVariant": true, "doc": "数値を 8 進表記の文字列にする（Oct$ は String を返す）"},
+        {"name": "Fix", "kind": "function", "module": "Conversion", "type": "Variant", "params": [{"name": "Number"}], "doc": "数値の小数部を切り捨てる（0 の方向。-8.4 は -8）"},
+        {"name": "Int", "kind": "function", "module": "Math", "type": "Variant", "params": [{"name": "Number"}], "doc": "数値の小数部を切り捨てる（負の無限大の方向。-8.4 は -9）"},
+        {"name": "Abs", "kind": "function", "module": "Math", "type": "Variant", "params": [{"name": "Number"}], "doc": "絶対値を返す"},
+        {"name": "Atn", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "逆正接（ラジアン）を返す"},
+        {"name": "Cos", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "余弦を返す（引数はラジアン）"},
+        {"name": "Exp", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "e（自然対数の底）のべき乗を返す"},
+        {"name": "Log", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "自然対数を返す"},
+        {"name": "Rnd", "kind": "function", "module": "Math", "type": "Single", "params": [{"name": "Number", "optional": true}], "doc": "0 以上 1 未満の乱数を返す"},
+        {"name": "Round", "kind": "function", "module": "Math", "type": "Variant", "params": [{"name": "Number"}, {"name": "NumDigitsAfterDecimal", "type": "Long", "optional": true}], "doc": "指定した小数部の桁数に丸める（偶数丸め。桁数を省略すると整数）"},
+        {"name": "Sgn", "kind": "function", "module": "Math", "type": "Variant", "params": [{"name": "Number"}], "doc": "符号を -1 / 0 / 1 で返す"},
+        {"name": "Sin", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "正弦を返す（引数はラジアン）"},
+        {"name": "Sqr", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "平方根を返す"},
+        {"name": "Tan", "kind": "function", "module": "Math", "type": "Double", "params": [{"name": "Number", "type": "Double"}], "doc": "正接を返す（引数はラジアン）"},
+        {"name": "Randomize", "kind": "sub", "module": "Math", "params": [{"name": "Number", "optional": true}], "doc": "乱数ジェネレーターを初期化する（Number を省略するとシステムタイマーの値を使う）"},
+        {"name": "Date", "kind": "property", "module": "DateTime", "type": "Variant", "stringVariant": true, "doc": "現在のシステム日付を返す（Date$ は String を返す）"},
+        {"name": "Time", "kind": "property", "module": "DateTime", "type": "Variant", "stringVariant": true, "doc": "現在のシステム時刻を返す（Time$ は String を返す）"},
+        {"name": "Now", "kind": "property", "module": "DateTime", "type": "Variant", "doc": "現在の日付と時刻を返す"},
+        {"name": "Timer", "kind": "property", "module": "DateTime", "type": "Single", "doc": "午前 0 時からの経過秒数を返す"},
+        {"name": "DateAdd", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Interval", "type": "String"}, {"name": "Number", "type": "Double"}, {"name": "Date"}], "doc": "日付に指定した間隔（\"yyyy\" / \"m\" / \"d\" / \"h\" / \"n\" / \"s\" など）を加えた日付を返す"},
+        {"name": "DateDiff", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Interval", "type": "String"}, {"name": "Date1"}, {"name": "Date2"}, {"name": "FirstDayOfWeek", "type": "VbDayOfWeek", "optional": true, "default": "vbSunday"}, {"name": "FirstWeekOfYear", "type": "VbFirstWeekOfYear", "optional": true, "default": "vbFirstJan1"}], "doc": "2 つの日付の間隔を、Interval で指定した単位の数で返す"},
+        {"name": "DatePart", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Interval", "type": "String"}, {"name": "Date"}, {"name": "FirstDayOfWeek", "type": "VbDayOfWeek", "optional": true, "default": "vbSunday"}, {"name": "FirstWeekOfYear", "type": "VbFirstWeekOfYear", "optional": true, "default": "vbFirstJan1"}], "doc": "日付のうち Interval で指定した部分を返す"},
+        {"name": "DateSerial", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Year", "type": "Integer"}, {"name": "Month", "type": "Integer"}, {"name": "Day", "type": "Integer"}], "doc": "年・月・日から日付を作る"},
+        {"name": "DateValue", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Date", "type": "String"}], "doc": "文字列を日付に変換する"},
+        {"name": "TimeSerial", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Hour", "type": "Integer"}, {"name": "Minute", "type": "Integer"}, {"name": "Second", "type": "Integer"}], "doc": "時・分・秒から時刻を作る"},
+        {"name": "TimeValue", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Time", "type": "String"}], "doc": "文字列を時刻に変換する"},
+        {"name": "Year", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Date"}], "doc": "日付の年を返す"},
+        {"name": "Month", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Date"}], "doc": "日付の月（1〜12）を返す"},
+        {"name": "Day", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Date"}], "doc": "日付の日（1〜31）を返す"},
+        {"name": "Hour", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Time"}], "doc": "時刻の時（0〜23）を返す"},
+        {"name": "Minute", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Time"}], "doc": "時刻の分（0〜59）を返す"},
+        {"name": "Second", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Time"}], "doc": "時刻の秒（0〜59）を返す"},
+        {"name": "Weekday", "kind": "function", "module": "DateTime", "type": "Variant", "params": [{"name": "Date"}, {"name": "FirstDayOfWeek", "type": "VbDayOfWeek", "optional": true, "default": "vbSunday"}], "doc": "曜日を 1〜7 の値で返す"},
+        {"name": "MonthName", "kind": "function", "module": "DateTime", "type": "String", "params": [{"name": "Month", "type": "Long"}, {"name": "Abbreviate", "type": "Boolean", "optional": true, "default": "False"}], "doc": "月の名前を返す"},
+        {"name": "WeekdayName", "kind": "function", "module": "DateTime", "type": "String", "params": [{"name": "Weekday", "type": "Long"}, {"name": "Abbreviate", "type": "Boolean", "optional": true, "default": "False"}, {"name": "FirstDayOfWeek", "type": "VbDayOfWeek", "optional": true, "default": "vbUseSystemDayOfWeek"}], "doc": "曜日の名前を返す"},
+        {"name": "IsArray", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "VarName"}], "doc": "変数が配列かどうかを返す"},
+        {"name": "IsDate", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "式が日付として認識できるかどうかを返す"},
+        {"name": "IsEmpty", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "変数が初期化されていない（Empty）かどうかを返す"},
+        {"name": "IsError", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "式がエラー値かどうかを返す"},
+        {"name": "IsMissing", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "ArgName"}], "doc": "Variant 型の Optional 引数が省略されたかどうかを返す"},
+        {"name": "IsNull", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "式が Null かどうかを返す"},
+        {"name": "IsNumeric", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Expression"}], "doc": "式を数値として評価できるかどうかを返す"},
+        {"name": "IsObject", "kind": "function", "module": "Information", "type": "Boolean", "params": [{"name": "Identifier"}], "doc": "識別子がオブジェクト変数かどうかを返す"},
+        {"name": "TypeName", "kind": "function", "module": "Information", "type": "String", "params": [{"name": "VarName"}], "doc": "変数の型名を文字列で返す"},
+        {"name": "VarType", "kind": "function", "module": "Information", "type": "VbVarType", "params": [{"name": "VarName"}], "doc": "変数の内部の型を表す値を返す"},
+        {"name": "LBound", "kind": "function", "module": "Information", "type": "Long", "params": [{"name": "ArrayName"}, {"name": "Dimension", "type": "Long", "optional": true, "default": "1"}], "doc": "配列の指定した次元の最小の添字を返す"},
+        {"name": "UBound", "kind": "function", "module": "Information", "type": "Long", "params": [{"name": "ArrayName"}, {"name": "Dimension", "type": "Long", "optional": true, "default": "1"}], "doc": "配列の指定した次元の最大の添字を返す"},
+        {"name": "Array", "kind": "function", "module": "Information", "type": "Variant", "params": [{"name": "ArgList", "paramArray": true}], "doc": "引数を要素とする配列を格納した Variant を返す"},
+        {"name": "RGB", "kind": "function", "module": "Information", "type": "Long", "params": [{"name": "Red", "type": "Integer"}, {"name": "Green", "type": "Integer"}, {"name": "Blue", "type": "Integer"}], "doc": "赤・緑・青（各 0〜255）から RGB の色の値を返す"},
+        {"name": "Error", "kind": "function", "module": "Information", "type": "Variant", "params": [{"name": "ErrorNumber", "optional": true}], "stringVariant": true, "doc": "エラー番号に対応するエラーメッセージを返す（Error$ は String を返す）"},
+        {"name": "MsgBox", "kind": "function", "module": "Interaction", "type": "VbMsgBoxResult", "params": [{"name": "Prompt"}, {"name": "Buttons", "type": "VbMsgBoxStyle", "optional": true, "default": "vbOKOnly"}, {"name": "Title", "optional": true}, {"name": "HelpFile", "optional": true}, {"name": "Context", "optional": true}], "doc": "メッセージボックスを表示し、押されたボタンを返す"},
+        {"name": "InputBox", "kind": "function", "module": "Interaction", "type": "String", "params": [{"name": "Prompt"}, {"name": "Title", "optional": true}, {"name": "Default", "optional": true}, {"name": "XPos", "optional": true}, {"name": "YPos", "optional": true}, {"name": "HelpFile", "optional": true}, {"name": "Context", "optional": true}], "doc": "入力ボックスを表示し、入力された文字列を返す（キャンセルなら長さ 0 の文字列）"},
+        {"name": "IIf", "kind": "function", "module": "Interaction", "type": "Variant", "params": [{"name": "Expression"}, {"name": "TruePart"}, {"name": "FalsePart"}], "doc": "条件に応じて 2 つの値のどちらかを返す（両方の値が評価される）"},
+        {"name": "Choose", "kind": "function", "module": "Interaction", "type": "Variant", "params": [{"name": "Index", "type": "Single"}, {"name": "Choice", "paramArray": true}], "doc": "Index（1 始まり）に対応する値を引数リストから返す"},
+        {"name": "Switch", "kind": "function", "module": "Interaction", "type": "Variant", "params": [{"name": "VarExpr", "paramArray": true}], "doc": "条件と値の組を順に評価し、最初に True となる条件の値を返す"},
+        {"name": "CreateObject", "kind": "function", "module": "Interaction", "type": "Object", "params": [{"name": "Class", "type": "String"}, {"name": "ServerName", "type": "String", "optional": true}], "doc": "ProgID（\"Scripting.Dictionary\" など）から ActiveX オブジェクトを作り、その参照を返す"},
+        {"name": "GetObject", "kind": "function", "module": "Interaction", "type": "Object", "params": [{"name": "PathName", "optional": true}, {"name": "Class", "optional": true}], "doc": "ファイル、または実行中のオブジェクトへの参照を返す"},
+        {"name": "CallByName", "kind": "function", "module": "Interaction", "type": "Variant", "params": [{"name": "Object", "type": "Object"}, {"name": "ProcName", "type": "String"}, {"name": "CallType", "type": "VbCallType"}, {"name": "Args", "paramArray": true}], "doc": "名前を指定してオブジェクトのメソッドを呼び出す、またはプロパティを取得・設定する"},
+        {"name": "DoEvents", "kind": "function", "module": "Interaction", "type": "Integer", "doc": "処理を一時的に OS に渡し、たまっているイベントを処理させる"},
+        {"name": "Environ", "kind": "function", "module": "Interaction", "type": "Variant", "params": [{"name": "Expression"}], "stringVariant": true, "doc": "環境変数の値を返す（Environ$ は String を返す）"},
+        {"name": "Shell", "kind": "function", "module": "Interaction", "type": "Double", "params": [{"name": "PathName"}, {"name": "WindowStyle", "type": "VbAppWinStyle", "optional": true, "default": "vbMinimizedFocus"}], "doc": "外部プログラムを起動し、タスク ID を返す（終了は待たない）"},
+        {"name": "Beep", "kind": "sub", "module": "Interaction", "doc": "ビープ音を鳴らす"},
+        {"name": "AppActivate", "kind": "sub", "module": "Interaction", "params": [{"name": "Title"}, {"name": "Wait", "optional": true}], "doc": "指定したアプリケーションのウィンドウをアクティブにする"},
+        {"name": "SendKeys", "kind": "sub", "module": "Interaction", "params": [{"name": "String", "type": "String"}, {"name": "Wait", "optional": true}], "doc": "アクティブなウィンドウにキー入力を送る"},
+        {"name": "Dir", "kind": "function", "module": "FileSystem", "type": "String", "params": [{"name": "PathName", "optional": true}, {"name": "Attributes", "type": "VbFileAttribute", "optional": true, "default": "vbNormal"}], "stringVariant": true, "doc": "条件に合うファイル・フォルダの名前を返す（引数を省略すると次の名前を返す。無ければ長さ 0 の文字列）"},
+        {"name": "FileLen", "kind": "function", "module": "FileSystem", "type": "Long", "params": [{"name": "PathName", "type": "String"}], "doc": "ファイルのサイズ（バイト）を返す"},
+        {"name": "FileDateTime", "kind": "function", "module": "FileSystem", "type": "Variant", "params": [{"name": "PathName", "type": "String"}], "doc": "ファイルの作成日時または最終更新日時を返す"},
+        {"name": "GetAttr", "kind": "function", "module": "FileSystem", "type": "VbFileAttribute", "params": [{"name": "PathName", "type": "String"}], "doc": "ファイル・フォルダの属性を返す"},
+        {"name": "CurDir", "kind": "function", "module": "FileSystem", "type": "Variant", "params": [{"name": "Drive", "optional": true}], "stringVariant": true, "doc": "現在のパスを返す（CurDir$ は String を返す）"},
+        {"name": "FreeFile", "kind": "function", "module": "FileSystem", "type": "Integer", "params": [{"name": "RangeNumber", "optional": true}], "doc": "Open で使える空いているファイル番号を返す"},
+        {"name": "EOF", "kind": "function", "module": "FileSystem", "type": "Boolean", "params": [{"name": "FileNumber", "type": "Integer"}], "doc": "ファイルの終端に達したかどうかを返す"},
+        {"name": "LOF", "kind": "function", "module": "FileSystem", "type": "Long", "params": [{"name": "FileNumber", "type": "Integer"}], "doc": "Open で開いたファイルのサイズ（バイト）を返す"},
+        {"name": "Kill", "kind": "sub", "module": "FileSystem", "params": [{"name": "PathName"}], "doc": "ファイルを削除する（ワイルドカードを使える）"},
+        {"name": "MkDir", "kind": "sub", "module": "FileSystem", "params": [{"name": "Path"}], "doc": "フォルダを作る"},
+        {"name": "RmDir", "kind": "sub", "module": "FileSystem", "params": [{"name": "Path"}], "doc": "空のフォルダを削除する"},
+        {"name": "ChDir", "kind": "sub", "module": "FileSystem", "params": [{"name": "Path"}], "doc": "現在のフォルダを変える（ドライブは変わらない）"},
+        {"name": "ChDrive", "kind": "sub", "module": "FileSystem", "params": [{"name": "Drive"}], "doc": "現在のドライブを変える"},
+        {"name": "FileCopy", "kind": "sub", "module": "FileSystem", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}], "doc": "ファイルをコピーする"},
+        {"name": "SetAttr", "kind": "sub", "module": "FileSystem", "params": [{"name": "PathName", "type": "String"}, {"name": "Attributes", "type": "VbFileAttribute"}], "doc": "ファイルの属性を設定する"}
+      ],
+      "constants": [
+        {"name": "vbCrLf", "type": "String", "value": "Chr(13) & Chr(10)", "doc": "復帰と改行（CR + LF）"},
+        {"name": "vbCr", "type": "String", "value": "Chr(13)", "doc": "復帰（CR）"},
+        {"name": "vbLf", "type": "String", "value": "Chr(10)", "doc": "改行（LF）"},
+        {"name": "vbNewLine", "type": "String", "value": "Chr(13) & Chr(10)", "doc": "プラットフォームの改行文字（Windows では CR + LF）"},
+        {"name": "vbTab", "type": "String", "value": "Chr(9)", "doc": "タブ"},
+        {"name": "vbNullString", "type": "String", "value": "0", "doc": "値が 0 の文字列ポインタ（\"\" と比較すると等しい。外部プロシージャの呼び出しに使う）"},
+        {"name": "vbNullChar", "type": "String", "value": "Chr(0)", "doc": "値が 0 の文字（NULL 文字）"},
+        {"name": "vbBack", "type": "String", "value": "Chr(8)", "doc": "バックスペース"},
+        {"name": "vbFormFeed", "type": "String", "value": "Chr(12)", "doc": "改ページ"},
+        {"name": "vbVerticalTab", "type": "String", "value": "Chr(11)", "doc": "垂直タブ"},
+        {"name": "vbObjectError", "type": "Long", "value": "-2147221504", "doc": "ユーザー定義のエラー番号の基点（Err.Raise vbObjectError + n）"}
+      ]
     },
     {
       "name": "Scripting",
       "types": [
         {
-          "name": "Dictionary", "kind": "class", "complete": true, "defaultMember": "Item",
+          "name": "Dictionary", "kind": "class", "complete": true, "creatable": true, "defaultMember": "Item",
           "members": [
             {"name": "Add", "kind": "method", "params": [{"name": "Key", "type": "Variant"}, {"name": "Item", "type": "Variant"}]},
             {"name": "CompareMode", "kind": "property", "type": "Long"},
@@ -37,7 +381,7 @@
           ]
         },
         {
-          "name": "FileSystemObject", "kind": "class", "complete": true,
+          "name": "FileSystemObject", "kind": "class", "complete": true, "creatable": true,
           "members": [
             {"name": "BuildPath", "kind": "method", "type": "String", "params": [{"name": "Path", "type": "String"}, {"name": "Name", "type": "String"}]},
             {"name": "CopyFile", "kind": "method", "params": [{"name": "Source", "type": "String"}, {"name": "Destination", "type": "String"}, {"name": "OverWriteFiles", "type": "Boolean", "optional": true, "default": "True"}]},
@@ -224,5 +568,82 @@
         }
       ]
     }
+  ],
+  "keywords": [
+    {"name": "Dim", "usage": "statement", "doc": "変数を宣言する"},
+    {"name": "ReDim", "usage": "statement", "doc": "動的配列の大きさを変える"},
+    {"name": "Preserve", "usage": "expression", "doc": "ReDim で既存の要素の値を保持する"},
+    {"name": "Set", "usage": "statement", "doc": "オブジェクト参照を代入する"},
+    {"name": "Let", "usage": "statement", "doc": "値を代入する（省略できる）"},
+    {"name": "Const", "usage": "statement", "doc": "定数を宣言する"},
+    {"name": "Static", "usage": "statement", "doc": "値を保持する変数・プロシージャを宣言する"},
+    {"name": "Public", "usage": "statement", "doc": "どのモジュールからも参照できる宣言"},
+    {"name": "Private", "usage": "statement", "doc": "宣言したモジュールの中だけで参照できる宣言"},
+    {"name": "Friend", "usage": "statement", "doc": "プロジェクトの中だけに公開するクラスのプロシージャ"},
+    {"name": "Global", "usage": "statement", "doc": "公開の宣言（旧形式。Public と同じ）"},
+    {"name": "Sub", "usage": "statement", "doc": "Sub プロシージャを定義する"},
+    {"name": "Function", "usage": "statement", "doc": "Function プロシージャを定義する"},
+    {"name": "Property", "usage": "statement", "doc": "Property プロシージャを定義する"},
+    {"name": "End", "usage": "statement", "doc": "ブロックの終わり（End If など）、またはプログラムの終了"},
+    {"name": "Exit", "usage": "statement", "doc": "Do / For / Sub / Function / Property を抜ける"},
+    {"name": "If", "usage": "statement", "doc": "条件分岐を始める"},
+    {"name": "Then", "usage": "expression", "doc": "If の条件の後に置く"},
+    {"name": "ElseIf", "usage": "statement", "doc": "別の条件の分岐"},
+    {"name": "Else", "usage": "statement", "doc": "どの条件にも当たらない場合の分岐"},
+    {"name": "Select", "usage": "statement", "doc": "Select Case 文を始める"},
+    {"name": "Case", "usage": "statement", "doc": "Select Case の分岐"},
+    {"name": "For", "usage": "statement", "doc": "回数を指定した繰り返し（For Each はコレクション・配列の繰り返し）"},
+    {"name": "Each", "usage": "expression", "doc": "For Each（コレクション・配列の要素ごとの繰り返し）"},
+    {"name": "In", "usage": "expression", "doc": "For Each の対象を示す"},
+    {"name": "To", "usage": "expression", "doc": "範囲の上限（For / 配列の添字 / Case）"},
+    {"name": "Step", "usage": "expression", "doc": "For の増分"},
+    {"name": "Next", "usage": "statement", "doc": "For の終わり"},
+    {"name": "Do", "usage": "statement", "doc": "条件付きの繰り返しを始める"},
+    {"name": "Loop", "usage": "statement", "doc": "Do の終わり"},
+    {"name": "While", "usage": "both", "doc": "条件が True の間繰り返す"},
+    {"name": "Until", "usage": "expression", "doc": "条件が True になるまで繰り返す"},
+    {"name": "Wend", "usage": "statement", "doc": "While の終わり"},
+    {"name": "With", "usage": "statement", "doc": "オブジェクトを省略して書くブロックを始める"},
+    {"name": "Call", "usage": "statement", "doc": "プロシージャを呼び出す"},
+    {"name": "GoTo", "usage": "statement", "doc": "ラベルへ移動する"},
+    {"name": "GoSub", "usage": "statement", "doc": "サブルーチン（ラベル）へ移動する"},
+    {"name": "Return", "usage": "statement", "doc": "GoSub から戻る"},
+    {"name": "On", "usage": "statement", "doc": "エラー処理・分岐の指定を始める（On Error / On ... GoTo）"},
+    {"name": "Error", "usage": "expression", "doc": "On Error（エラー処理の指定）"},
+    {"name": "Resume", "usage": "statement", "doc": "エラー処理の後で実行を再開する"},
+    {"name": "Option", "usage": "statement", "doc": "モジュールの設定（Option Explicit / Option Base / Option Compare）"},
+    {"name": "Explicit", "usage": "expression", "doc": "変数の宣言を強制する（Option Explicit）"},
+    {"name": "Type", "usage": "statement", "doc": "ユーザー定義型を定義する"},
+    {"name": "Enum", "usage": "statement", "doc": "列挙型を定義する"},
+    {"name": "Implements", "usage": "statement", "doc": "インターフェースを実装する"},
+    {"name": "Event", "usage": "statement", "doc": "イベントを宣言する"},
+    {"name": "RaiseEvent", "usage": "statement", "doc": "イベントを発生させる"},
+    {"name": "WithEvents", "usage": "expression", "doc": "イベントを受け取るオブジェクト変数を宣言する"},
+    {"name": "Declare", "usage": "statement", "doc": "外部 DLL のプロシージャを宣言する"},
+    {"name": "PtrSafe", "usage": "expression", "doc": "64 ビット版に対応した Declare"},
+    {"name": "Erase", "usage": "statement", "doc": "配列を初期化する（動的配列は解放する）"},
+    {"name": "Stop", "usage": "statement", "doc": "実行を一時停止する"},
+    {"name": "Open", "usage": "statement", "doc": "ファイルを開く"},
+    {"name": "Close", "usage": "statement", "doc": "Open で開いたファイルを閉じる"},
+    {"name": "New", "usage": "expression", "doc": "オブジェクトを新しく作る"},
+    {"name": "Nothing", "usage": "expression", "doc": "オブジェクト参照なし"},
+    {"name": "Empty", "usage": "expression", "doc": "初期化されていない値"},
+    {"name": "Null", "usage": "expression", "doc": "有効なデータを含まない値"},
+    {"name": "True", "usage": "expression", "doc": "真"},
+    {"name": "False", "usage": "expression", "doc": "偽"},
+    {"name": "Me", "usage": "expression", "doc": "現在のクラス・フォームのインスタンス"},
+    {"name": "Not", "usage": "expression", "doc": "論理否定"},
+    {"name": "And", "usage": "expression", "doc": "論理積"},
+    {"name": "Or", "usage": "expression", "doc": "論理和"},
+    {"name": "Xor", "usage": "expression", "doc": "排他的論理和"},
+    {"name": "Mod", "usage": "expression", "doc": "剰余"},
+    {"name": "Is", "usage": "expression", "doc": "オブジェクト参照の比較"},
+    {"name": "Like", "usage": "expression", "doc": "パターンとの一致"},
+    {"name": "TypeOf", "usage": "expression", "doc": "オブジェクトの型を判定する（TypeOf x Is T）"},
+    {"name": "ByVal", "usage": "expression", "doc": "値渡しの引数"},
+    {"name": "ByRef", "usage": "expression", "doc": "参照渡しの引数"},
+    {"name": "Optional", "usage": "expression", "doc": "省略できる引数"},
+    {"name": "ParamArray", "usage": "expression", "doc": "任意の数の引数を受け取る配列"},
+    {"name": "As", "usage": "expression", "doc": "型の指定"}
   ]
 }

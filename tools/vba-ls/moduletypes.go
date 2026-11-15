@@ -42,13 +42,9 @@ func (p *moduleTypeProvider) Members(t TypeRef) []MemberInfo {
 		}
 	} else if e := p.table.Enum(t.Name); e != nil {
 		for _, m := range e.Members {
-			doc := m.Doc
-			if m.Value != "" {
-				doc = strings.TrimSpace("= " + m.Value + "\n" + doc)
-			}
 			out = append(out, MemberInfo{
-				Name: m.Name, ReturnType: "Long", Kind: MemberKindEnumMember,
-				Doc: doc, Visibility: VisPublic, Owner: TypeRef{Name: e.Name},
+				Name: m.Name, ReturnType: "Long", Kind: MemberKindEnumMember, Value: m.Value,
+				Doc: m.Doc, Visibility: VisPublic, Owner: TypeRef{Name: e.Name},
 			})
 		}
 	}
