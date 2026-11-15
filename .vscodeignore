@@ -5,3 +5,4 @@ tools/**
 .gitignore
 tsconfig.json
 **/*.map
+tests/**
