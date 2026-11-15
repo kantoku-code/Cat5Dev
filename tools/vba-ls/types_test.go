@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -169,5 +170,103 @@ func TestMemberSignature(t *testing.T) {
 	m, _ = r.Member(TypeRef{Name: "Dictionary"}, "Item")
 	if got := m.Signature(); got != "Item(Key As Variant) As Variant" {
 		t.Errorf("Signature = %q", got)
+	}
+}
+
+// fakeProvider はテスト用の最小プロバイダ。types のキーは小文字の型名。
+type fakeProvider struct {
+	lib       string
+	qualified bool
+	types     map[string]TypeInfo
+	members   map[string][]MemberInfo // 小文字の型名 → メンバー
+	mtypes    map[string]TypeRef      // "型.メンバー"（小文字）→ 型
+}
+
+func (f *fakeProvider) QualifiedOnly() bool         { return f.qualified }
+func (f *fakeProvider) OwnsLibrary(lib string) bool { return f.lib != "" && strings.EqualFold(lib, f.lib) }
+func (f *fakeProvider) LookupType(name string) (TypeInfo, bool) {
+	ti, ok := f.types[strings.ToLower(name)]
+	return ti, ok
+}
+func (f *fakeProvider) Members(t TypeRef) []MemberInfo { return f.members[strings.ToLower(t.Name)] }
+func (f *fakeProvider) Member(t TypeRef, name string) (MemberInfo, bool) {
+	for _, m := range f.Members(t) {
+		if strings.EqualFold(m.Name, name) {
+			return m, true
+		}
+	}
+	return MemberInfo{}, false
+}
+func (f *fakeProvider) MemberType(t TypeRef, name string) (TypeRef, bool) {
+	r, ok := f.mtypes[strings.ToLower(t.Name+"."+name)]
+	return r, ok
+}
+
+func TestQualifiedOnlyProvider(t *testing.T) {
+	mod := &fakeProvider{lib: moduleLib, qualified: true, types: map[string]TypeInfo{
+		"part": {Ref: TypeRef{Lib: moduleLib, Name: "Part"}, Kind: TypeKindModule},
+	}}
+	r := NewDefaultResolver(newTestTLBDatabase(t), mod)
+	ti, _, ok := r.Resolve(TypeRef{Name: "Part"})
+	if !ok || ti.Ref.Lib == moduleLib {
+		t.Fatalf("無修飾の Part は TLB に解決されるはず: %+v %v", ti, ok)
+	}
+	ti, _, ok = r.Resolve(TypeRef{Lib: moduleLib, Name: "Part"})
+	if !ok || ti.Kind != TypeKindModule {
+		t.Fatalf("修飾付きは標準モジュールに解決されるはず: %+v %v", ti, ok)
+	}
+	if r.TypeExists(TypeRef{Lib: moduleLib, Name: "Part"}) {
+		t.Error("標準モジュールは型として存在しない扱い")
+	}
+	if got := (TypeRef{Lib: moduleLib, Name: "Main"}).String(); got != "Main" {
+		t.Errorf("String() = %q, want Main", got)
+	}
+}
+
+func TestBaseTypeMembers(t *testing.T) {
+	base := &fakeProvider{lib: "Lib", types: map[string]TypeInfo{
+		"b": {Ref: TypeRef{Lib: "Lib", Name: "B"}, Kind: TypeKindClass},
+	}, members: map[string][]MemberInfo{
+		"b": {{Name: "Hide", Kind: MemberKindMethod}, {Name: "Name", ReturnType: "String"}},
+	}, mtypes: map[string]TypeRef{"b.name": {Lib: "VBA", Name: "String"}}}
+	own := &fakeProvider{types: map[string]TypeInfo{
+		"f": {Ref: TypeRef{Name: "F"}, Kind: TypeKindClass, Base: TypeRef{Lib: "Lib", Name: "B"}},
+		// 自分自身を Base にしても無限に辿らない
+		"loop": {Ref: TypeRef{Name: "Loop"}, Kind: TypeKindClass, Base: TypeRef{Name: "Loop"}},
+	}, members: map[string][]MemberInfo{
+		"f": {{Name: "Name", ReturnType: "Long"}, {Name: "Zed"}},
+	}, mtypes: map[string]TypeRef{"f.name": {Lib: "VBA", Name: "Long"}}}
+	r := NewCompositeResolver(own, base)
+	var names []string
+	for _, m := range r.Members(TypeRef{Name: "F"}) {
+		names = append(names, m.Name+":"+m.ReturnType)
+	}
+	if got, want := strings.Join(names, ","), "Hide:,Name:Long,Zed:"; got != want {
+		t.Errorf("Members = %s, want %s", got, want)
+	}
+	if _, ok := r.Member(TypeRef{Name: "F"}, "hide"); !ok {
+		t.Error("Base のメンバーが引けない")
+	}
+	if mt, ok := r.MemberType(TypeRef{Name: "F"}, "Name"); !ok || mt.Name != "Long" {
+		t.Errorf("同名は自分側を優先: %+v %v", mt, ok)
+	}
+	if r.Members(TypeRef{Name: "Loop"}) != nil {
+		t.Error("循環した Base は空")
+	}
+}
+
+func TestWithLocalVariadic(t *testing.T) {
+	r := NewDefaultResolver(nil)
+	if r.WithLocal() != r || r.WithLocal(nil, nil) != r {
+		t.Error("足すものがなければ同じ resolver")
+	}
+	a := &fakeProvider{types: map[string]TypeInfo{"x": {Ref: TypeRef{Name: "X"}}}}
+	b := &fakeProvider{types: map[string]TypeInfo{"x": {Ref: TypeRef{Name: "X"}, Doc: "b"}, "y": {Ref: TypeRef{Name: "Y"}}}}
+	w := r.WithLocal(a, nil, b)
+	if ti, p, ok := w.Resolve(TypeRef{Name: "X"}); !ok || p != a || ti.Doc != "" {
+		t.Error("先に渡したものが優先")
+	}
+	if _, _, ok := w.Resolve(TypeRef{Name: "Y"}); !ok {
+		t.Error("2 つ目も足される")
 	}
 }
