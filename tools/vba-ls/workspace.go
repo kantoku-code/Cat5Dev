@@ -715,6 +715,20 @@ func (p *wsTypeProvider) Types() []TypeInfo {
 	return out
 }
 
+// ProjectMembers は修飾なしで参照できる標準モジュールの Public メンバーを名前順に返す（識別子補完用）。
+func (p *wsTypeProvider) ProjectMembers() []MemberInfo { return p.w.ProjectMembers() }
+
+// ProjectModules は修飾子として使える標準モジュールとフォームの型情報をモジュール名順に返す（識別子補完用）。
+func (p *wsTypeProvider) ProjectModules() []TypeInfo {
+	var out []TypeInfo
+	for _, e := range p.w.snapshot().order {
+		if e.Kind == ModuleStd || e.Kind == ModuleForm {
+			out = append(out, e.typeInfo())
+		}
+	}
+	return out
+}
+
 // --- wsModuleProvider ---
 
 // wsModuleProvider は標準モジュールを moduleLib 修飾でだけ提供する（Public メンバーのみ）。

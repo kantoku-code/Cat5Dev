@@ -105,6 +105,9 @@ type TLBProvider struct {
 
 	namesOnce sync.Once
 	names     map[string]bool // 全インターフェースのメンバー名（小文字）。読み込みに失敗したら nil
+
+	typesOnce sync.Once
+	typeList  []TypeInfo // 全インターフェース（IUnknown / IDispatch を除く）。名前順
 }
 
 // newTLBProvider は db が nil なら interface の nil を返す（typed nil を作らない）。
@@ -316,4 +319,21 @@ func (p *TLBProvider) HasMemberNamed(name string) bool {
 		return true
 	}
 	return p.names[strings.ToLower(name)]
+}
+
+// Types は全インターフェース（IUnknown / IDispatch を除く）を名前順に返す（型補完用）。
+func (p *TLBProvider) Types() []TypeInfo {
+	p.typesOnce.Do(func() {
+		p.load()
+		for key := range p.byName {
+			if key == "iunknown" || key == "idispatch" {
+				continue
+			}
+			if ti, ok := p.LookupType(key); ok {
+				p.typeList = append(p.typeList, ti)
+			}
+		}
+		sort.Slice(p.typeList, func(i, j int) bool { return p.typeList[i].Ref.Name < p.typeList[j].Ref.Name })
+	})
+	return p.typeList
 }

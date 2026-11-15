@@ -372,3 +372,39 @@ func TestWorkspaceHover(t *testing.T) {
 		})
 	}
 }
+
+// プロジェクトの非修飾の名前（標準モジュールの Public・モジュール名・フォーム名）の列挙と、New で作れる型。
+func TestWorkspaceProjectListers(t *testing.T) {
+	_, types, _ := newTestWorkspace(t, wsFixture)
+	got := map[string]bool{}
+	for _, m := range types.ProjectMembers() {
+		got[m.Name] = true
+		if m.Owner.Name != "Module1" {
+			t.Errorf("%s の所属 = %v", m.Name, m.Owner)
+		}
+	}
+	for _, w := range []string{"g", "C", "Pub", "NewA"} {
+		if !got[w] {
+			t.Errorf("ProjectMembers に %s がない: %v", w, got)
+		}
+	}
+	if got["Priv"] || got["P"] || got["SetData"] {
+		t.Errorf("Private・フォームのメンバーが含まれている: %v", got)
+	}
+	var mods []string
+	for _, ti := range types.ProjectModules() {
+		mods = append(mods, ti.Ref.Name)
+	}
+	if strings.Join(mods, ",") != "frmA,Module1" {
+		t.Errorf("ProjectModules = %v", mods)
+	}
+	creatable := map[string]bool{}
+	for _, ti := range types.Types() {
+		if ti.Creatable {
+			creatable[ti.Ref.Name] = true
+		}
+	}
+	if !creatable["clsA"] || !creatable["frmA"] || creatable["TInfo"] || creatable["EKind"] || creatable["PartDocument"] {
+		t.Errorf("Creatable = %v", creatable)
+	}
+}

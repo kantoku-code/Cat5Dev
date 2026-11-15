@@ -113,9 +113,12 @@ func (e *ModuleEntry) typeInfo() TypeInfo {
 	switch e.Kind {
 	case ModuleStd:
 		ti.Kind = TypeKindModule
+	case ModuleClass:
+		ti.Creatable = true
 	case ModuleForm:
 		ti.Complete = false
 		ti.Base = formBaseType
+		ti.Creatable = true
 	}
 	return ti
 }

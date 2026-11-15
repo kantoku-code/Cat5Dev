@@ -249,6 +249,29 @@ type TypeLister interface {
 // MemberNameIndex は「ライブラリ内のどこかの型にこの名前のメンバーがあるか」を答える（TLB の遅延バインディング対策）。
 type MemberNameIndex interface{ HasMemberNamed(name string) bool }
 
+// FunctionProvider は組み込みライブラリの関数・ステートメント・定数を提供する（識別子補完・signatureHelp・ホバー）。
+type FunctionProvider interface {
+	Functions() []MemberInfo                 // Kind は Method（Date / Now などは Property）。名前順
+	Function(name string) (MemberInfo, bool) // 大文字小文字無視。"Left$" の $ 形も引ける
+	Constants() []MemberInfo                 // Kind は MemberKindConst。名前順
+}
+
+// GlobalLister は暗黙のグローバル（Err / Debug）の一覧を提供する。
+type GlobalLister interface {
+	Globals() []GlobalInfo
+}
+
+// PrimitiveLister は primitive 型（Long / String など）の一覧を提供する（型補完用）。
+type PrimitiveLister interface {
+	Primitives() []TypeInfo
+}
+
+// ProjectLister はプロジェクトの非修飾の名前の一覧を提供する（識別子補完用）。
+type ProjectLister interface {
+	ProjectMembers() []MemberInfo // 標準モジュールの Public（Owner で所属モジュールが分かる）
+	ProjectModules() []TypeInfo   // 標準モジュールとフォーム（修飾子として使える名前）
+}
+
 // qualifiedOnlyProvider は修飾付きの参照（OwnsLibrary が true の Lib）でしか型を引かせないプロバイダ
 // （標準モジュール。"Dim p As Part" が同名の標準モジュールに化けないようにする）。
 type qualifiedOnlyProvider interface{ QualifiedOnly() bool }
@@ -505,4 +528,120 @@ func (c *CompositeResolver) Global(name string) (TypeRef, bool) {
 		}
 	}
 	return TypeRef{}, false
+}
+
+// TypesIn は修飾子 lib を担当するプロバイダの型を返す（"As Scripting.|" の型補完用）。
+func (c *CompositeResolver) TypesIn(lib string) []TypeInfo {
+	if c == nil {
+		return nil
+	}
+	var out []TypeInfo
+	for _, p := range c.providers {
+		if !p.OwnsLibrary(lib) {
+			continue
+		}
+		if l, ok := p.(TypeLister); ok {
+			out = append(out, l.Types()...)
+		}
+	}
+	return out
+}
+
+// Primitives は PrimitiveLister を実装するプロバイダの primitive 型を返す。
+func (c *CompositeResolver) Primitives() []TypeInfo {
+	if c == nil {
+		return nil
+	}
+	var out []TypeInfo
+	for _, p := range c.providers {
+		if l, ok := p.(PrimitiveLister); ok {
+			out = append(out, l.Primitives()...)
+		}
+	}
+	return out
+}
+
+// Function は FunctionProvider を実装するプロバイダへ順に問い合わせる。
+func (c *CompositeResolver) Function(name string) (MemberInfo, bool) {
+	if c == nil {
+		return MemberInfo{}, false
+	}
+	for _, p := range c.providers {
+		if f, ok := p.(FunctionProvider); ok {
+			if m, ok := f.Function(name); ok {
+				return m, true
+			}
+		}
+	}
+	return MemberInfo{}, false
+}
+
+// Functions は組み込み関数をプロバイダ順に集めて返す（同名の除去は呼び出し側）。
+func (c *CompositeResolver) Functions() []MemberInfo {
+	if c == nil {
+		return nil
+	}
+	var out []MemberInfo
+	for _, p := range c.providers {
+		if f, ok := p.(FunctionProvider); ok {
+			out = append(out, f.Functions()...)
+		}
+	}
+	return out
+}
+
+// Constants は組み込みの独立した定数をプロバイダ順に集めて返す。
+func (c *CompositeResolver) Constants() []MemberInfo {
+	if c == nil {
+		return nil
+	}
+	var out []MemberInfo
+	for _, p := range c.providers {
+		if f, ok := p.(FunctionProvider); ok {
+			out = append(out, f.Constants()...)
+		}
+	}
+	return out
+}
+
+// Globals は暗黙のグローバルをプロバイダ順に集めて返す。
+func (c *CompositeResolver) Globals() []GlobalInfo {
+	if c == nil {
+		return nil
+	}
+	var out []GlobalInfo
+	for _, p := range c.providers {
+		if g, ok := p.(GlobalLister); ok {
+			out = append(out, g.Globals()...)
+		}
+	}
+	return out
+}
+
+// ProjectMembers は修飾なしで参照できる標準モジュールの Public をプロバイダ順に集めて返す。
+func (c *CompositeResolver) ProjectMembers() []MemberInfo {
+	if c == nil {
+		return nil
+	}
+	var out []MemberInfo
+	for _, p := range c.providers {
+		if l, ok := p.(ProjectLister); ok {
+			out = append(out, l.ProjectMembers()...)
+		}
+	}
+	return out
+}
+
+// ProjectModules は修飾子として使えるモジュール名（標準モジュール・フォーム）をプロバイダ順に集めて返す。
+func (c *CompositeResolver) ProjectModules() []TypeInfo {
+	if c == nil {
+		return nil
+	}
+	var out []TypeInfo
+	for _, p := range c.providers {
+		if l, ok := p.(ProjectLister); ok {
+			out = append(out, l.ProjectModules()...)
+		}
+	}
+	return out
 }

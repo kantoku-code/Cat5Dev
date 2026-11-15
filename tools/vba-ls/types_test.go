@@ -272,3 +272,58 @@ func TestWithLocalVariadic(t *testing.T) {
 		t.Error("2 つ目も足される")
 	}
 }
+
+// 型・関数・定数・グローバルの列挙（識別子補完・型補完用）。
+func TestCompositeListers(t *testing.T) {
+	r := newTestResolver(t)
+	names := func(ts []TypeInfo) map[string]bool {
+		m := map[string]bool{}
+		for _, ti := range ts {
+			m[ti.Ref.Name] = true
+		}
+		return m
+	}
+	all := names(r.Types())
+	for _, w := range []string{"PartDocument", "Document", "Collection", "Dictionary", "ErrObject", "VbMsgBoxResult", "UserForm"} {
+		if !all[w] {
+			t.Errorf("Types に %s がない", w)
+		}
+	}
+	if all["Long"] {
+		t.Error("Types に primitive が含まれている")
+	}
+	tlb := r.TypesIn("CATIA")
+	if len(tlb) != 7 || tlb[0].Ref.Name != "AnyObject" || tlb[0].Kind != TypeKindInterface {
+		t.Errorf("TypesIn(CATIA) = %+v", tlb)
+	}
+	sc := names(r.TypesIn("scripting"))
+	if !sc["Dictionary"] || !sc["FileSystemObject"] || sc["Collection"] || sc["PartDocument"] {
+		t.Errorf("TypesIn(Scripting) = %v", sc)
+	}
+	if p := names(r.Primitives()); len(p) != 14 || !p["Long"] || !p["String"] {
+		t.Errorf("Primitives = %v", p)
+	}
+	if m, ok := r.Function("Left$"); !ok || m.Name != "Left$" || m.ReturnType != "String" {
+		t.Errorf("Function(Left$) = %+v, %v", m, ok)
+	}
+	if n := len(r.Functions()); n != 123 {
+		t.Errorf("Functions = %d 件", n)
+	}
+	if n := len(r.Constants()); n != 11 {
+		t.Errorf("Constants = %d 件", n)
+	}
+	if g := r.Globals(); len(g) != 2 || g[0].Name != "Debug" || g[1].Name != "Err" {
+		t.Errorf("Globals = %+v", g)
+	}
+	var nilR *CompositeResolver
+	if nilR.Types() != nil || nilR.TypesIn("VBA") != nil || nilR.Functions() != nil || nilR.ProjectMembers() != nil || nilR.ProjectModules() != nil {
+		t.Error("nil の resolver は nil を返す")
+	}
+	if _, ok := nilR.Function("MsgBox"); ok {
+		t.Error("nil の resolver は関数を引けない")
+	}
+	// DB なしでも組み込みは列挙できる
+	if n := len(NewDefaultResolver(nil).TypesIn("CATIA")); n != 0 {
+		t.Errorf("DB なしの TypesIn(CATIA) = %d 件", n)
+	}
+}
