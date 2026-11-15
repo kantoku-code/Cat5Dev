@@ -272,3 +272,78 @@ INSERT INTO properties(interface_id, name, type) VALUES (1, 'Part', 'Part');
 		t.Errorf("v1 は access が無いので ReadOnly にしない: %+v", m)
 	}
 }
+
+// v2resolver はテスト用 v2 DB を含む既定の resolver を作る。
+func v2resolver(t *testing.T) *CompositeResolver {
+	t.Helper()
+	return NewDefaultResolver(newTestTLBDatabaseV2(t), nil)
+}
+
+// hoverWith は types を使って "|" の位置のホバーを返す。
+func hoverWith(t *testing.T, types *CompositeResolver, srcWithCaret string) string {
+	t.Helper()
+	src, line, char := caretPos(t, srcWithCaret)
+	return ResolveHover(NewDocument("file:///test.bas", src, ParseSymbols(src), types), line, char)
+}
+
+// diagMessages は src の診断を「重大度:メッセージ」の一覧で返す。
+func diagMessages(t *testing.T, types *CompositeResolver, src string) []string {
+	t.Helper()
+	var out []string
+	for _, d := range BuildDiagnostics(NewDocument("file:///test.bas", src, ParseSymbols(src), types)) {
+		out = append(out, strings.Repeat("E", int(d.Severity)%2)+strings.Repeat("W", int(d.Severity)/2)+":"+d.Message)
+	}
+	return out
+}
+
+func TestTLBV2Enums(t *testing.T) {
+	p := newTLBProvider(newTestTLBDatabaseV2(t)).(*TLBProvider)
+	ti, ok := p.LookupType("catpapersize")
+	if !ok || ti.Kind != TypeKindEnum || !ti.Complete || ti.Container != "INFITF" || ti.Doc != "Paper size." || ti.Ref != (TypeRef{Lib: "CATIA", Name: "CatPaperSize"}) {
+		t.Fatalf("CatPaperSize = %+v", ti)
+	}
+	ms := p.Members(ti.Ref)
+	if len(ms) != 2 || ms[0].Name != "catPaperA4" || ms[1].Name != "catPaperLetter" {
+		t.Errorf("Members = %+v", ms)
+	}
+	m, ok := p.Member(ti.Ref, "CATPAPERA4")
+	if !ok || m.Value != "6" || m.Kind != MemberKindEnumMember || m.Owner.Name != "CatPaperSize" || m.Doc != "The A4 ISO format" {
+		t.Errorf("catPaperA4 = %+v", m)
+	}
+	if got, _ := p.MemberType(TypeRef{Name: "Application"}, "PaperSize"); got != ti.Ref {
+		t.Errorf("Enum 型のプロパティの型 = %+v", got)
+	}
+	if c, ok := p.Constant("catpapera4"); !ok || c.Owner.Name != "CatPaperSize" {
+		t.Errorf("Constant = %+v, %v", c, ok)
+	}
+	kinds := map[string]TypeKind{}
+	for _, ti := range p.Types() {
+		kinds[ti.Ref.Name] = ti.Kind
+	}
+	if kinds["CatPaperSize"] != TypeKindEnum || kinds["Application"] != TypeKindInterface {
+		t.Errorf("Types = %v", kinds)
+	}
+	v1 := newTLBProvider(newTestTLBDatabase(t)).(*TLBProvider)
+	if _, ok := v1.Constant("catPaperA4"); ok {
+		t.Error("v1 に Enum は無い")
+	}
+}
+
+func TestTLBV2EnumInEditor(t *testing.T) {
+	r := v2resolver(t)
+	items := completeAt(t, r, "Sub M()\n    x = CatPaperSize.|\nEnd Sub\n")
+	if got := labelsOf(items); len(got) != 2 || !got["catPaperA4"] {
+		t.Errorf("CatPaperSize. の補完 = %v", got)
+	}
+	types := labelsOf(completeAt(t, r, "Sub M()\n    Dim s As |\nEnd Sub\n"))
+	if !types["CatPaperSize"] || types["HiddenThing"] {
+		t.Errorf("型補完に CatPaperSize が無いか hidden がある")
+	}
+	if h := hoverWith(t, r, "Sub M()\n    x = catPape|rA4\nEnd Sub\n"); !strings.Contains(h, "CatPaperSize.catPaperA4 = 6") || !strings.Contains(h, "The A4 ISO format") {
+		t.Errorf("Enum 定数のホバー = %q", h)
+	}
+	got := diagMessages(t, r, "Sub M()\n    x = CatPaperSize.catPaperA4 + CatPaperSize.catBogus\nEnd Sub\n")
+	if len(got) != 1 || !strings.HasPrefix(got[0], "W:") || !strings.Contains(got[0], "catBogus") {
+		t.Errorf("Enum の診断 = %v", got)
+	}
+}

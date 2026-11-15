@@ -76,9 +76,13 @@ func (s *tlbSchema) Has(t, col string) bool { return s.cols[strings.ToLower(t)][
 // v1 は parent_id が空で各型に平坦なメンバーを持つため、継承をたどる判定に使えない。
 func (s *tlbSchema) Hierarchy() bool { return s.Version >= 2 }
 
-// col は SELECT 句の列の式を返す。列が無ければ fallback（定数の式）にする。
+// col は SELECT 句の列の式を返す。列が無ければ fallback（定数の式）にする。col は "別名.列" でもよい。
 func (s *tlbSchema) col(table, col, fallback string) string {
-	if s.Has(table, col) {
+	name := col
+	if i := strings.IndexByte(col, '.'); i >= 0 {
+		name = col[i+1:]
+	}
+	if s.Has(table, name) {
 		return col
 	}
 	return fallback
@@ -189,6 +193,14 @@ type memberSet struct {
 	byName map[string]int // 小文字名 → all の添字
 }
 
+// tlbEnum は TLB の Enum 1 つ。
+type tlbEnum struct {
+	info    TypeInfo     // Kind=TypeKindEnum, Complete=true
+	members []MemberInfo // 定義順（Kind=MemberKindEnumMember, ReturnType "Long", Value）
+	sorted  []MemberInfo // 名前順（補完用）
+	byName  map[string]int
+}
+
 // ownMember は型自身のメンバー 1 件（hidden の印付き）。
 type ownMember struct {
 	info   MemberInfo
@@ -203,8 +215,10 @@ type TLBProvider struct {
 	schema  *tlbSchema
 	byName  map[string]tlbIface // 小文字名 → iface
 	byID    map[int64]tlbIface
-	libs    map[string]bool  // OwnsLibrary の対象（小文字）
-	libName map[int64]string // libraries.id → 名前（表示用）
+	libs    map[string]bool       // OwnsLibrary の対象（小文字）
+	libName map[int64]string      // libraries.id → 名前（表示用）
+	enums   map[string]*tlbEnum   // v2: 小文字の Enum 名 → Enum
+	consts  map[string]MemberInfo // v2: 小文字のメンバー名 → Enum メンバー（同名は最初の Enum が勝つ）
 
 	mu     sync.Mutex
 	merged map[int64]*memberSet
@@ -231,8 +245,11 @@ func (p *TLBProvider) load() {
 		p.byID = map[int64]tlbIface{}
 		p.libs = map[string]bool{}
 		p.libName = map[int64]string{}
+		p.enums = map[string]*tlbEnum{}
+		p.consts = map[string]MemberInfo{}
 		s := p.schema
 		p.loadLibraries()
+		p.loadEnums()
 		q := `SELECT id, name, parent_id, ` + s.col("interfaces", "library_id", "NULL") + `, ` +
 			s.col("interfaces", "flags", "0") + `, ` + s.col("interfaces", "doc", "''") + ` FROM interfaces ORDER BY id`
 		rows, err := p.db.db.Query(q)
@@ -280,6 +297,51 @@ func (p *TLBProvider) loadLibraries() {
 	}
 }
 
+// loadEnums は enums / enum_members を読む（v2 のみ。312 種・1,405 メンバー程度なので一度に読む）。
+func (p *TLBProvider) loadEnums() {
+	if !p.schema.HasTable("enums") || !p.schema.HasTable("enum_members") {
+		return
+	}
+	s := p.schema
+	rows, err := p.db.db.Query(`SELECT e.name, ` + s.col("enums", "e.library_id", "NULL") + `, ` + s.col("enums", "e.doc", "''") +
+		`, m.name, m.value, ` + s.col("enum_members", "m.doc", "''") +
+		` FROM enums e JOIN enum_members m ON m.enum_id = e.id ORDER BY e.id, m.id`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vba-ls: enums の読み込みに失敗: %v\n", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var en, edoc, mn, mdoc string
+		var lib sql.NullInt64
+		var val int64
+		if err := rows.Scan(&en, &lib, &edoc, &mn, &val, &mdoc); err != nil {
+			continue
+		}
+		key := strings.ToLower(en)
+		e := p.enums[key]
+		if e == nil {
+			e = &tlbEnum{byName: map[string]int{}, info: TypeInfo{Ref: TypeRef{Lib: "CATIA", Name: en}, Kind: TypeKindEnum,
+				Complete: true, Doc: edoc, Container: p.libName[lib.Int64]}}
+			p.enums[key] = e
+		}
+		m := MemberInfo{Name: mn, ReturnType: "Long", Kind: MemberKindEnumMember, ReadOnly: true, Doc: mdoc,
+			Visibility: VisPublic, Owner: e.info.Ref, Value: strconv.FormatInt(val, 10)}
+		mk := strings.ToLower(mn)
+		if _, dup := e.byName[mk]; !dup {
+			e.byName[mk] = len(e.members)
+			e.members = append(e.members, m)
+		}
+		if _, dup := p.consts[mk]; !dup {
+			p.consts[mk] = m
+		}
+	}
+	for _, e := range p.enums {
+		e.sorted = append([]MemberInfo(nil), e.members...)
+		sort.SliceStable(e.sorted, func(i, j int) bool { return strings.ToLower(e.sorted[i].Name) < strings.ToLower(e.sorted[j].Name) })
+	}
+}
+
 // HasHierarchy は DB が継承（parent_id と自前メンバー）を持つ v2 以上かを返す。
 func (p *TLBProvider) HasHierarchy() bool {
 	p.load()
@@ -296,6 +358,9 @@ func (p *TLBProvider) LookupType(name string) (TypeInfo, bool) {
 	key := strings.ToLower(name)
 	it, ok := p.byName[key]
 	if !ok {
+		if e := p.enums[key]; e != nil {
+			return e.info, true
+		}
 		return TypeInfo{}, false
 	}
 	return TypeInfo{
@@ -311,13 +376,31 @@ func (p *TLBProvider) Members(t TypeRef) []MemberInfo {
 	if ms := p.memberSetOf(t); ms != nil {
 		return ms.list
 	}
+	if e := p.enumOf(t); e != nil {
+		return e.sorted
+	}
 	return nil
+}
+
+// enumOf は t がインターフェースでなく Enum ならその Enum を返す。
+func (p *TLBProvider) enumOf(t TypeRef) *tlbEnum {
+	p.load()
+	key := strings.ToLower(t.Name)
+	if _, isIface := p.byName[key]; isIface {
+		return nil
+	}
+	return p.enums[key]
 }
 
 // Member は hidden のメンバーも引ける（補完には出さないが、書かれていれば診断しない・ホバーできる）。
 func (p *TLBProvider) Member(t TypeRef, name string) (MemberInfo, bool) {
 	ms := p.memberSetOf(t)
 	if ms == nil {
+		if e := p.enumOf(t); e != nil {
+			if i, ok := e.byName[strings.ToLower(name)]; ok {
+				return e.members[i], true
+			}
+		}
 		return MemberInfo{}, false
 	}
 	i, ok := ms.byName[strings.ToLower(name)]
@@ -338,6 +421,9 @@ func (p *TLBProvider) MemberType(t TypeRef, name string) (TypeRef, bool) {
 	}
 	if it, ok := p.byName[strings.ToLower(ret)]; ok {
 		return TypeRef{Lib: "CATIA", Name: it.name}, true
+	}
+	if e := p.enums[strings.ToLower(ret)]; e != nil {
+		return e.info.Ref, true
 	}
 	return ParseTypeName(ret), true
 }
@@ -425,14 +511,8 @@ func (p *TLBProvider) ownMembers(it tlbIface) []ownMember {
 		rows.Close()
 	}
 
-	pcol := func(col, fallback string) string {
-		if s.Has("parameters", col) {
-			return "pa." + col
-		}
-		return fallback
-	}
-	rows, err = p.db.db.Query(`SELECT pa.method_id, pa.name, pa.type, `+pcol("flags", "0")+`, `+
-		pcol("default_value", "NULL")+`, `+pcol("doc", "''")+
+	rows, err = p.db.db.Query(`SELECT pa.method_id, pa.name, pa.type, `+s.col("parameters", "pa.flags", "0")+`, `+
+		s.col("parameters", "pa.default_value", "NULL")+`, `+s.col("parameters", "pa.doc", "''")+
 		` FROM parameters pa JOIN methods m ON m.id = pa.method_id WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
 	if err == nil {
 		for rows.Next() {
@@ -520,7 +600,14 @@ func (p *TLBProvider) HasMemberNamed(name string) bool {
 	return p.names[strings.ToLower(name)]
 }
 
-// Types は型補完用の型（IUnknown / IDispatch と hidden のインターフェースを除く）を名前順に返す。
+// Constant は TLB の Enum メンバーを非修飾の名前で引く（VBA と同じく catPaperA4 だけで参照できる。ホバー用）。
+func (p *TLBProvider) Constant(name string) (MemberInfo, bool) {
+	p.load()
+	m, ok := p.consts[strings.ToLower(name)]
+	return m, ok
+}
+
+// Types は型補完用の型（IUnknown / IDispatch と hidden のインターフェースを除く）と Enum を名前順に返す。
 func (p *TLBProvider) Types() []TypeInfo {
 	p.typesOnce.Do(func() {
 		p.load()
@@ -530,6 +617,11 @@ func (p *TLBProvider) Types() []TypeInfo {
 			}
 			if ti, ok := p.LookupType(key); ok {
 				p.typeList = append(p.typeList, ti)
+			}
+		}
+		for key, e := range p.enums {
+			if _, dup := p.byName[key]; !dup {
+				p.typeList = append(p.typeList, e.info)
 			}
 		}
 		sort.Slice(p.typeList, func(i, j int) bool { return p.typeList[i].Ref.Name < p.typeList[j].Ref.Name })
