@@ -58,6 +58,15 @@ VBA 符号会被识别并公开给 VSCode 的导航功能：
 
 可识别的符号类型：`Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enum`
 
+**面包屑导航的排序方式 (`cat5dev.toml`)：**
+
+```toml
+[editor]
+breadcrumbs_sort = "name"   # position = 代码顺序 / name = 按名称 / type = 按类型
+```
+
+该值会作为 `breadcrumbs.symbolSortOrder` 写入工作区设置 (`.vscode/settings.json`)，并应用于此工作区中的所有文件。未指定该键时不会修改工作区设置。
+
 ### VBA 代码检查器 (Linter)
 
 在您编辑 `.bas_utf`、`.cls_utf` 和 `.frm_utf` 文件时，内置的 VBA 校验器 (Linter) 会实时运行。

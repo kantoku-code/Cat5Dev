@@ -217,6 +217,29 @@ export function readFormatterOptions(workspaceRoot: string): FormatterOptions {
     };
 }
 
+export type BreadcrumbsSortOrder = 'position' | 'name' | 'type';
+
+export const DEFAULT_BREADCRUMBS_SORT: BreadcrumbsSortOrder = 'name';
+
+const BREADCRUMBS_SORT_VALUES: readonly BreadcrumbsSortOrder[] = ['position', 'name', 'type'];
+
+/** cat5dev.toml の [editor] breadcrumbs_sort を返す。
+ *  toml・セクション・キーが無い場合や不正値の場合は undefined（＝何もしない）。 */
+export function readBreadcrumbsSort(workspaceRoot: string): BreadcrumbsSortOrder | undefined {
+    const tomlPath = path.join(workspaceRoot, 'cat5dev.toml');
+    if (!fs.existsSync(tomlPath)) { return undefined; }
+
+    let content: string;
+    try { content = fs.readFileSync(tomlPath, 'utf-8'); } catch { return undefined; }
+
+    const raw = parseToml(content)['editor']?.['breadcrumbs_sort'];
+    if (raw === undefined) { return undefined; }
+    const value = raw.replace(/^"|"$/g, '').trim().toLowerCase();
+    return (BREADCRUMBS_SORT_VALUES as readonly string[]).includes(value)
+        ? value as BreadcrumbsSortOrder
+        : undefined;
+}
+
 export function gitignoreTemplate(): string {
     return `# OS
 Thumbs.db
@@ -333,6 +356,7 @@ const tomlComments = {
         normalizeCommentSpace: '# コメント文字 (\') の後にスペースを入れる',
         expandTypeSuffixes: '# 型サフィックスの短縮形を展開 (% → Integer, $ → String 等)',
         formatOnSave: '# 保存時に自動フォーマット',
+        breadcrumbsSort: '# パンくずリストのシンボル並び順 (position = 記述順 / name = 名前順 / type = 種類順)\n# ワークスペース設定 (.vscode/settings.json) に反映され、このワークスペースの全ファイルに適用されます',
     },
     en: {
         header: '# Cat5Dev configuration file',
@@ -361,6 +385,7 @@ const tomlComments = {
         normalizeCommentSpace: '# Ensure a space after comment character (\')',
         expandTypeSuffixes: '# Expand type suffix shorthand (% → Integer, $ → String, etc.)',
         formatOnSave: '# Automatically format on save',
+        breadcrumbsSort: '# Symbol order in the breadcrumbs (position = source order / name = by name / type = by kind)\n# Written to the workspace settings (.vscode/settings.json) and applies to every file in this workspace',
     },
     zh: {
         header: '# Cat5Dev 配置文件',
@@ -389,6 +414,7 @@ const tomlComments = {
         normalizeCommentSpace: '# 确保注释符号 (\') 后有空格',
         expandTypeSuffixes: '# 展开类型后缀简写 (% → Integer, $ → String 等)',
         formatOnSave: '# 保存时自动格式化',
+        breadcrumbsSort: '# 面包屑导航中符号的排序方式 (position = 代码顺序 / name = 按名称 / type = 按类型)\n# 写入工作区设置 (.vscode/settings.json)，并应用于此工作区中的所有文件',
     },
 };
 
@@ -485,5 +511,9 @@ expand_type_suffixes = ${f.expand_type_suffixes}
 
 ${c.formatOnSave}
 format_on_save = ${f.format_on_save}
+
+[editor]
+${c.breadcrumbsSort}
+breadcrumbs_sort = "${DEFAULT_BREADCRUMBS_SORT}"
 `;
 }

@@ -11,6 +11,7 @@ import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectK
 import { startLspClient } from './lspClient';
 import { CatiaSync } from './catiaSync';
 import { registerFileCommands } from './fileCommands';
+import { registerEditorSettingsSync } from './editorSettings';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
 
@@ -100,6 +101,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     context.subscriptions.push(treeView);
+
+    // cat5dev.toml の [editor] をワークスペース設定へ反映（パンくずの並び順など）
+    context.subscriptions.push(registerEditorSettingsSync(outputChannel));
 
     // Linter 登録
     const linterDisposables = registerLinter(vbaServer, outputChannel, VBA_SELECTOR);

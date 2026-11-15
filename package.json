@@ -160,11 +160,6 @@
                 "title": "CATIA: Recover Synchronization Lock / 同期ロックを復旧"
             }
         ],
-        "configurationDefaults": {
-            "[vb]": {
-                "breadcrumbs.symbolSortOrder": "name"
-            }
-        },
         "semanticTokenScopes": [
             {
                 "language": "vb",

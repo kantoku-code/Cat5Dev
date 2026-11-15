@@ -60,6 +60,15 @@ VBA symbols are recognized and exposed to VSCode's navigation features:
 
 Recognized symbol types: `Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enum`
 
+**Breadcrumb symbol order (`cat5dev.toml`):**
+
+```toml
+[editor]
+breadcrumbs_sort = "name"   # position = source order / name = by name / type = by kind
+```
+
+The value is written to the workspace settings (`.vscode/settings.json`) as `breadcrumbs.symbolSortOrder`, so it applies to every file in this workspace. If the key is absent, the workspace setting is left untouched.
+
 ### VBA Linter
 
 A built-in VBA linter runs in real time as you edit `.bas_utf`, `.cls_utf`, and `.frm_utf` files.
@@ -341,6 +350,15 @@ VBA シンボルが認識され、VSCode のナビゲーション機能に公開
 - **シンボルへ移動** (`Ctrl+Shift+O`) — 任意のプロシージャに直接ジャンプ
 
 認識されるシンボルタイプ： `Sub`、`Function`、`Property Get/Let/Set`、`Type`、`Enum`
+
+**ブレッドクラムの並び順（`cat5dev.toml`）：**
+
+```toml
+[editor]
+breadcrumbs_sort = "name"   # position = 記述順 / name = 名前順 / type = 種類順
+```
+
+値はワークスペース設定（`.vscode/settings.json`）の `breadcrumbs.symbolSortOrder` に書き込まれ、このワークスペースの全ファイルに適用されます。キーが無い場合はワークスペース設定を変更しません。
 
 ### VBA Lint
 
