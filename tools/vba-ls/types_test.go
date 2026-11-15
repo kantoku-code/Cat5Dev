@@ -182,8 +182,10 @@ type fakeProvider struct {
 	mtypes    map[string]TypeRef      // "型.メンバー"（小文字）→ 型
 }
 
-func (f *fakeProvider) QualifiedOnly() bool         { return f.qualified }
-func (f *fakeProvider) OwnsLibrary(lib string) bool { return f.lib != "" && strings.EqualFold(lib, f.lib) }
+func (f *fakeProvider) QualifiedOnly() bool { return f.qualified }
+func (f *fakeProvider) OwnsLibrary(lib string) bool {
+	return f.lib != "" && strings.EqualFold(lib, f.lib)
+}
 func (f *fakeProvider) LookupType(name string) (TypeInfo, bool) {
 	ti, ok := f.types[strings.ToLower(name)]
 	return ti, ok

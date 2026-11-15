@@ -159,7 +159,7 @@ type MemberInfo struct {
 	Kind       MemberKind
 	Params     []TLBParam
 	ReadOnly   bool
-	Doc        string     // 2-1: helpstring
+	Doc        string      // 2-1: helpstring
 	Visibility Visibility  // Private メンバーは自モジュール（Me.）からだけ見える
 	Owner      TypeRef     // 定義元（継承元の表示用）
 	Origin     *DeclOrigin // ワークスペースのメンバーなら宣言（TLB / 組み込みは nil）
