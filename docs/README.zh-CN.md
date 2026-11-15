@@ -214,7 +214,7 @@ Cat5Dev 以 `.vsix` 文件形式分发。安装步骤如下：
 > 配置保存在 `cat5dev.toml` 的 `[project]` 部分下：
 > - `target_project` — 目标 CATIA VBA 项目的名称
 > - `language` — `"ja"` 表示日语，`"en"` 表示英语，`"zh"` 表示中文（默认：`"ja"`）
-> - `encoding` — VBA 代码传输的字符编码（如 `"gbk"`、`"shift_jis"`、`"utf-8"` 等）。中文 (`"zh"`) 默认值为 `"gbk"`，日语 (`"ja"`) 默认值为 `"shift_jis"`，英语 (`"en"`) 默认值为 `"utf-8"`。
+> - `encoding` — VBA 代码传输的字符编码（如 `"gbk"`、`"shift_jis"`、`"utf-8"` 等）。中文 (`"zh"`) 默认值为 `"gbk"`，日语 (`"ja"`) 和英语 (`"en"`) 默认值为 `"shift_jis"`。
 
 ---
 
@@ -270,8 +270,7 @@ VSCode (编辑) → 推送 (Push) → 在 CATIA 的 VBA 编辑器中保存 ✅
 VBA 文件是在 VSCode (UTF-8) 和 CATIA V5 (原生 ANSI 编码，如 GBK 或 Shift-JIS) 之间进行同步的。
 默认情况下，Cat5Dev 会根据您配置的 `language` 自动推导和设置传输编码：
 - 中文 (`"zh"`) 系统默认为 `"gbk"`
-- 日语 (`"ja"`) 系统默认为 `"shift_jis"`
-- 英语 (`"en"`) 系统默认为 `"utf-8"`
+- 日语 (`"ja"`) 和英语 (`"en"`) 系统默认为 `"shift_jis"`
 
 如果需要，您可以在 `cat5dev.toml` 文件的 `[project]` 部分下，通过设置 `encoding` 属性来自定义您所需的任何编码（例如 `encoding = "gb2312"`）。如果遇到任何问题，欢迎随时联系我。
 

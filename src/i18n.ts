@@ -15,16 +15,16 @@ export function getLanguage(): Language {
         }
     }
 
-    // Fallback 1: VSCode config setting
-    const configLang = vscode.workspace.getConfiguration('cat5dev').get<string>('language');
+    // Fallback 1: VSCode config setting (explicitly set by the user only; package.json default is ignored)
+    const inspected = vscode.workspace.getConfiguration('cat5dev').inspect<string>('language');
+    const configLang = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
     if (configLang === 'ja' || configLang === 'en' || configLang === 'zh') { return configLang; }
 
     // Fallback 2: VSCode display language
     const envLang = vscode.env.language.toLowerCase();
     if (envLang.startsWith('zh')) { return 'zh'; }
-    if (envLang.startsWith('ja')) { return 'ja'; }
 
-    return 'en'; // Default fallback
+    return 'ja'; // Default fallback
 }
 
 export async function setLanguage(lang: Language): Promise<void> {
@@ -62,7 +62,7 @@ export const messages = {
         'error.pullFailed': 'プルに失敗しました。詳細 Output を確認してください。',
         'error.pushFailed': 'プッシュに失敗しました。詳細 Output を確認してください。',
         'error.selectFailed': 'CATIAからVBAプロジェクトを取得できませんでした。\n詳細 Output を確認してください。',
-        'error.noModulesDir': 'プッシュ対象 of modules ディレクトリがワークスペース内に見つかりません。',
+        'error.noModulesDir': 'プッシュ対象の modules ディレクトリがワークスペース内に見つかりません。',
         'error.noModuleFiles': 'ワークスペース内にプッシュ対象のVBAファイル (.bas_utf, .cls_utf, .frm_utf) が見つかりませんでした。',
         'error.checkComponentsFailed': '[Check Components Error]',
 

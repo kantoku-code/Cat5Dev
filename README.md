@@ -216,7 +216,7 @@ Before using Cat5Dev for the first time, **backup your CATIA V5 settings folder*
 > Settings are stored in `cat5dev.toml` under the `[project]` section:
 > - `target_project` — The name of the target CATIA VBA project
 > - `language` — `"ja"` for Japanese, `"en"` for English, `"zh"` for Chinese (default: `"ja"`)
-> - `encoding` — The character encoding of VBA code transfer (e.g., `"gbk"`, `"shift_jis"`, `"utf-8"`). Defaults to `"gbk"` for Chinese (`"zh"`), `"shift_jis"` for Japanese (`"ja"`), and `"utf-8"` for English (`"en"`).
+> - `encoding` — The character encoding of VBA code transfer (e.g., `"gbk"`, `"shift_jis"`, `"utf-8"`). Defaults to `"gbk"` for Chinese (`"zh"`), and `"shift_jis"` for Japanese (`"ja"`) and English (`"en"`).
 
 ---
 
@@ -272,8 +272,7 @@ Well… that’s a different question entirely.
 VBA files are synchronized between VSCode (UTF-8) and CATIA V5 (native ANSI, e.g., Shift-JIS or GBK). 
 By default, Cat5Dev automatically detects and sets the transfer encoding based on the configured language:
 - `"gbk"` for Chinese (`"zh"`)
-- `"shift_jis"` for Japanese (`"ja"`)
-- `"utf-8"` for English (`"en"`)
+- `"shift_jis"` for Japanese (`"ja"`) and English (`"en"`)
 
 You can customize this by setting the `encoding` property under the `[project]` section in `cat5dev.toml` (e.g., `encoding = "gb2312"` or `encoding = "shift_jis"`). If you run into any issues, please feel free to let me know.
 

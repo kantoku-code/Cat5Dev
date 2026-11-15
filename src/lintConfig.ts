@@ -392,12 +392,17 @@ const tomlComments = {
     },
 };
 
+/** 言語ごとの既定エンコーディング（日本語版CATIAでは英語UIでもshift_jis） */
+export function defaultEncodingFor(lang: Language): string {
+    return lang === 'zh' ? 'gbk' : 'shift_jis';
+}
+
 /** cat5dev.toml の雛形テキストを返す。値は DEFAULT_*_OPTIONS から生成する */
 export function tomlTemplate(lang: Language = 'ja'): string {
     const l = DEFAULT_LINT_OPTIONS;
     const f = DEFAULT_FORMATTER_OPTIONS;
     const c = tomlComments[lang];
-    const defaultEncoding = lang === 'zh' ? 'gbk' : (lang === 'en' ? 'utf-8' : 'shift_jis');
+    const defaultEncoding = defaultEncodingFor(lang);
     return `${c.header}
 
 [project]

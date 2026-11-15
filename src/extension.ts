@@ -10,7 +10,7 @@ import { VbaDocumentFormatter, registerFormatOnSave, formatVbaDocument } from '.
 import { VbaServer } from './vbaServer';
 import { t, getLanguage, setLanguage, Language, messages } from './i18n';
 import { registerLinter } from './linter';
-import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
+import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey, defaultEncodingFor } from './lintConfig';
 import { startLspClient } from './lspClient';
 
 const outputChannel = vscode.window.createOutputChannel('CATIA VBA Sync');
@@ -228,7 +228,7 @@ async function executeSelectProject(_context: vscode.ExtensionContext, rootPath?
 
     const activeLang = getLanguage();
     const { encoding: configEncoding } = readProjectSettings(rootPath);
-    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    const encoding = configEncoding || defaultEncodingFor(activeLang);
 
     const tempDir = path.join(os.tmpdir(), 'cat5dev');
     if (fs.existsSync(tempDir)) {
@@ -353,7 +353,7 @@ async function executeCatiaPull(context: vscode.ExtensionContext, vbaServer: Vba
     const rootPath = workspaceFolders[0].uri.fsPath;
     const activeLang = getLanguage();
     const { encoding: configEncoding } = readProjectSettings(rootPath);
-    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    const encoding = configEncoding || defaultEncodingFor(activeLang);
     outputChannel.appendLine(t('log.pull.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
@@ -550,7 +550,7 @@ async function executeCatiaPush(context: vscode.ExtensionContext) {
     const rootPath = workspaceFolders[0].uri.fsPath;
     const activeLang = getLanguage();
     const { encoding: configEncoding } = readProjectSettings(rootPath);
-    const encoding = configEncoding || (activeLang === 'zh' ? 'gbk' : (activeLang === 'en' ? 'utf-8' : 'shift_jis'));
+    const encoding = configEncoding || defaultEncodingFor(activeLang);
     outputChannel.appendLine(t('log.push.start', activeLang, encoding));
 
     const modulesDir = path.join(rootPath, 'modules');
