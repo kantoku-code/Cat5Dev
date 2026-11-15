@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -316,14 +317,21 @@ type completionKind int
 const (
 	CtxNone       completionKind = iota
 	CtxMember                    // "式." の後
-	CtxIdentifier                // 2-2: 識別子の途中（"." なし）
-	CtxType                      // 2-2: As / New の後
+	CtxIdentifier                // 識別子の途中（"." なし）
+	CtxType                      // As / New / Implements / TypeOf…Is の後
+	CtxKeyword                   // Exit / End / On Error / Option などの後（決まったキーワードだけ）
 )
 
 type completionContext struct {
-	Kind    completionKind
-	Chain   MemberChain // CtxMember のとき "." の左側（LeadingDot なら Segs は空）
-	Partial string      // 入力途中の識別子
+	Kind      completionKind
+	Chain     MemberChain // CtxMember のとき "." の左側（LeadingDot なら Segs は空）
+	Partial   string      // 入力途中の識別子
+	TypeLib   string      // CtxType: "As Scripting.|" の修飾子（"" なら全ライブラリ）
+	Creatable bool        // CtxType: New の後（New で作れる型だけ）
+	StmtStart bool        // CtxIdentifier: 文頭（文のキーワードも出す）
+	AfterThen bool        // CtxIdentifier: 単一行 If の Then / Else の後の文頭（宣言のキーワードは出さない）
+	AfterCall bool        // CtxIdentifier: Call の後（定数・Enum メンバー・キーワードを出さない）
+	Keywords  []string    // CtxKeyword: 候補のキーワード
 }
 
 // analyzeCompletion はカーソル位置（行・UTF-16 位置）の補完文脈を求める。
@@ -345,16 +353,409 @@ func analyzeCompletion(doc *Document, line, utf16Char int) completionContext {
 		}
 	}
 	dot := skipBlankBack(masked, p)
-	if dot == 0 || masked[dot-1] != '.' {
-		return completionContext{Kind: CtxIdentifier, Partial: partial}
-	}
-	dot--
-	if endsChainOperand(masked, dot) {
-		ch, ok := scanChainBackward(masked, dot)
-		if !ok {
-			return completionContext{}
+	if dot > 0 && masked[dot-1] == '.' {
+		dot--
+		if endsChainOperand(masked, dot) {
+			ch, ok := scanChainBackward(masked, dot)
+			if !ok {
+				return completionContext{}
+			}
+			// "As Scripting.|" / "New Scripting.|" は修飾付きの型
+			if !ch.LeadingDot && len(ch.Segs) == 1 && ch.Segs[0].Calls == 0 && !ch.Segs[0].Bang {
+				switch strings.ToLower(wordBefore(masked, ch.Start)) {
+				case "as":
+					return completionContext{Kind: CtxType, TypeLib: ch.Segs[0].Name, Partial: partial}
+				case "new":
+					return completionContext{Kind: CtxType, TypeLib: ch.Segs[0].Name, Creatable: true, Partial: partial}
+				}
+			}
+			return completionContext{Kind: CtxMember, Chain: ch, Partial: partial}
 		}
-		return completionContext{Kind: CtxMember, Chain: ch, Partial: partial}
+		return completionContext{Kind: CtxMember, Chain: MemberChain{LeadingDot: true, Start: dot}, Partial: partial}
 	}
-	return completionContext{Kind: CtxMember, Chain: MemberChain{LeadingDot: true, Start: dot}, Partial: partial}
+	ctx := statementContext(masked[:p])
+	ctx.Partial = partial
+	if ctx.Kind == CtxIdentifier && ctx.StmtStart && !ctx.AfterThen && ll.First == line &&
+		(inTypeOrEnumBody(doc.Table, line) || inTypeOrEnumBodyText(doc.Lines, line)) {
+		return completionContext{} // Type / Enum の本体ではメンバー名を書く
+	}
+	return ctx
+}
+
+// statementContext は "." の後でない位置の文脈を、カーソル（入力途中の識別子の先頭）より前のマスク済みテキストから求める。
+func statementContext(before string) completionContext {
+	s, afterThen := stmtStartIndex(before)
+	stmt := strings.TrimLeft(before[s:], " \t　")
+	words := identWords(stmt)
+	prev := ""
+	if n := len(words); n > 0 && len(before) > 0 && isBlankByte(before[len(before)-1]) {
+		t := trimRightBlank(stmt)
+		if strings.HasSuffix(strings.ToLower(t), words[n-1]) {
+			prev = words[n-1]
+		}
+	}
+	first := ""
+	if len(words) > 0 {
+		first = words[0]
+	}
+	kw := func(k ...string) completionContext { return completionContext{Kind: CtxKeyword, Keywords: k} }
+	switch {
+	case prev == "as" && first == "open":
+		return completionContext{} // Open … As #n
+	case prev == "as":
+		return completionContext{Kind: CtxType}
+	case prev == "new":
+		return completionContext{Kind: CtxType, Creatable: true}
+	case prev == "implements" && len(words) == 1:
+		return completionContext{Kind: CtxType}
+	case prev == "is" && containsWord(words, "typeof"):
+		return completionContext{Kind: CtxType}
+	case prev == "goto" || prev == "gosub":
+		return completionContext{} // ラベル（将来）
+	case prev == "resume":
+		return kw("Next")
+	case wordsAre(words, "exit"):
+		return kw("Do", "For", "Function", "Property", "Sub")
+	case wordsAre(words, "end"):
+		return kw("Enum", "Function", "If", "Property", "Select", "Sub", "Type", "With")
+	case wordsAre(words, "on"):
+		return kw("Error")
+	case wordsAre(words, "on", "error"):
+		return kw("GoTo", "Resume")
+	case wordsAre(words, "option"):
+		return kw("Base", "Compare", "Explicit", "Private")
+	case wordsAre(words, "option", "compare"):
+		return kw("Binary", "Database", "Text")
+	}
+	switch declSlotOf(stmt, words) {
+	case declName:
+		return completionContext{}
+	case declAfterName:
+		return kw("As")
+	case declModifiers:
+		return kw("Const", "Declare", "Dim", "Enum", "Event", "Function", "Property", "Sub", "Type", "WithEvents")
+	case declProperty:
+		return kw("Get", "Let", "Set")
+	}
+	switch {
+	case prev == "call" && len(words) == 1:
+		return completionContext{Kind: CtxIdentifier, AfterCall: true}
+	case len(words) == 0 && strings.TrimSpace(stmt) == "":
+		return completionContext{Kind: CtxIdentifier, StmtStart: true, AfterThen: afterThen}
+	}
+	return completionContext{Kind: CtxIdentifier}
+}
+
+// stmtStartIndex は before の中で最後の文の開始位置を返す。括弧の深さ 0 にある ":"（":=" は名前付き引数なので除く）と、
+// 語としての Then / Else の後のうち遅い方。afterThen は Then / Else の後で始まる文か。
+func stmtStartIndex(before string) (start int, afterThen bool) {
+	depth := 0
+	for i := 0; i < len(before); {
+		c := before[i]
+		switch {
+		case c == '(':
+			depth++
+		case c == ')':
+			if depth > 0 {
+				depth--
+			}
+		case c == ':' && depth == 0 && !(i+1 < len(before) && before[i+1] == '='):
+			start, afterThen = i+1, false
+		default:
+			r, size := utf8.DecodeRuneInString(before[i:])
+			if isIdentPart(r) {
+				j := i + size
+				for j < len(before) {
+					r2, s2 := utf8.DecodeRuneInString(before[j:])
+					if !isIdentPart(r2) {
+						break
+					}
+					j += s2
+				}
+				w := before[i:j]
+				if depth == 0 && (strings.EqualFold(w, "then") || strings.EqualFold(w, "else")) && !precededByDot(before, i) {
+					start, afterThen = j, true
+				}
+				i = j
+				continue
+			}
+			i += size
+			continue
+		}
+		i++
+	}
+	return start, afterThen
+}
+
+func precededByDot(s string, i int) bool {
+	j := skipBlankBack(s, i)
+	return j > 0 && s[j-1] == '.'
+}
+
+// identWords は s（マスク済み）の識別子の語を小文字で返す。数字で始まる語（数値リテラル）は含めない。
+func identWords(s string) []string {
+	var out []string
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !isIdentPart(r) {
+			i += size
+			continue
+		}
+		j := i
+		for j < len(s) {
+			r2, s2 := utf8.DecodeRuneInString(s[j:])
+			if !isIdentPart(r2) {
+				break
+			}
+			j += s2
+		}
+		if unicode.IsLetter(r) {
+			out = append(out, strings.ToLower(s[i:j]))
+		}
+		i = j
+	}
+	return out
+}
+
+// wordBefore は s[:end] の末尾（空白を飛ばす）にある識別子を返す（なければ ""）。
+func wordBefore(s string, end int) string {
+	e := skipBlankBack(s, end)
+	b := identStartBack(s, e)
+	if b > 0 && s[b-1] == '.' {
+		return ""
+	}
+	return s[b:e]
+}
+
+func wordsAre(words []string, want ...string) bool {
+	if len(words) != len(want) {
+		return false
+	}
+	for i := range words {
+		if words[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsWord(words []string, w string) bool {
+	for _, x := range words {
+		if x == w {
+			return true
+		}
+	}
+	return false
+}
+
+// declSlot は宣言文の中での位置。
+type declSlot int
+
+const (
+	declNone      declSlot = iota // 宣言文ではない、または式・型の位置
+	declName                      // 宣言する名前を書く位置（Dim |、Sub |、引数名）
+	declAfterName                 // 宣言リストで名前の後（Dim x |）。次は As
+	declModifiers                 // 修飾語だけ（Public |）。次は Sub / Const など
+	declProperty                  // Property の後（Get / Let / Set）
+)
+
+var declModifierWords = map[string]bool{"public": true, "private": true, "friend": true, "global": true, "static": true}
+
+// declSlotOf は文 stmt（文頭からカーソルまで）が宣言文のどの位置にあるかを返す。
+func declSlotOf(stmt string, words []string) declSlot {
+	i := 0
+	for i < len(words) && declModifierWords[words[i]] {
+		i++
+	}
+	mods := i
+	if i == len(words) {
+		if mods > 0 {
+			return declModifiers
+		}
+		return declNone
+	}
+	rest := afterWords(stmt, i) // words[i] 以降のテキスト
+	switch words[i] {
+	case "sub", "function", "event":
+		return headerPosition(afterWords(stmt, i+1))
+	case "property":
+		if i+1 == len(words) {
+			return declProperty
+		}
+		return headerPosition(afterWords(stmt, i+2))
+	case "declare":
+		j := i + 1
+		if j < len(words) && words[j] == "ptrsafe" {
+			j++
+		}
+		if j == len(words) {
+			return declNone
+		}
+		return headerPosition(afterWords(stmt, j+1))
+	case "type", "enum":
+		if i+1 == len(words) {
+			return declName
+		}
+		return declNone
+	case "dim", "const":
+		return declListPosition(afterWords(stmt, i+1))
+	case "withevents":
+		return declListPosition(rest)
+	}
+	if mods > 0 {
+		return declListPosition(rest) // Public x / Private WithEvents x
+	}
+	return declNone
+}
+
+// afterWords は stmt の先頭から n 語を読み飛ばした後のテキストを返す。
+func afterWords(stmt string, n int) string {
+	i := 0
+	for k := 0; k < n; k++ {
+		for i < len(stmt) {
+			r, size := utf8.DecodeRuneInString(stmt[i:])
+			if isIdentPart(r) {
+				break
+			}
+			i += size
+		}
+		for i < len(stmt) {
+			r, size := utf8.DecodeRuneInString(stmt[i:])
+			if !isIdentPart(r) {
+				break
+			}
+			i += size
+		}
+	}
+	return stmt[i:]
+}
+
+// declListPosition は宣言リスト（"a As Long, b"）のうち最後の項目を見る。
+func declListPosition(list string) declSlot {
+	depth, last := 0, -1
+	for i := 0; i < len(list); i++ {
+		switch list[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				last = i
+			}
+		}
+	}
+	if depth > 0 {
+		return declNone // Dim a(| は添字の式
+	}
+	item := list[last+1:]
+	words := identWords(item)
+	if len(words) > 0 && words[0] == "withevents" {
+		words = words[1:]
+	}
+	if strings.Contains(item, "=") || containsWord(words, "as") {
+		return declNone
+	}
+	switch {
+	case len(words) == 0:
+		return declName
+	case len(words) == 1 && strings.TrimRight(item, " \t　") != item:
+		return declAfterName
+	}
+	return declNone
+}
+
+// headerPosition はプロシージャの宣言（名前の後のテキスト）のどこにいるかを返す。
+func headerPosition(rest string) declSlot {
+	open := strings.IndexByte(rest, '(')
+	if open < 0 {
+		if len(identWords(rest)) <= 1 {
+			return declName // プロシージャ名
+		}
+		return declNone // Declare の Lib "…" など
+	}
+	depth, last := 0, open
+	for i := open; i < len(rest); i++ {
+		switch rest[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return declNone // ")" の後（As は別の規則）
+			}
+		case ',':
+			if depth == 1 {
+				last = i
+			}
+		}
+	}
+	if depth != 1 {
+		return declNone
+	}
+	item := rest[last+1:]
+	if strings.Contains(item, "=") {
+		return declNone // 既定値は式
+	}
+	words := identWords(item)
+	k := 0
+	for k < len(words) && (words[k] == "optional" || words[k] == "byval" || words[k] == "byref" || words[k] == "paramarray") {
+		k++
+	}
+	if containsWord(words[k:], "as") || len(words[k:]) > 1 {
+		return declNone
+	}
+	return declName
+}
+
+// inTypeOrEnumBody は line が Type / Enum の本体（宣言行と End 行の間）にあるかを返す。
+func inTypeOrEnumBody(st *SymbolTable, line int) bool {
+	if st == nil {
+		return false
+	}
+	for _, u := range st.UDTs {
+		if u.StartLine < line && line < u.EndLine {
+			return true
+		}
+	}
+	for _, e := range st.Enums {
+		if e.StartLine < line && line < e.EndLine {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	typeHeaderRe = regexp.MustCompile(`(?i)^` + wsClass + `*(?:(?:Public|Private)` + wsClass + `+)?(?:Type|Enum)` + wsClass + `+` + identPattern + wsClass + `*$`)
+	// typeMemberRe は Type / Enum の本体の行（"a As Long" / "a(3) As T" / "a = 1" / "a"）
+	typeMemberRe = regexp.MustCompile(`^` + wsClass + `*(` + identPattern + `)` + `(?:` + wsClass + `*\(.*\))?(?:` + wsClass + `+As` + wsClass + `.*|` + wsClass + `*=.*)?` + wsClass + `*$`)
+)
+
+// typeMemberKeywords は Type / Enum のメンバー名にならない語（本体の外の文の先頭）。
+var typeMemberKeywords = map[string]bool{"end": true, "dim": true, "const": true, "sub": true, "function": true,
+	"property": true, "public": true, "private": true, "friend": true, "global": true, "static": true, "declare": true,
+	"option": true, "attribute": true, "implements": true, "event": true, "type": true, "enum": true}
+
+// inTypeOrEnumBodyText は、解析結果に Type / Enum が無いとき（本体が空で構文エラーになる入力途中など）のための
+// テキストによる判定。line の上を、メンバーらしい行・空行・コメント行の間だけさかのぼり、Type / Enum の宣言行に着けば true。
+func inTypeOrEnumBodyText(lines []string, line int) bool {
+	for i := line - 1; i >= 0 && i >= line-200; i-- {
+		l := lines[i]
+		if masked, _, _ := maskCode(l); strings.TrimSpace(masked) == "" {
+			continue // 空行・コメント行
+		} else {
+			l = masked
+		}
+		if typeHeaderRe.MatchString(l) {
+			return true
+		}
+		m := typeMemberRe.FindStringSubmatch(l)
+		if m == nil || typeMemberKeywords[strings.ToLower(m[1])] {
+			return false
+		}
+	}
+	return false
 }
