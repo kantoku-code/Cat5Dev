@@ -78,9 +78,15 @@ type SemanticTokensOptions struct {
 	Full   bool                 `json:"full"`
 }
 
+type SignatureHelpOptions struct {
+	TriggerCharacters   []string `json:"triggerCharacters,omitempty"`
+	RetriggerCharacters []string `json:"retriggerCharacters,omitempty"`
+}
+
 type ServerCapabilities struct {
 	TextDocumentSync       TextDocumentSyncKind   `json:"textDocumentSync"`
 	CompletionProvider     *CompletionOptions     `json:"completionProvider,omitempty"`
+	SignatureHelpProvider  *SignatureHelpOptions  `json:"signatureHelpProvider,omitempty"`
 	HoverProvider          bool                   `json:"hoverProvider,omitempty"`
 	DefinitionProvider     bool                   `json:"definitionProvider,omitempty"`
 	SemanticTokensProvider *SemanticTokensOptions `json:"semanticTokensProvider,omitempty"`
@@ -192,6 +198,36 @@ type CompletionItem struct {
 	Detail        string                      `json:"detail,omitempty"`
 	Documentation *MarkupContent              `json:"documentation,omitempty"`
 	SortText      string                      `json:"sortText,omitempty"`
+}
+
+// --- Signature Help ---
+
+type SignatureHelpContext struct {
+	TriggerKind      int    `json:"triggerKind"`
+	TriggerCharacter string `json:"triggerCharacter,omitempty"`
+	IsRetrigger      bool   `json:"isRetrigger"`
+}
+
+type SignatureHelpParams struct {
+	TextDocumentPositionParams
+	Context *SignatureHelpContext `json:"context,omitempty"`
+}
+
+type ParameterInformation struct {
+	Label         [2]uint32      `json:"label"` // シグネチャのラベル内の UTF-16 の [start, end)
+	Documentation *MarkupContent `json:"documentation,omitempty"`
+}
+
+type SignatureInformation struct {
+	Label         string                 `json:"label"`
+	Documentation *MarkupContent         `json:"documentation,omitempty"`
+	Parameters    []ParameterInformation `json:"parameters"`
+}
+
+type SignatureHelp struct {
+	Signatures      []SignatureInformation `json:"signatures"`
+	ActiveSignature uint32                 `json:"activeSignature"`
+	ActiveParameter uint32                 `json:"activeParameter"`
 }
 
 // --- Hover ---

@@ -211,6 +211,17 @@ func (h *lspHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 			return
 		}
 		_ = conn.Reply(ctx, req.ID, items)
+	case "textDocument/signatureHelp":
+		var p SignatureHelpParams
+		if !unmarshalParams(req, &p) {
+			_ = conn.Reply(ctx, req.ID, nil)
+			return
+		}
+		if sh := h.signatureHelp(p); sh != nil {
+			_ = conn.Reply(ctx, req.ID, sh)
+			return
+		}
+		_ = conn.Reply(ctx, req.ID, nil)
 	case "textDocument/hover":
 		var p HoverParams
 		if !unmarshalParams(req, &p) {
@@ -251,6 +262,10 @@ func (h *lspHandler) initializeResult() InitializeResult {
 			TextDocumentSync: TextDocumentSyncKindFull,
 			CompletionProvider: &CompletionOptions{
 				TriggerCharacters: []string{".", " "},
+			},
+			SignatureHelpProvider: &SignatureHelpOptions{
+				TriggerCharacters:   []string{"(", ",", " "},
+				RetriggerCharacters: []string{")"},
 			},
 			HoverProvider:      true,
 			DefinitionProvider: true,
@@ -418,6 +433,14 @@ func (h *lspHandler) completion(p CompletionParams) []CompletionItem {
 		trigger = p.Context.TriggerCharacter
 	}
 	return BuildCompletionsTrigger(doc, int(p.Position.Line), int(p.Position.Character), trigger)
+}
+
+func (h *lspHandler) signatureHelp(p SignatureHelpParams) *SignatureHelp {
+	doc := h.document(p.TextDocument.URI)
+	if doc == nil {
+		return nil
+	}
+	return BuildSignatureHelp(doc, int(p.Position.Line), int(p.Position.Character))
 }
 
 func (h *lspHandler) hover(p HoverParams) *Hover {

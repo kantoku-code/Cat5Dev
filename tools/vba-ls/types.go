@@ -197,27 +197,32 @@ func (m MemberInfo) Signature() string {
 func formatParams(ps []TLBParam) string {
 	parts := make([]string, len(ps))
 	for i, p := range ps {
-		s := p.Name
-		if p.ParamArray {
-			s = "ParamArray " + s
-		} else if p.ByVal {
-			s = "ByVal " + s
-		}
-		if p.Array {
-			s += "()"
-		}
-		if p.Type != "" {
-			s += " As " + p.Type
-		}
-		if p.Optional {
-			if p.Default != "" {
-				s += " = " + p.Default
-			}
-			s = "[" + s + "]"
-		}
-		parts[i] = s
+		parts[i] = formatParam(p)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// formatParam は引数 1 つの表示（"ByVal n As Long" / "[Title]" / "ParamArray Args()"）を返す。
+func formatParam(p TLBParam) string {
+	s := p.Name
+	if p.ParamArray {
+		s = "ParamArray " + s
+	} else if p.ByVal {
+		s = "ByVal " + s
+	}
+	if p.Array {
+		s += "()"
+	}
+	if p.Type != "" {
+		s += " As " + p.Type
+	}
+	if p.Optional {
+		if p.Default != "" {
+			s += " = " + p.Default
+		}
+		s = "[" + s + "]"
+	}
+	return s
 }
 
 // TypeProvider は型解決の供給元 1 つ。メソッドは並行呼び出しに対して安全であること。
