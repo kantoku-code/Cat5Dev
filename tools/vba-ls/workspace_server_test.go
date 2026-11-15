@@ -132,9 +132,7 @@ func TestWorkspaceServerIndexAndBuffers(t *testing.T) {
 	}
 	s.waitReady()
 	s.open("Other.bas_utf", module1User)
-	if !s.h.waitParsed(s.uri("Other.bas_utf"), time.Minute) {
-		t.Fatal("解析が終わらない")
-	}
+	s.waitParsedURI(s.uri("Other.bas_utf"))
 	if !s.complete("Other.bas_utf", 2, len("    o."))["Name"] {
 		t.Fatal("索引したクラスのメンバーが補完されない")
 	}
@@ -177,10 +175,9 @@ func TestWorkspaceServerIndexAndBuffers(t *testing.T) {
 	}
 
 	// git: のバッファは索引に登録しない
-	s.open("x", "")
 	gitURI := "git:/" + filepath.ToSlash(filepath.Join(s.dir, "Module1.bas_utf")) + "?ref"
 	s.notify("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: gitURI, Text: "Public Sub GitOnly()\nEnd Sub\n"}})
-	s.h.waitParsed(gitURI, time.Minute)
+	s.waitParsedURI(gitURI)
 	time.Sleep(50 * time.Millisecond)
 	if _, m, ok := s.h.types.ProjectMember("GitOnly"); ok {
 		t.Errorf("git: のバッファが索引に入った: %+v", m)
@@ -193,7 +190,7 @@ func TestWorkspaceServerWatchedFiles(t *testing.T) {
 	s.waitReady()
 	// 構文エラーで後続の宣言が落ちないよう、補完位置の後ろにも名前を書いておく
 	s.open("Other.bas_utf", "Sub T()\n    Dim o As clsA\n    o.X\n    Dim b As clsB\n    b.X\n    Dim c As clsC\n    c.X\nEnd Sub\n")
-	s.h.waitParsed(s.uri("Other.bas_utf"), time.Minute)
+	s.waitParsedURI(s.uri("Other.bas_utf"))
 
 	// 作成
 	if err := os.WriteFile(filepath.Join(s.dir, "clsB.cls_utf"), []byte("Public Sub BMethod()\nEnd Sub\n"), 0o644); err != nil {
@@ -233,7 +230,7 @@ func TestWorkspaceServerBeforeIndex(t *testing.T) {
 	src := "Sub T()\n    Dim o As clsA\n    o.Bogus\n    o.\nEnd Sub\n"
 	uri := s.uri("Other.bas_utf")
 	s.open("Other.bas_utf", src)
-	s.h.waitParsed(uri, time.Minute)
+	s.waitParsedURI(uri)
 	first := <-s.diags
 	if len(first.Diagnostics) != 0 {
 		t.Errorf("索引前はクラスが分からないので診断なし: %+v", first.Diagnostics)
@@ -273,5 +270,15 @@ func TestWorkspaceServerBeforeIndex(t *testing.T) {
 		case <-deadline:
 			t.Fatal("索引の完了後に診断が再通知されない")
 		}
+	}
+}
+
+// waitParsedURI は didOpen が処理されて文書ができるのを待ってから、最新の版の解析を待つ
+// （Notify は送信だけで戻るため、直後の waitParsed は文書がまだ無くて false になりうる）。
+func (s *wsServer) waitParsedURI(uri string) {
+	s.t.Helper()
+	eventually(s.t, "文書が開かれる", func() bool { return s.h.document(uri) != nil })
+	if !s.h.waitParsed(uri, time.Minute) {
+		s.t.Fatal("解析が終わらない")
 	}
 }
