@@ -166,7 +166,8 @@ func (h *lspHandler) didChange(p DidChangeTextDocumentParams) {
 
 // update は文書を解析して保存する。
 func (h *lspHandler) update(uri, text string) {
-	h.store.set(uri, &docState{text: text, lines: splitLines(text), table: ParseSymbols(text)})
+	lines := splitLines(text)
+	h.store.set(uri, &docState{text: text, lines: lines, table: ParseSymbolsLines(text, lines)})
 }
 
 // document は uri の最新の Document を返す。開かれていなければ nil。

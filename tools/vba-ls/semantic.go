@@ -37,28 +37,33 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 	}
 	table := doc.Table
 
-	// CATIA 型を持つシンボルのセットを構築（大文字小文字無視）
-	type catiaVar struct {
-		typeName string
-	}
-	catiaVars := make(map[string]catiaVar) // lower(name) → info
-	for _, sym := range table.Symbols {
+	// 型が解決できる（primitive でない）シンボル。TypeExists は型ごとに 1 回だけ問い合わせる
+	existsCache := map[TypeRef]bool{}
+	typed := func(sym *Symbol) bool {
 		if sym.TypeName == "" {
-			continue
+			return false
 		}
-		if !doc.Types.TypeExists(sym.TypeRef()) {
-			continue
+		ref := sym.TypeRef()
+		v, ok := existsCache[ref]
+		if !ok {
+			v = doc.Types.TypeExists(ref)
+			existsCache[ref] = v
 		}
-		catiaVars[strings.ToLower(sym.Name)] = catiaVar{typeName: sym.TypeName}
+		return v
 	}
+	catiaVars := make(map[string]struct{}) // lower(name)
+	declPos := make(map[[2]int]struct{})   // 宣言トークンの位置（行, UTF-16 列）
 
 	var tokens []rawToken
 
 	// --- 1. 宣言箇所のトークン ---
-	for _, sym := range table.Symbols {
-		if sym.TypeName == "" || !doc.Types.TypeExists(sym.TypeRef()) {
+	for i := range table.Symbols {
+		sym := &table.Symbols[i]
+		if !typed(sym) {
 			continue
 		}
+		catiaVars[strings.ToLower(sym.Name)] = struct{}{}
+		declPos[[2]int{sym.Line, sym.Col}] = struct{}{}
 		// 変数名トークン（variable + declaration）
 		tokens = append(tokens, rawToken{
 			line:      sym.Line,
@@ -98,7 +103,7 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 				continue
 			}
 			// 宣言トークンと重複しないか確認
-			if isDeclToken(table, lower, lineIdx, col) {
+			if _, ok := declPos[[2]int{lineIdx, col}]; ok {
 				continue
 			}
 			tokens = append(tokens, rawToken{
@@ -137,17 +142,6 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 		prevCol = t.col
 	}
 	return data
-}
-
-// isDeclToken はシンボルテーブル内の宣言位置と一致するか確認する。
-// col は UTF-16 位置（Symbol.Col と同じ単位）。
-func isDeclToken(table *SymbolTable, lowerName string, line, col int) bool {
-	for _, sym := range table.Symbols {
-		if strings.ToLower(sym.Name) == lowerName && sym.Line == line && sym.Col == col {
-			return true
-		}
-	}
-	return false
 }
 
 // dedupTokens は同一位置のトークンを除去する（先勝ち）。

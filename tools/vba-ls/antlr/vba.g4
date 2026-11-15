@@ -465,7 +465,7 @@ privateTypeDeclaration
     ;
 
 udtDeclaration
-    : TYPE wsc untypedName endOfStatement+ udtMemberList endOfStatement+ END wsc TYPE
+    : TYPE wsc untypedName endOfStatement udtMemberList endOfStatement END wsc TYPE
     ;
 
 udtMemberList
@@ -519,11 +519,11 @@ privateEnumDeclaration
     ;
 
 enumDeclaration
-    : ENUM wsc untypedName endOfStatement+ enumMemberList endOfStatement+ END wsc ENUM
+    : ENUM wsc untypedName endOfStatement enumMemberList endOfStatement END wsc ENUM
     ;
 
 enumLongptrDeclaration
-    : PRIVATE wsc ENUM wsc LONGPTR endOfStatement+ enumMemberList endOfStatement+ END wsc ENUM
+    : PRIVATE wsc ENUM wsc LONGPTR endOfStatement enumMemberList endOfStatement END wsc ENUM
     ;
 
 enumMemberList
@@ -635,7 +635,7 @@ subroutineDeclaration
     : (procedureScope wsc)? (
         ((initialStatic wsc)? SUB wsc subroutineName (wsc? procedureParameters?))
         | (SUB wsc subroutineName (wsc? procedureParameters)? wsc? trailingStatic)
-    ) procedureBody? endLabel? endOfStatement+ END wsc SUB procedureTail?
+    ) procedureBody? endLabel? endOfStatement END wsc SUB procedureTail?
     ;
 
 functionDeclaration
@@ -644,7 +644,7 @@ functionDeclaration
             wsc? functionType
         )?
         | FUNCTION wsc functionName (wsc? procedureParameters)? (wsc? functionType)? wsc? trailingStatic
-    ) procedureBody? endLabel? endOfStatement+ END wsc FUNCTION procedureTail?
+    ) procedureBody? endLabel? endOfStatement END wsc FUNCTION procedureTail?
     ;
 
 propertyGetDeclaration
@@ -653,18 +653,18 @@ propertyGetDeclaration
             wsc? functionType
         )?
         | PROPERTY wsc GET wsc functionName procedureParameters? (wsc? functionType)? wsc? trailingStatic
-    ) procedureBody? endLabel? endOfStatement+ END wsc PROPERTY procedureTail?
+    ) procedureBody? endLabel? endOfStatement END wsc PROPERTY procedureTail?
     ;
 
 propertySetDeclaration
     : (procedureScope wsc)? (
         (initialStatic wsc)? PROPERTY wsc (LET | SET) wsc subroutineName wsc? propertyParameters
         | PROPERTY wsc (LET | SET) wsc subroutineName propertyParameters wsc? trailingStatic
-    ) procedureBody? endLabel? endOfStatement+ END wsc PROPERTY procedureTail?
+    ) procedureBody? endLabel? endOfStatement END wsc PROPERTY procedureTail?
     ;
 
 endLabel
-    : endOfStatement* endOfLineNoWs statementLabelDefinition
+    : endOfStatement? endOfLineNoWs statementLabelDefinition
     ;
 
 procedureTail
@@ -831,18 +831,22 @@ statementBlock
     : blockStatement+
     ;
 
+// Cat5Dev: ラベルと Attribute 文の前は元々 "endOfStatement* (endOfLineNoWs | endOfLine)" だったが、
+// endOfLine は endOfStatement に含まれ、末尾の endOfLine との区切り方が文脈に依存するため SLL 予測が
+// 空白だけの行・コメント行の後のラベルで構文エラーになる。endOfStatement に簡略化する
+// （":" の直後のラベルも受け付けるようになるが、どちらにせよ解析は成功する）。
 blockStatement
-    : endOfStatement* (endOfLineNoWs | endOfLine) statementLabelDefinition
-    | endOfStatement+ remStatement
+    : endOfStatement statementLabelDefinition
+    | endOfStatement remStatement
     | statement
-    | endOfStatement* (endOfLineNoWs | endOfLine) attributeStatement
+    | endOfStatement attributeStatement
     ;
 
 statement
     : controlStatement
-    | endOfStatement+ dataManipulationStatement
-    | endOfStatement+ errorHandlingStatement
-    | endOfStatement+ fileStatement
+    | endOfStatement dataManipulationStatement
+    | endOfStatement errorHandlingStatement
+    | endOfStatement fileStatement
     ;
 
 // 5.4.1.1  Statement Labels
@@ -880,8 +884,8 @@ remStatement
 
 // 5.4.2 Control Statements
 controlStatement
-    : endOfStatement* endOfLine+ ifStatement
-    | endOfStatement+ controlStatementExceptMultilineIf
+    : endOfStatement? endOfLine+ ifStatement
+    | endOfStatement controlStatementExceptMultilineIf
     ;
 
 controlStatementExceptMultilineIf
@@ -910,14 +914,18 @@ controlStatementExceptMultilineIf
     ;
 
 // 5.4.2.1 Call Statement
+// Cat5Dev: memberAccessExpression / indexExpression は "lExpression '.' ..." の形で lExpression の左再帰と
+// 重複しており、SLL 予測では "." の後で再帰を続けるか抜けるかを決められず構文エラーになる
+// （Call x.y や obj.Method arg など頻出の文で毎回 LL にフォールバックしていた）。
+// lExpression はこれらをすべて含むので、lExpression に置き換える。
 callStatement
-    : CALL wsc (simpleNameExpression | memberAccessExpression | indexExpression | withExpression)
-    | (simpleNameExpression | memberAccessExpression | withExpression) (wsc argumentList)?
+    : CALL wsc lExpression
+    | lExpression (wsc argumentList)?
     ;
 
 // 5.4.2.2 While Statement
 whileStatement
-    : WHILE wsc booleanExpression statementBlock? endOfStatement+ WEND
+    : WHILE wsc booleanExpression statementBlock? endOfStatement WEND
     ;
 
 // 5.4.2.3 For Statement
@@ -927,11 +935,11 @@ forStatement
     ;
 
 simpleForStatement
-    : forClause statementBlock? endOfStatement+ NEXT
+    : forClause statementBlock? endOfStatement NEXT
     ;
 
 explicitForStatement
-    : forClause statementBlock? endOfStatement+ (NEXT | (nestedForStatement wsc? ',')) wsc boundVariableExpression
+    : forClause statementBlock? endOfStatement (NEXT | (nestedForStatement wsc? ',')) wsc boundVariableExpression
     ;
 
 nestedForStatement
@@ -968,7 +976,7 @@ forEachStatement
     ;
 
 simpleForEachStatement
-    : forEachClause statementBlock? endOfStatement+ NEXT
+    : forEachClause statementBlock? endOfStatement NEXT
     ;
 
 explicitForEachStatement
@@ -990,7 +998,7 @@ exitForStatement
 
 // 5.4.2.6 Do Statement
 doStatement
-    : DO (wsc? conditionClause)? statementBlock? endOfStatement+ LOOP (wsc? conditionClause)?
+    : DO (wsc? conditionClause)? statementBlock? endOfStatement LOOP (wsc? conditionClause)?
     ;
 
 conditionClause
@@ -1014,16 +1022,18 @@ exitDoStatement
 // 5.4.2.8 If Statement
 // why is a LINE-START required before this?
 ifStatement
-    : IF wsc? booleanExpression wsc? THEN statementBlock? elseIfBlock* elseBlock? endOfStatement+ (
+    : IF wsc? booleanExpression wsc? THEN statementBlock? elseIfBlock* elseBlock? endOfStatement (
         (END wsc IF)
         | ENDIF
     )
     ;
 
 // Need to verify why some of the end-of-line / line-start things are set the way they are.
+// Cat5Dev: 1 番目の選択肢（endOfLine ELSEIF ... THEN endOfLine?）は 2 番目に含まれる（endOfStatement が
+// endOfLine を含み、statementBlock も endOfStatement で始まる）。重複していると SLL 予測が
+// コメント行や空白だけの行の後の ElseIf で失敗するため、1 つにまとめる。
 elseIfBlock
-    : endOfStatement* endOfLine ELSEIF wsc? booleanExpression wsc? THEN endOfLine? statementBlock?
-    | endOfStatement* ELSEIF wsc? booleanExpression wsc? THEN statementBlock?
+    : endOfStatement? ELSEIF wsc? booleanExpression wsc? THEN statementBlock?
     ;
 
 elseBlock
@@ -1062,15 +1072,15 @@ sameLineStatement
 
 // 5.4.2.10 Select Case Statement
 selectCaseStatement
-    : SELECT wsc CASE wsc selectExpression caseClause* caseElseClause? endOfStatement+ END wsc SELECT
+    : SELECT wsc CASE wsc selectExpression caseClause* caseElseClause? endOfStatement END wsc SELECT
     ;
 
 caseClause
-    : endOfStatement+ CASE wsc? rangeClause (wsc? ',' wsc? rangeClause)* statementBlock?
+    : endOfStatement CASE wsc? rangeClause (wsc? ',' wsc? rangeClause)* statementBlock?
     ;
 
 caseElseClause
-    : endOfStatement+ CASE wsc ELSE statementBlock?
+    : endOfStatement CASE wsc ELSE statementBlock?
     ;
 
 rangeClause
@@ -1152,7 +1162,7 @@ eventArgument
 
 // 5.4.2.21 With Statement
 withStatement
-    : WITH wsc? expression statementBlock? endOfStatement+ END wsc WITH
+    : WITH wsc? expression statementBlock? endOfStatement END wsc WITH
     ;
 
 // Missing from documentation
@@ -1677,9 +1687,10 @@ unaryMinusExpression
 
 // 5.6.10 Simple Name Expressions
 // Had to add reservedName and specialForm to allow calls to Abs() Debug. and Lbound()
+// Cat5Dev: String$( ) / Date$ のような型接尾辞付きの予約名を受け付ける（typeSuffix は直後に空白なしで続く）。
 simpleNameExpression
     : name
-    | reservedName
+    | reservedName typeSuffix?
     | specialForm
     ;
 
@@ -1796,9 +1807,10 @@ typeExpression
     | definedTypeExpression
     ;
 
+// Cat5Dev: callStatement と同じ理由（SLL で "As Lib.Type" が構文エラーになる）で、
+// memberAccessExpression（lExpression の左再帰）ではなく "名前 (. 名前)*" で表す。
 definedTypeExpression
-    : simpleNameExpression
-    | memberAccessExpression
+    : simpleNameExpression (wsc? '.' wsc? unrestrictedName)*
     ;
 
 // 5.6.16.8
@@ -1807,8 +1819,7 @@ addressofExpression
     ;
 
 procedurePointerExpression
-    : simpleNameExpression
-    | memberAccessExpression
+    : simpleNameExpression (wsc? '.' wsc? unrestrictedName)*
     ;
 
 //---------------------------------------------------------------------------------------
@@ -1847,6 +1858,9 @@ endOfLineNoWs
     ;
 
 // known as EOS in MS-VBAL
+// Cat5Dev: endOfStatement 自体が (...)+ なので、他の規則では endOfStatement+ / endOfStatement* と書かず
+// endOfStatement / endOfStatement? と書く（同じ言語）。二重閉包は区切り方が曖昧になり、SLL 予測が
+// 空白だけの行やコメント行の後のラベル・ElseIf などで構文エラーになって LL へのやり直しが起きる。
 endOfStatement
     : (endOfLine | wsc? COLON wsc?)+
     ;

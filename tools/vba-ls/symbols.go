@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Symbol は VBA コード内の変数宣言情報を表す。
 type Symbol struct {
@@ -19,6 +22,7 @@ type Symbol struct {
 // SymbolTable はファイル単位のシンボルテーブル。
 type SymbolTable struct {
 	Symbols []Symbol
+	Stats   ParseStats
 }
 
 // FindByName はスコープ優先でシンボルを検索する。
@@ -53,3 +57,11 @@ const (
 	VisGlobal
 	VisLocal
 )
+
+// ParseStats はパースの統計（性能計測・診断用）。
+type ParseStats struct {
+	UsedLL       bool          // SLL で構文エラーが出て LL でやり直した
+	SyntaxErrors int           // LL 段で検出した構文エラーの数（SLL で成功したときは 0）
+	SLLErrorLine int           // SLL 段が失敗したトークンの行（1-based、計測ログ用）
+	Duration     time.Duration // 字句解析・構文解析・シンボル収集の合計時間
+}
