@@ -35,7 +35,7 @@ function setup(t, options = {}) {
     const localFiles = options.localFiles || { 'C5D_UserModule.bas_utf': 'old', 'LocalOnly.cls_utf': 'local' };
     for (const [name, content] of Object.entries(localFiles)) fs.writeFileSync(path.join(root, 'modules', name), content);
     state = { root, events: [], choice: options.choice, selection: options.selection, documents: options.documents };
-    const steps = [];
+    const steps = [], applies = [], deletes = [];
     const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
     const output = { appendLine: () => {}, show: () => {} };
     const execute = async script => {
@@ -48,14 +48,21 @@ function setup(t, options = {}) {
         if (options.fail === request.kind) r = result(request, { failures: [{ phase: 'injected', target: '', code: 5, message: 'failure' }] });
         else if (request.kind === 'list') r = result(request, { projects: ['Review'], expectedCount: 1, succeededCount: 1 });
         else if (request.kind === 'pull' || request.kind === 'check') {
-            const items = options.empty ? [] : [{ name: 'C5D_UserModule', type: 1, file: 'm0.txt' }];
-            for (const item of items) fs.writeFileSync(path.join(directory, item.file), options.remoteSource ?? 'new source');
+            const remote = options.empty ? [] : options.remote || [{ name: 'C5D_UserModule', type: 1, text: options.remoteSource ?? 'new source' }];
+            const items = remote.map((item, index) => ({ name: item.name, type: item.type, file: `m${index}.txt` }));
+            remote.forEach((item, index) => fs.writeFileSync(path.join(directory, items[index].file), item.text));
             r = result(request, { items, expectedCount: items.length, succeededCount: items.length });
-        } else r = result(request, { expectedCount: 1, succeededCount: 1, updatedCount: 1 });
+        } else {
+            const applied = [...source.matchAll(/^\s*ApplyModule "([^"]*)"/gm)].map(m => m[1]);
+            const deleted = [...source.matchAll(/^\s*DeleteModule "([^"]*)"/gm)].map(m => m[1]);
+            applies.push(...applied); deletes.push(...deleted);
+            const total = applied.length + deleted.length;
+            r = result(request, { expectedCount: total, succeededCount: total, updatedCount: applied.length, deletedCount: deleted.length });
+        }
         fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify(r));
         return { stdout: '', stderr: '' };
     };
-    return { root, steps, events: state.events, sync: new CatiaSync({}, output, manager, { execute, timeoutMs: 1000 }) };
+    return { root, steps, applies, deletes, events: state.events, sync: new CatiaSync({}, output, manager, { execute, timeoutMs: 1000 }) };
 }
 test('Pull overwrite has no confirmation; only missing-file deletion is confirmed', async t => {
     for (const choice of ['keep', 'delete', undefined]) {
@@ -140,4 +147,71 @@ test('Push still transfers real changes under CRLF and sends the local text unch
     assert.deepEqual(steps, ['check', 'push']);
     assert.equal(sent, 'Sub B()\r\n    x = 2\r\nEnd Sub');
     assert.ok(!events.some(e => e[0] === 'error'));
+});
+const deletionRemote = [{ name: 'A', type: 1, text: 'Sub A()\r\nEnd Sub\r\n' }, { name: 'B', type: 1, text: 'Sub B()\r\nEnd Sub\r\n' }];
+const has = (events, kind, text) => events.some(e => e[0] === kind && e[1].includes(text));
+test('Push deletion-only: delete removes CATIA-only modules without reporting zero pushes', async t => {
+    const { sync, steps, applies, deletes, events, root } = setup(t, { choice: 'delete', localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: deletionRemote });
+    await sync.push();
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.deepEqual(applies, []); assert.deepEqual(deletes, ['B']);
+    assert.ok(has(events, 'warning', 'B'), JSON.stringify(events));
+    assert.ok(has(events, 'info', '1 個のモジュールをCATIAから削除しました。'), JSON.stringify(events));
+    assert.ok(!has(events, 'info', 'プッシュしました'));
+    assert.ok(events.some(e => e[0] === 'command' && e[1] === 'cat5dev.refreshTree'));
+    assert.ok(!events.some(e => e[0] === 'error'));
+    assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')));
+});
+test('Push deletion-only: keep reports no changes and cancel aborts without pushing', async t => {
+    const kept = setup(t, { choice: 'keep', localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: deletionRemote });
+    await kept.sync.push();
+    assert.deepEqual(kept.steps, ['check']);
+    assert.ok(has(kept.events, 'warning', 'B'));
+    assert.ok(has(kept.events, 'info', '変更されていません'), JSON.stringify(kept.events));
+    assert.ok(!kept.events.some(e => e[0] === 'error'));
+    const cancelled = setup(t, { localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: deletionRemote });
+    await cancelled.sync.push();
+    assert.deepEqual(cancelled.steps, ['check']);
+    assert.ok(has(cancelled.events, 'info', 'プッシュを中止しました。'), JSON.stringify(cancelled.events));
+    assert.ok(!has(cancelled.events, 'info', '削除しました'));
+    assert.ok(!has(cancelled.events, 'info', '変更されていません'));
+});
+test('Push with only a new UserForm still syncs deletions, or stops when kept', async t => {
+    const remote = [{ name: 'B', type: 1, text: 'Sub B()\r\nEnd Sub\r\n' }];
+    const deleted = setup(t, { choice: 'delete', localFiles: { 'F.frm_utf': 'form' }, remote });
+    await deleted.sync.push();
+    assert.deepEqual(deleted.steps, ['check', 'push']);
+    assert.deepEqual(deleted.applies, []); assert.deepEqual(deleted.deletes, ['B']);
+    assert.ok(has(deleted.events, 'warning', 'UserForm'), JSON.stringify(deleted.events));
+    assert.ok(has(deleted.events, 'info', '1 個のモジュールをCATIAから削除しました。'));
+    const kept = setup(t, { choice: 'keep', localFiles: { 'F.frm_utf': 'form' }, remote });
+    await kept.sync.push();
+    assert.deepEqual(kept.steps, ['check']);
+    assert.ok(has(kept.events, 'warning', 'UserForm'));
+    assert.ok(has(kept.events, 'info', 'プッシュ対象のファイルがなくなった'), JSON.stringify(kept.events));
+});
+test('Push with changes and deletions applies both and mentions deletion sync', async t => {
+    const { sync, steps, applies, deletes, events } = setup(t, { choice: 'delete', localFiles: { 'A.bas_utf': 'Sub A()\n    x = 1\nEnd Sub\n' }, remote: deletionRemote });
+    await sync.push();
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.deepEqual(applies, ['A']); assert.deepEqual(deletes, ['B']);
+    assert.ok(has(events, 'info', '1 個のモジュールをプッシュしました。（削除同期を含む）'), JSON.stringify(events));
+    assert.ok(!has(events, 'info', 'CATIAから削除しました'));
+});
+test('Push without changes or deletions reports no changes without confirmation', async t => {
+    const { sync, steps, events } = setup(t, { choice: 'delete', localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: [deletionRemote[0]] });
+    await sync.push();
+    assert.deepEqual(steps, ['check']);
+    assert.ok(!events.some(e => e[0] === 'warning'), JSON.stringify(events));
+    assert.ok(has(events, 'info', '変更されていません'));
+});
+test('Push deletion-only failure reports error, no success, and releases lock', async t => {
+    const { sync, steps, events, root } = setup(t, { fail: 'push', choice: 'delete', localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: deletionRemote });
+    await sync.push();
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.ok(events.some(e => e[0] === 'error'), JSON.stringify(events));
+    assert.ok(!has(events, 'info', '削除しました'));
+    assert.ok(!has(events, 'info', 'プッシュしました'));
+    assert.ok(!events.some(e => e[0] === 'command' && e[1] === 'cat5dev.refreshTree'));
+    assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')));
 });

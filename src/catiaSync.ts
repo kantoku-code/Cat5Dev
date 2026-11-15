@@ -137,9 +137,8 @@ export class CatiaSync {
                     const other = remoteByName.get(item.name.toLowerCase());
                     return !other || other.type !== item.type || item.comparable !== normalizeModuleText(iconv.decode(fs.readFileSync(path.join(check.directory, other.file)), encoding));
                 });
-                // Preserve the existing no-change behavior; deletion-only sync is a separate reviewed issue.
-                if (!changed.length) { await vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
                 const missing = remote.items.filter(item => !seen.has(item.name.toLowerCase())).map(item => item.name);
+                if (!changed.length && !missing.length) { await vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
                 let deletions: string[] = [];
                 if (missing.length) {
                     const answer = await vscode.window.showWarningMessage(t('warning.deleteModules', missing.join(', ')), { modal: true }, t('dialog.delete'), t('dialog.keep'));
@@ -149,7 +148,10 @@ export class CatiaSync {
                 const newForms = changed.filter(item => item.type === 3 && !remoteByName.has(item.name.toLowerCase()));
                 if (newForms.length) { await vscode.window.showWarningMessage(t('warning.newUserForms', newForms.map(item => item.name).join(', '))); }
                 const transferable = changed.filter(item => !newForms.includes(item));
-                if (!transferable.length) { await vscode.window.showInformationMessage(t('warning.noMoreFiles')); return; }
+                if (!transferable.length && !deletions.length) {
+                    await vscode.window.showInformationMessage(changed.length ? t('warning.noMoreFiles') : t('info.noChanges', String(local.length)));
+                    return;
+                }
                 const request = createCatiaRequest(context, 'push', project, encoding);
                 request.modules = transferable.map((item, index): CatiaItem => {
                     const file = `m${index}.txt`;
@@ -158,7 +160,9 @@ export class CatiaSync {
                 });
                 request.deletions = deletions;
                 const result = await this.step(context, request);
-                await vscode.window.showInformationMessage(t('info.pushSuccess', String(result.updatedCount), '', result.deletedCount ? t('push.deleteSync') : ''));
+                await vscode.window.showInformationMessage(result.updatedCount === 0 && result.deletedCount > 0
+                    ? t('info.pushDeleteOnly', String(result.deletedCount))
+                    : t('info.pushSuccess', String(result.updatedCount), '', result.deletedCount ? t('push.deleteSync') : ''));
                 await vscode.commands.executeCommand('cat5dev.refreshTree');
             });
         });

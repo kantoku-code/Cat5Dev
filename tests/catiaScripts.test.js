@@ -135,6 +135,12 @@ test('real VBScript Push supports existing C5D_ code and new classes', { skip: !
     const cls = run(t, 'push', { modules: [{ name: 'NewClass', type: 2, file: 'm0.txt' }] });
     assert.ok(catiaSucceeded(cls.result)); assert.match(cls.calls, /add;name;/);
 });
+test('real VBScript Push succeeds with deletions only and no modules', { skip: !fs.existsSync(cscript) }, t => {
+    const { result, calls } = run(t, 'push', { modules: [], deletions: ['C5D_UserModule'] });
+    assert.ok(catiaSucceeded(result));
+    assert.equal(result.expectedCount, 1); assert.equal(result.updatedCount, 0); assert.equal(result.deletedCount, 1);
+    assert.equal(calls, 'remove;');
+});
 test('real VBScript errors abort later steps of the failed module', { skip: !fs.existsSync(cscript) }, t => {
     for (const failure of ['push.read.load', 'push.add', 'push.name', 'push.codemodule', 'push.linecount', 'push.deletelines', 'push.addfromstring', 'push.delete']) {
         const deleting = failure === 'push.delete';
