@@ -1,5 +1,7 @@
 # Cat5Dev
 
+[English](../README.md) | [日本語](README.ja.md) | 简体中文
+
 Cat5Dev 是一款用于在 VSCode 和 CATIA V5 之间同步 VBA 模块的 VSCode 扩展。
 
 ---
@@ -185,7 +187,7 @@ Cat5Dev 以 `.vsix` 文件形式分发。安装步骤如下：
 2. **在 VSCode 中安装**  
    在 VSCode 中打开扩展视图（`Ctrl+Shift+X`），单击右上角的 `⋯` 菜单，然后选择 **从 VSIX 安装... (Install from VSIX...)**。
 
-   ![安装步骤](./resources/installation.png)
+   ![安装步骤](../resources/installation.png)
 
 3. **选择文件**  
    选择已下载的 `.vsix` 文件并确认安装。
