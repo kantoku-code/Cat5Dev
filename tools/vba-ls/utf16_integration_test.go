@@ -149,13 +149,9 @@ func TestHoverAfterJapaneseOnSameLine(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// カーソルは "Name" の "Na|me"
-			word, prev := wordAndPrevWord(tc.src, 1, u16(`x = "ああ": doc.Na`))
-			if word != "Name" || prev != "doc" {
-				t.Fatalf("wordAndPrevWord = (%q, %q), want (\"Name\", \"doc\")", word, prev)
-			}
 			doc := NewDocument("", tc.src, ParseSymbols(tc.src), db)
-			if md := ResolveHover(doc, 1, u16(`x = "ああ": doc.Na`)); md == "" {
-				t.Fatal("ホバーの Markdown が空")
+			if md := ResolveHover(doc, 1, u16(`x = "ああ": doc.Na`)); md != "```vba\nName As String\n```" {
+				t.Fatalf("ホバー = %q", md)
 			}
 		})
 	}
@@ -164,9 +160,9 @@ func TestHoverAfterJapaneseOnSameLine(t *testing.T) {
 func TestHoverOnVariableAfterSurrogatePair(t *testing.T) {
 	src := "Dim doc As PartDocument\nx = \"😀\": doc.Name\n"
 	// カーソルは "doc" の "d|oc"
-	word, prev := wordAndPrevWord(src, 1, u16(`x = "😀": d`))
-	if word != "doc" || prev != "" {
-		t.Fatalf("wordAndPrevWord = (%q, %q), want (\"doc\", \"\")", word, prev)
+	doc := NewDocument("", src, ParseSymbols(src), newTestResolver(t))
+	if md := ResolveHover(doc, 1, u16(`x = "😀": d`)); md != "```vba\nPrivate doc As PartDocument\n```" {
+		t.Fatalf("ホバー = %q", md)
 	}
 }
 

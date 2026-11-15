@@ -1,49 +1,78 @@
 package main
 
 import (
-	"regexp"
+	"unicode"
+	"unicode/utf8"
 )
 
-// memberAccessPattern は "識別子.識別子" を検出する（Unicode 識別子対応）。
-// 末尾側は貪欲マッチで識別子の終わりまで取るため \b 不要。先頭側は precededByIdentPart で判定する。
-var memberAccessPattern = regexp.MustCompile(`(` + identPattern + `)\.(` + identPattern + `)`)
-
 // BuildDiagnostics は文書全体を走査して、存在しないメンバーへのアクセスを診断として返す。
-// メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
+// 論理行（行継続を連結）ごとに文字列・コメントをマスクし、"." の直後の識別子をすべて調べる。
+// 受け手の型が解決でき、メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
+// TLB（CATIA）型のメンバーの戻り値を経由して求めた型は、typelib が基底型を宣言していることが多いため診断しない
+// （例: Part.UserSurfaces は Collection と宣言されているが実体は UserSurfaces）。
 func BuildDiagnostics(doc *Document) []Diagnostic {
 	var diags []Diagnostic
-	for lineIdx, line := range doc.Lines {
-		curScope := doc.Table.ScopeAt(lineIdx)
-
-		// stripped は line とバイト長が等しいので、正規表現のバイト位置は line でもそのまま有効
-		stripped := stripCommentAndStrings(line)
-
-		for _, match := range memberAccessPattern.FindAllStringSubmatchIndex(stripped, -1) {
-			if precededByIdentPart(stripped, match[2]) {
-				continue // 識別子の途中から始まるマッチ（先頭側 \b の代わり）
-			}
-			varName := stripped[match[2]:match[3]]
-			memberName := stripped[match[4]:match[5]]
-
-			sym := doc.Table.FindByName(varName, curScope)
-			if sym == nil || sym.TypeName == "" {
+	r := newExprResolver(doc)
+	for _, ll := range buildLogicalLines(doc.Lines) {
+		masked, _, _ := maskCode(ll.Text)
+		for i := 0; i < len(masked); i++ {
+			if masked[i] != '.' {
 				continue
 			}
-			ti, _, ok := doc.Types.Resolve(sym.TypeRef())
-			if !ok || ti.Kind == TypeKindPrimitive || !ti.Complete || ti.Ref.Array {
+			// "." の直後（空白を許す）の識別子
+			a := i + 1
+			for a < len(masked) && (masked[a] == ' ' || masked[a] == '\t') {
+				a++
+			}
+			first, _ := utf8.DecodeRuneInString(masked[a:])
+			if a >= len(masked) || !unicode.IsLetter(first) {
 				continue
 			}
-			if _, ok := doc.Types.Member(ti.Ref, memberName); ok {
+			b := a
+			for b < len(masked) {
+				rr, size := utf8.DecodeRuneInString(masked[b:])
+				if !isIdentPart(rr) {
+					break
+				}
+				b += size
+			}
+			name := masked[a:b]
+
+			line, _ := ll.Physical(i)
+			var ch MemberChain
+			if endsChainOperand(masked, i) {
+				var ok bool
+				if ch, ok = scanChainBackward(masked, i); !ok {
+					continue
+				}
+			} else {
+				ch = MemberChain{LeadingDot: true, Start: i}
+			}
+			r.viaTLBMember = false
+			t, ok := r.resolveChain(ch, line)
+			if !ok || t.Array || r.viaTLBMember {
 				continue
+			}
+			ti, _, ok := doc.Types.Resolve(t)
+			if !ok || ti.Kind == TypeKindPrimitive || !ti.Complete {
+				continue
+			}
+			if _, ok := doc.Types.Member(t, name); ok {
+				continue
+			}
+			sl, sb := ll.Physical(a)
+			el, eb := ll.Physical(b)
+			if el != sl {
+				continue // 識別子は行をまたがない
 			}
 			diags = append(diags, Diagnostic{
 				Range: Range{
-					Start: Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[4]))},
-					End:   Position{Line: uint32(lineIdx), Character: uint32(byteToUTF16Offset(line, match[5]))},
+					Start: Position{Line: uint32(sl), Character: uint32(byteToUTF16Offset(doc.Lines[sl], sb))},
+					End:   Position{Line: uint32(el), Character: uint32(byteToUTF16Offset(doc.Lines[el], eb))},
 				},
 				Severity: DiagnosticSeverityError,
 				Source:   "vba-ls",
-				Message:  "'" + sym.TypeName + "' に '" + memberName + "' は存在しません",
+				Message:  "'" + t.String() + "' に '" + name + "' は存在しません",
 			})
 		}
 	}

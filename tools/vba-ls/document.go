@@ -25,7 +25,8 @@ func newDocumentWithLines(uri, text string, lines []string, table *SymbolTable, 
 	if global == nil {
 		global = NewCompositeResolver()
 	}
-	return &Document{URI: uri, Text: text, Lines: lines, Table: table, Types: global}
+	// 現在のモジュールの UDT / Enum を解決順の先頭に足す
+	return &Document{URI: uri, Text: text, Lines: lines, Table: table, Types: global.WithLocal(newModuleTypeProvider(table))}
 }
 
 // splitLines は src を "\n" で分割し、各行末の "\r" を除く。

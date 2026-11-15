@@ -70,34 +70,3 @@ func TestCompletionWithoutDB(t *testing.T) {
 		}
 	})
 }
-
-func TestDotPattern(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"partDocument1.", "partDocument1"},
-		{"partDocument1.Part.", "partDocument1.Part"},
-		{"a.b.c.", "a.b.c"},
-		{"notrailing", ""},
-		{"部品.", "部品"},
-		{"x = 部品.Part.", "部品.Part"},
-		{"Debug.Print \"あ\": doc.", "doc"},
-	}
-	for _, tt := range tests {
-		m := dotPattern.FindStringSubmatch(tt.input)
-		if tt.want == "" {
-			if m != nil {
-				t.Errorf("input %q: want no match, got %v", tt.input, m)
-			}
-			continue
-		}
-		if m == nil {
-			t.Errorf("input %q: want match %q, got nil", tt.input, tt.want)
-			continue
-		}
-		if m[1] != tt.want {
-			t.Errorf("input %q: want %q, got %q", tt.input, tt.want, m[1])
-		}
-	}
-}

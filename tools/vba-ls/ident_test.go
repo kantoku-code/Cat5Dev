@@ -37,11 +37,12 @@ func TestJapaneseIdentifiers(t *testing.T) {
 			t.Error("部品. の補完候補が返らない")
 		}
 
-		if word, prev := wordAndPrevWord(src, 3, u16("    x = 部品.Na")); word != "Name" || prev != "部品" {
-			t.Errorf("wordAndPrevWord = (%q, %q), want (\"Name\", \"部品\")", word, prev)
+		doc := NewDocument("", src, table, db)
+		if md := ResolveHover(doc, 3, u16("    x = 部品.Na")); md != "```vba\nName As String\n```" {
+			t.Errorf("部品.Na|me のホバー = %q", md)
 		}
-		if word, prev := wordAndPrevWord(src, 3, u16("    x = 部")); word != "部品" || prev != "" {
-			t.Errorf("wordAndPrevWord = (%q, %q), want (\"部品\", \"\")", word, prev)
+		if md := ResolveHover(doc, 3, u16("    x = 部")); md != "```vba\nDim 部品 As PartDocument\n```" {
+			t.Errorf("部|品 のホバー = %q", md)
 		}
 
 		toks := decodeSemanticTokens(t, BuildSemanticTokens(NewDocument("", src, table, db)))

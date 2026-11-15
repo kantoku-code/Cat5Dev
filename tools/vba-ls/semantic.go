@@ -3,7 +3,6 @@ package main
 import (
 	"regexp"
 	"sort"
-	"strings"
 )
 
 // セマンティックトークンタイプのインデックス。
@@ -51,8 +50,7 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 		}
 		return v
 	}
-	catiaVars := make(map[string]struct{}) // lower(name)
-	declPos := make(map[[2]int]struct{})   // 宣言トークンの位置（行, UTF-16 列）
+	declPos := make(map[[2]int]struct{}) // 宣言トークンの位置（行, UTF-16 列）
 
 	var tokens []rawToken
 
@@ -62,7 +60,6 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 		if !typed(sym) {
 			continue
 		}
-		catiaVars[strings.ToLower(sym.Name)] = struct{}{}
 		declPos[[2]int{sym.Line, sym.Col}] = struct{}{}
 		// 変数名トークン（variable + declaration）
 		tokens = append(tokens, rawToken{
@@ -85,25 +82,32 @@ func BuildSemanticTokens(doc *Document) []uint32 {
 	}
 
 	// --- 2. 使用箇所のトークン（宣言以外の識別子出現を走査）---
-	// 正規表現・コメント判定はバイト位置で行い、トークンの列は UTF-16 位置に変換して扱う。
+	// 識別子はその位置のスコープで引き（ローカルがモジュール変数を隠す）、"." / "!" の直後（メンバー名）は対象外にする。
+	// 判定はバイト位置で行い、トークンの列は UTF-16 位置に変換して扱う。
+	contComment := false // 前の行が行継続付きのコメントで、この行もコメントの続き
 	for lineIdx, line := range doc.Lines {
-		// コメントと文字列リテラルの中身を空白に置換してから走査する。
-		// stripped は line とバイト長が等しいので、バイト位置は line でもそのまま有効。
-		stripped := stripCommentAndStrings(line)
+		if contComment {
+			contComment = hasContinuation(line)
+			continue
+		}
+		// 文字列リテラルの中身とコメントを空白に置換してから走査する（バイト長は line と等しい）。
+		masked, _, inComment := maskCode(line)
+		contComment = inComment && hasContinuation(line)
 
-		matches := identRe.FindAllStringIndex(stripped, -1)
-		for _, m := range matches {
-			if precededByIdentPart(stripped, m[0]) {
+		for _, m := range identRe.FindAllStringIndex(masked, -1) {
+			if precededByIdentPart(masked, m[0]) {
 				continue // 識別子の途中から始まるマッチ（先頭側 \b の代わり）
 			}
-			word := stripped[m[0]:m[1]]
-			col := byteToUTF16Offset(line, m[0])
-			lower := strings.ToLower(word)
-			if _, ok := catiaVars[lower]; !ok {
-				continue
+			if p := skipBlankBack(masked, m[0]); p > 0 && (masked[p-1] == '.' || masked[p-1] == '!') {
+				continue // メンバー名
 			}
-			// 宣言トークンと重複しないか確認
+			word := masked[m[0]:m[1]]
+			col := byteToUTF16Offset(line, m[0])
 			if _, ok := declPos[[2]int{lineIdx, col}]; ok {
+				continue // 宣言トークンと重複
+			}
+			sym := table.Lookup(word, lineIdx)
+			if sym == nil || !typed(sym) {
 				continue
 			}
 			tokens = append(tokens, rawToken{

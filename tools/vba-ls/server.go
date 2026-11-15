@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"sync"
 
 	"github.com/sourcegraph/jsonrpc2"
@@ -227,38 +226,4 @@ func (h *lspHandler) publishDiagnostics(ctx context.Context, conn *jsonrpc2.Conn
 		URI:         uri,
 		Diagnostics: diags,
 	})
-}
-
-// --- ユーティリティ ---
-
-var wordRe = regexp.MustCompile(`[` + identPartClass + `]+`)
-
-// wordAndPrevWord はカーソル位置の語と、その直前に "." で連結された語を返す。
-// char は LSP の UTF-16 位置。
-func wordAndPrevWord(content string, line, char int) (word, prevWord string) {
-	l, ok := lineText(content, line)
-	if !ok {
-		return
-	}
-	return wordAndPrevWordInLine(l, char)
-}
-
-func wordAndPrevWordInLine(l string, char int) (word, prevWord string) {
-	char = utf16ToByteOffset(l, char)
-	matches := wordRe.FindAllStringIndex(l, -1)
-	for _, m := range matches {
-		if m[0] <= char && char <= m[1] {
-			word = l[m[0]:m[1]]
-			if m[0] > 0 && l[m[0]-1] == '.' {
-				for _, pm := range matches {
-					if pm[1] == m[0]-1 {
-						prevWord = l[pm[0]:pm[1]]
-						break
-					}
-				}
-			}
-			break
-		}
-	}
-	return
 }

@@ -128,8 +128,11 @@ type CompletionParams struct {
 type CompletionItemKind int
 
 const (
-	CompletionItemKindMethod   CompletionItemKind = 2
-	CompletionItemKindProperty CompletionItemKind = 10
+	CompletionItemKindMethod     CompletionItemKind = 2
+	CompletionItemKindField      CompletionItemKind = 5
+	CompletionItemKindProperty   CompletionItemKind = 10
+	CompletionItemKindEnumMember CompletionItemKind = 20
+	CompletionItemKindEvent      CompletionItemKind = 23
 )
 
 type CompletionItem struct {
