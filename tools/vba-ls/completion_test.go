@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 func TestChainCompletion(t *testing.T) {
@@ -62,6 +63,7 @@ func TestCompletionWithoutDB(t *testing.T) {
 		const uri = "file:///a.bas"
 		src := "Dim d As New Scripting.Dictionary\nd."
 		h.didOpen(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, Text: src}})
+		h.waitParsed(uri, time.Minute)
 		var p CompletionParams
 		p.TextDocument.URI = uri
 		p.Position = Position{Line: 1, Character: 2}

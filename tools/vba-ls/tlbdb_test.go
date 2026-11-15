@@ -145,6 +145,7 @@ func TestBundledDatabaseUnchanged(t *testing.T) {
 	const uri = "file:///m.bas"
 	src := "Sub M()\n    Dim d As PartDocument\n    d.Part.Bodies.Item(1).Name\n    d.Bogus\n    d.\nEnd Sub\n"
 	h.didOpen(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, Text: src}})
+	h.waitParsed(uri, time.Minute)
 	var cp CompletionParams
 	cp.TextDocument.URI = uri
 	cp.Position = Position{Line: 4, Character: 6}
