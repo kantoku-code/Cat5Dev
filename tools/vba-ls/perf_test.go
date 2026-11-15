@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -281,4 +283,158 @@ func TestTypedReservedNameKeepsFollowingSymbols(t *testing.T) {
 	if table.Stats.SyntaxErrors != 0 || table.FindByName("d", "Function:F") == nil {
 		t.Fatalf("Stats=%+v Symbols=%+v", table.Stats, table.Symbols)
 	}
+}
+
+// TestWorkspaceIndexSampleDir は実プロジェクトを索引し、時間・件数・メモリと、ワークスペースの型による診断の増分を記録する。
+// CAT5DEV_SAMPLE_DIR が modules を指していれば、その親をワークスペースのルートにして modules の自動検出も確かめる。
+// CAT5DEV_WS_DIAG_BUDGET が設定されていれば、ワークスペース由来の診断の増分がそれを超えたら失敗にする。
+func TestWorkspaceIndexSampleDir(t *testing.T) {
+	files := sampleFiles(t)
+	dir := os.Getenv("CAT5DEV_SAMPLE_DIR")
+	root := dir
+	if strings.EqualFold(filepath.Base(filepath.Clean(dir)), "modules") {
+		root = filepath.Dir(filepath.Clean(dir))
+	}
+	// 1 回目: 初回（コールド）の索引時間。ヒープの増分には ANTLR の共有 DFA の構築分も含まれる
+	var m0, m1, m2, m3 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	ws := NewWorkspace()
+	ws.SetRoots([]string{root})
+	st := ws.IndexAll(context.Background())
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+	// 2 回目: DFA が温まった状態で別の索引を作り、索引そのものが保持するメモリを測る
+	ws2 := NewWorkspace()
+	ws2.SetRoots([]string{root})
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+	st2 := ws2.IndexAll(context.Background())
+	runtime.GC()
+	runtime.ReadMemStats(&m3)
+	retained := float64(int64(m3.HeapAlloc)-int64(m2.HeapAlloc)) / (1 << 20)
+	t.Logf("索引の時間: 初回 %v（ヒープ増分 %.1f MB、DFA を含む）/ 2 回目 %v（索引が保持するヒープ %.1f MB）",
+		st.Duration, float64(int64(m1.HeapAlloc)-int64(m0.HeapAlloc))/(1<<20), st2.Duration, retained)
+	runtime.KeepAlive(ws2)
+	if retained > 20 {
+		t.Logf("注意: 索引が保持するヒープが 20MB を超えた（%.1f MB）。プロシージャ内のシンボルを落とす縮約を検討する", retained)
+	}
+	mods := ws.Modules()
+	pub := 0
+	type cnt struct {
+		name string
+		n    int
+	}
+	var classes []cnt
+	var withErrors []string
+	for _, e := range mods {
+		pub += len(e.public.list)
+		if e.Table.Stats.SyntaxErrors > 0 {
+			withErrors = append(withErrors, e.Name)
+		}
+		if e.Kind == ModuleClass {
+			classes = append(classes, cnt{e.Name, len(e.public.list)})
+		}
+	}
+	sort.Slice(classes, func(i, j int) bool { return classes[i].n > classes[j].n })
+	if len(classes) > 5 {
+		classes = classes[:5]
+	}
+	t.Logf("索引 %d 件（std %d / class %d / form %d、失敗 %d、スキップ %d）、公開メンバー %d 件、上位クラス %v",
+		st.Parsed, st.ByKind[ModuleStd], st.ByKind[ModuleClass], st.ByKind[ModuleForm], st.Failed, st.Skipped, pub, classes)
+	t.Logf("構文エラーのあるモジュール（Complete にしない）: %d 件 %v", len(withErrors), withErrors)
+	if st.Parsed != len(files) {
+		t.Errorf("索引した件数 %d がサンプルの件数 %d と違う", st.Parsed, len(files))
+	}
+
+	// 抜き取り検査（サンプルに該当のモジュールがあるときだけ）
+	db := sampleTLB(t)
+	types := NewDefaultResolver(db, ws.TypesProvider(), ws.ModulesProvider())
+	if e := ws.Entry(filepath.Join(dir, "Main.bas_utf")); e != nil {
+		for _, name := range []string{"Dump", "ShowAlert", "DEBUG_MODE"} {
+			if _, ok := types.Member(TypeRef{Lib: moduleLib, Name: "Main"}, name); !ok {
+				t.Errorf("Main.%s が引けない", name)
+			}
+		}
+	}
+	if e := ws.Entry(filepath.Join(dir, "frmMain.frm_utf")); e != nil {
+		self := types.WithLocal(newSelfProvider(e))
+		if _, ok := self.Member(e.selfRef(), "Hide"); !ok {
+			t.Error("frmMain の Me.Hide が引けない")
+		}
+	}
+	if e := ws.Entry(filepath.Join(dir, "clsPcHoleInfo.cls_utf")); e != nil {
+		if _, ok := types.WithLocal(newSelfProvider(e)).Member(e.selfRef(), "Delete"); !ok {
+			t.Error("clsPcHoleInfo の Me.Delete が引けない")
+		}
+	}
+	for _, e := range mods {
+		if strings.EqualFold(filepath.Base(filepath.Dir(e.Path)), "temp") {
+			t.Errorf("modules 以外のファイルが索引された: %s", e.Path)
+		}
+	}
+
+	// 診断の増分: ワークスペースあり（自モジュール・Me. を含む）となし（2-0 相当）の差
+	base := NewDefaultResolver(db)
+	var extra []string
+	totalWS, totalBase := 0, 0
+	for _, f := range files {
+		e := ws.Entry(f)
+		if e == nil {
+			t.Errorf("索引に無い: %s", f)
+			continue
+		}
+		text := stripBOM(readSample(t, f))
+		lines := splitLines(text)
+		with := BuildDiagnostics(newDocumentFull(e.URI, text, lines, e.Table, e, types))
+		without := BuildDiagnostics(newDocumentFull("file:///x.bas", text, lines, e.Table, nil, base))
+		totalWS += len(with)
+		totalBase += len(without)
+		seen := map[string]int{}
+		for _, d := range without {
+			seen[fmt.Sprintf("%d:%d:%s", d.Range.Start.Line, d.Range.Start.Character, d.Message)]++
+		}
+		for _, d := range with {
+			k := fmt.Sprintf("%d:%d:%s", d.Range.Start.Line, d.Range.Start.Character, d.Message)
+			if seen[k] > 0 {
+				seen[k]--
+				continue
+			}
+			extra = append(extra, fmt.Sprintf("%s:%d: %s | %s", filepath.Base(f), d.Range.Start.Line+1, d.Message, strings.TrimSpace(lines[d.Range.Start.Line])))
+		}
+	}
+	t.Logf("診断: ワークスペースなし %d 件 / あり %d 件、ワークスペース由来の増分 %d 件", totalBase, totalWS, len(extra))
+	for i, s := range extra {
+		if i >= 20 {
+			t.Logf("  …ほか %d 件", len(extra)-20)
+			break
+		}
+		t.Logf("  %s", s)
+	}
+	if b := os.Getenv("CAT5DEV_WS_DIAG_BUDGET"); b != "" {
+		n, err := strconv.Atoi(b)
+		if err != nil {
+			t.Fatalf("CAT5DEV_WS_DIAG_BUDGET=%q: %v", b, err)
+		}
+		if len(extra) > n {
+			t.Fatalf("ワークスペース由来の診断 %d 件が予算 %d 件を超えた", len(extra), n)
+		}
+	}
+	runtime.KeepAlive(ws)
+}
+
+// sampleTLB は同梱の bin/catia_api.db を読み取り専用で開く（無ければ nil）。
+func sampleTLB(t *testing.T) *TLBDatabase {
+	t.Helper()
+	p := filepath.Join("..", "..", "bin", "catia_api.db")
+	if _, err := os.Stat(p); err != nil {
+		return nil
+	}
+	db, err := LoadTLBDatabase(p)
+	if err != nil {
+		t.Logf("TLB を開けない: %v", err)
+		return nil
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
 }
