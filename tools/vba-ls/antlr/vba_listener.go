@@ -382,11 +382,8 @@ type vbaListener interface {
 	// EnterPropertyParameters is called when entering the propertyParameters production.
 	EnterPropertyParameters(c *PropertyParametersContext)
 
-	// EnterValidParameterList is called when entering the validParameterList production.
-	EnterValidParameterList(c *ValidParameterListContext)
-
-	// EnterInvalidParameterList is called when entering the invalidParameterList production.
-	EnterInvalidParameterList(c *InvalidParameterListContext)
+	// EnterPropertyParameterList is called when entering the propertyParameterList production.
+	EnterPropertyParameterList(c *PropertyParameterListContext)
 
 	// EnterParameterList is called when entering the parameterList production.
 	EnterParameterList(c *ParameterListContext)
@@ -396,9 +393,6 @@ type vbaListener interface {
 
 	// EnterPositionalParameters is called when entering the positionalParameters production.
 	EnterPositionalParameters(c *PositionalParametersContext)
-
-	// EnterOptionalParameters is called when entering the optionalParameters production.
-	EnterOptionalParameters(c *OptionalParametersContext)
 
 	// EnterValueParam is called when entering the valueParam production.
 	EnterValueParam(c *ValueParamContext)
@@ -490,14 +484,8 @@ type vbaListener interface {
 	// EnterForStatement is called when entering the forStatement production.
 	EnterForStatement(c *ForStatementContext)
 
-	// EnterSimpleForStatement is called when entering the simpleForStatement production.
-	EnterSimpleForStatement(c *SimpleForStatementContext)
-
-	// EnterExplicitForStatement is called when entering the explicitForStatement production.
-	EnterExplicitForStatement(c *ExplicitForStatementContext)
-
-	// EnterNestedForStatement is called when entering the nestedForStatement production.
-	EnterNestedForStatement(c *NestedForStatementContext)
+	// EnterForTail is called when entering the forTail production.
+	EnterForTail(c *ForTailContext)
 
 	// EnterForClause is called when entering the forClause production.
 	EnterForClause(c *ForClauseContext)
@@ -516,12 +504,6 @@ type vbaListener interface {
 
 	// EnterForEachStatement is called when entering the forEachStatement production.
 	EnterForEachStatement(c *ForEachStatementContext)
-
-	// EnterSimpleForEachStatement is called when entering the simpleForEachStatement production.
-	EnterSimpleForEachStatement(c *SimpleForEachStatementContext)
-
-	// EnterExplicitForEachStatement is called when entering the explicitForEachStatement production.
-	EnterExplicitForEachStatement(c *ExplicitForEachStatementContext)
 
 	// EnterForEachClause is called when entering the forEachClause production.
 	EnterForEachClause(c *ForEachClauseContext)
@@ -927,12 +909,6 @@ type vbaListener interface {
 
 	// EnterPositionalOrNamedArgumentList is called when entering the positionalOrNamedArgumentList production.
 	EnterPositionalOrNamedArgumentList(c *PositionalOrNamedArgumentListContext)
-
-	// EnterPositionalArgument is called when entering the positionalArgument production.
-	EnterPositionalArgument(c *PositionalArgumentContext)
-
-	// EnterRequiredPositionalArgument is called when entering the requiredPositionalArgument production.
-	EnterRequiredPositionalArgument(c *RequiredPositionalArgumentContext)
 
 	// EnterNamedArgumentList is called when entering the namedArgumentList production.
 	EnterNamedArgumentList(c *NamedArgumentListContext)
@@ -1507,11 +1483,8 @@ type vbaListener interface {
 	// ExitPropertyParameters is called when exiting the propertyParameters production.
 	ExitPropertyParameters(c *PropertyParametersContext)
 
-	// ExitValidParameterList is called when exiting the validParameterList production.
-	ExitValidParameterList(c *ValidParameterListContext)
-
-	// ExitInvalidParameterList is called when exiting the invalidParameterList production.
-	ExitInvalidParameterList(c *InvalidParameterListContext)
+	// ExitPropertyParameterList is called when exiting the propertyParameterList production.
+	ExitPropertyParameterList(c *PropertyParameterListContext)
 
 	// ExitParameterList is called when exiting the parameterList production.
 	ExitParameterList(c *ParameterListContext)
@@ -1521,9 +1494,6 @@ type vbaListener interface {
 
 	// ExitPositionalParameters is called when exiting the positionalParameters production.
 	ExitPositionalParameters(c *PositionalParametersContext)
-
-	// ExitOptionalParameters is called when exiting the optionalParameters production.
-	ExitOptionalParameters(c *OptionalParametersContext)
 
 	// ExitValueParam is called when exiting the valueParam production.
 	ExitValueParam(c *ValueParamContext)
@@ -1615,14 +1585,8 @@ type vbaListener interface {
 	// ExitForStatement is called when exiting the forStatement production.
 	ExitForStatement(c *ForStatementContext)
 
-	// ExitSimpleForStatement is called when exiting the simpleForStatement production.
-	ExitSimpleForStatement(c *SimpleForStatementContext)
-
-	// ExitExplicitForStatement is called when exiting the explicitForStatement production.
-	ExitExplicitForStatement(c *ExplicitForStatementContext)
-
-	// ExitNestedForStatement is called when exiting the nestedForStatement production.
-	ExitNestedForStatement(c *NestedForStatementContext)
+	// ExitForTail is called when exiting the forTail production.
+	ExitForTail(c *ForTailContext)
 
 	// ExitForClause is called when exiting the forClause production.
 	ExitForClause(c *ForClauseContext)
@@ -1641,12 +1605,6 @@ type vbaListener interface {
 
 	// ExitForEachStatement is called when exiting the forEachStatement production.
 	ExitForEachStatement(c *ForEachStatementContext)
-
-	// ExitSimpleForEachStatement is called when exiting the simpleForEachStatement production.
-	ExitSimpleForEachStatement(c *SimpleForEachStatementContext)
-
-	// ExitExplicitForEachStatement is called when exiting the explicitForEachStatement production.
-	ExitExplicitForEachStatement(c *ExplicitForEachStatementContext)
 
 	// ExitForEachClause is called when exiting the forEachClause production.
 	ExitForEachClause(c *ForEachClauseContext)
@@ -2052,12 +2010,6 @@ type vbaListener interface {
 
 	// ExitPositionalOrNamedArgumentList is called when exiting the positionalOrNamedArgumentList production.
 	ExitPositionalOrNamedArgumentList(c *PositionalOrNamedArgumentListContext)
-
-	// ExitPositionalArgument is called when exiting the positionalArgument production.
-	ExitPositionalArgument(c *PositionalArgumentContext)
-
-	// ExitRequiredPositionalArgument is called when exiting the requiredPositionalArgument production.
-	ExitRequiredPositionalArgument(c *RequiredPositionalArgumentContext)
 
 	// ExitNamedArgumentList is called when exiting the namedArgumentList production.
 	ExitNamedArgumentList(c *NamedArgumentListContext)

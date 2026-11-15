@@ -218,6 +218,62 @@ func TestCommonConstructsParseWithSLL(t *testing.T) {
 	}
 }
 
+// For・引数リストの文法の書き換え（SLL の先読みを減らすため）で、受け付ける言語が変わっていない。
+func TestRewrittenRulesAcceptSameLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"Next", "    For i = 1 To 3\n        x = i\n    Next\n", true},
+		{"Next i", "    For i = 1 To 3\n        x = i\n    Next i\n", true},
+		{"Next j, i", "    For i = 1 To 3\n        For j = 1 To 2\n            x = j\n        Next j, i\n", true},
+		{"Next k, j, i", "    For i = 1 To 3\n        For Each j In c\n            For k = 1 To 2\n            Next k, j, i\n", true},
+		{"For Each の Next j, i", "    For Each i In c\n        For Each j In i\n        Next j, i\n", true},
+		{"内側の Next に変数がない", "    For i = 1 To 3\n        For j = 1 To 2\n        Next, i\n", false},
+		{"最後の文が For でない", "    For i = 1 To 3\n        x = 1, i\n", false},
+		{"本体がない", "    For i = 1 To 3, i\n", false},
+		{"空の実引数", "    Call Foo(, 1)\n    Call Foo(1, , 2)\n    Call Foo(1, ,)\n", false}, // 最後の実引数は省略できない
+		{"省略した実引数", "    Call Foo(, 1)\n    Call Foo(1, , 2)\n    Foo , 1\n", true},
+		{"名前付き実引数", "    Call Foo(1, , b:=2, c:=3)\n    x = Bar(a:=1)\n", true},
+		{"引数の宣言", "End Sub\nSub P(a, ByVal b As Long, Optional c = 1, ParamArray d())\n", true},
+		{"Optional の後の位置引数", "End Sub\nSub P(Optional a = 1, b)\n", true}, // 元の invalidParameterList も受け付ける
+		{"Property Let の引数", "End Sub\nProperty Let V(ByVal i As Long, Optional j = 1, ByVal v As Long)\nEnd Property\nSub Q()\n", true},
+	} {
+		lfAndCRLF(t, "Sub M()\n"+tc.body+"End Sub\n", func(t *testing.T, src string) {
+			st := ParseSymbols(src).Stats
+			if got := st.SyntaxErrors == 0; got != tc.ok {
+				t.Errorf("%s: 構文エラー %d 件（UsedLL=%v）, want ok=%v", tc.name, st.SyntaxErrors, st.UsedLL, tc.ok)
+			}
+			if tc.ok && st.UsedLL {
+				t.Errorf("%s: LL にフォールバックした（SLL 失敗 %d 行目）", tc.name, st.SLLErrorLine)
+			}
+		})
+	}
+}
+
+// ウォームアップ用の合成モジュールは構文エラーなしで SLL だけで解析でき、stdout には何も出さない。
+func TestWarmUpParser(t *testing.T) {
+	st := ParseSymbols(warmupSource).Stats
+	if st.UsedLL || st.SyntaxErrors != 0 {
+		t.Fatalf("ウォームアップ用ソース: %+v", st)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	warmUpParser()
+	os.Stdout = orig
+	w.Close()
+	var buf [256]byte
+	if n, _ := r.Read(buf[:]); n > 0 {
+		t.Errorf("stdout に出力された: %q", buf[:n])
+	}
+	r.Close()
+}
+
 // String$( ) の後の宣言も失われない（修正前は構文エラーでプロシージャ以降のシンボルが欠けていた）。
 func TestTypedReservedNameKeepsFollowingSymbols(t *testing.T) {
 	src := "Function F() As String\n    F = String$(3, \" \")\n    Dim d As PartDocument\nEnd Function\n"

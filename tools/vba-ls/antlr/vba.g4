@@ -722,23 +722,21 @@ procedureParameters
     : '(' wsc? parameterList? wscu? ')'
     ;
 
+// Cat5Dev: parameterList を procedureParameters と共有すると、SLL 予測では呼び出し元の文脈が混ざり、
+// どの手続きでも「次の引数が最後の valueParam か」を ')' の先まで先読みしてしまう。同じ内容の別規則にして分離する。
 propertyParameters
-    : '(' wsc? (parameterList wsc? ',' wsc?)? valueParam wsc? ')'
+    : '(' wsc? (propertyParameterList wsc? ',' wsc?)? valueParam wsc? ')'
     ;
 
-validParameterList
-    : (positionalParameters wsc? ',' wsc? optionalParameters)
-    | (positionalParameters (wsc? ',' wsc? paramArray)?)
-    | optionalParameters
-    | paramArray
-    ;
-
-invalidParameterList
+propertyParameterList
     : anyParam (wsc? ',' wsc? anyParam)*
     ;
 
+// Cat5Dev: 元は (validParameterList | invalidParameterList) だったが、invalidParameterList（anyParam の列）は
+// validParameterList をすべて含むため、受け付ける言語は anyParam の列と同じ。2 つの選択肢が引数リスト全体に
+// わたって曖昧で、SLL 予測が引数ごとに長い先読みをして DFA 状態が増え続けるため、anyParam の列にまとめる。
 parameterList
-    : (validParameterList | invalidParameterList)
+    : anyParam (wsc? ',' wsc? anyParam)*
     ;
 
 anyParam
@@ -751,9 +749,6 @@ positionalParameters
     : positionalParam (wsc? ',' wsc? positionalParam)*
     ;
 
-optionalParameters
-    : optionalParam (wsc? ',' wsc? optionalParam)*
-    ;
 
 valueParam
     : positionalParam
@@ -929,22 +924,20 @@ whileStatement
     ;
 
 // 5.4.2.3 For Statement
+// Cat5Dev: 元の文法は simpleForStatement（Next）/ explicitForStatement（Next 変数、または入れ子の For を
+// "Next j, i" で閉じる nestedForStatement）だった。この形では、SLL 予測が For 文のたびに本体全体を Next まで
+// 先読みして「Next の後に変数があるか」「外側を閉じる入れ子の For か」を判定し、DFA の状態がコードの量に
+// 比例して増え続けていた（初回解析が遅い主因）。末尾（forTail）で判定する形に書き換える。
+// "Next j, i" は、内側の For を本体の最後の文として解析したあと、外側の For が ", i" で閉じる形になる。
+// 元の文法と同じく「本体の最後の文が Next に変数を持つ For / For Each のときだけ」", i" で閉じられることは、
+// 文法では表さずシンボル収集（symbol_listener.go の checkForTail）で検査し、違反は構文エラーとして数える。
 forStatement
-    : simpleForStatement
-    | explicitForStatement
+    : forClause statementBlock? forTail
     ;
 
-simpleForStatement
-    : forClause statementBlock? endOfStatement NEXT
-    ;
-
-explicitForStatement
-    : forClause statementBlock? endOfStatement (NEXT | (nestedForStatement wsc? ',')) wsc boundVariableExpression
-    ;
-
-nestedForStatement
-    : explicitForStatement
-    | explicitForEachStatement
+forTail
+    : endOfStatement NEXT (wsc boundVariableExpression)?
+    | wsc? ',' wsc boundVariableExpression
     ;
 
 forClause
@@ -971,16 +964,7 @@ stepIncrement
 
 // 5.4.2.4 For Each Statement
 forEachStatement
-    : simpleForEachStatement
-    | explicitForEachStatement
-    ;
-
-simpleForEachStatement
-    : forEachClause statementBlock? endOfStatement NEXT
-    ;
-
-explicitForEachStatement
-    : forEachClause statementBlock? endOfStatement (NEXT | (nestedForStatement wsc? ',')) wsc boundVariableExpression
+    : forEachClause statementBlock? forTail
     ;
 
 forEachClause
@@ -1719,17 +1703,14 @@ argumentList
     : positionalOrNamedArgumentList?
     ;
 
+// Cat5Dev: 元は "(positionalArgument wsc? ',' wsc?)* (requiredPositionalArgument | namedArgumentList)"
+// （positionalArgument は省略可）。ループを続けるかの判定に各引数の式全体の先読みが必要で、SLL の DFA 状態が
+// 式の種類だけ増え続けるため、同じ言語（省略可の引数をカンマで区切り、最後は必須の引数か名前付き引数の列）を
+// 右再帰で表す。
 positionalOrNamedArgumentList
-    : (positionalArgument wsc? ',' wsc?)* requiredPositionalArgument
-    | (positionalArgument wsc? ',' wsc?)* namedArgumentList
-    ;
-
-positionalArgument
-    : argumentExpression?
-    ;
-
-requiredPositionalArgument
-    : argumentExpression
+    : ',' wsc? positionalOrNamedArgumentList
+    | argumentExpression (wsc? ',' wsc? positionalOrNamedArgumentList)?
+    | namedArgumentList
     ;
 
 namedArgumentList

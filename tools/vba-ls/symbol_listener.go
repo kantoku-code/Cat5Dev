@@ -22,6 +22,8 @@ type symbolListener struct {
 
 	varVis    Visibility // 処理中の Dim / Public / Private / Static 文の公開範囲
 	varStatic bool
+
+	grammarErrors int // 文法では表していない制約の違反数（構文エラーとして数える）
 }
 
 func newSymbolListener(lines []string) *symbolListener {
@@ -669,6 +671,50 @@ func (l *symbolListener) EnterEnumDeclaration(ctx *vbaantlr.EnumDeclarationConte
 		e.Members = append(e.Members, &ms)
 		l.addSymbol(ms)
 	}
+}
+
+// --- For の末尾 ---
+
+func (l *symbolListener) EnterForStatement(ctx *vbaantlr.ForStatementContext) {
+	l.checkForTail(ctx.StatementBlock(), ctx.ForTail())
+}
+
+func (l *symbolListener) EnterForEachStatement(ctx *vbaantlr.ForEachStatementContext) {
+	l.checkForTail(ctx.StatementBlock(), ctx.ForTail())
+}
+
+// checkForTail は ", 変数" で閉じる For（"Next j, i" の外側）が、元の文法と同じく
+// 「本体の最後の文が Next に変数を持つ For / For Each」の場合だけであることを検査する。
+func (l *symbolListener) checkForTail(body vbaantlr.IStatementBlockContext, tail vbaantlr.IForTailContext) {
+	if tail == nil || tail.NEXT() != nil {
+		return
+	}
+	if !endsWithExplicitFor(body) {
+		l.grammarErrors++
+	}
+}
+
+// endsWithExplicitFor は文のブロックの最後の文が、Next に変数を持つ For / For Each かを返す。
+func endsWithExplicitFor(body vbaantlr.IStatementBlockContext) bool {
+	if body == nil {
+		return false
+	}
+	stmts := body.AllBlockStatement()
+	if len(stmts) == 0 || stmts[len(stmts)-1].Statement() == nil {
+		return false
+	}
+	cs := stmts[len(stmts)-1].Statement().ControlStatement()
+	if cs == nil || cs.ControlStatementExceptMultilineIf() == nil {
+		return false
+	}
+	c := cs.ControlStatementExceptMultilineIf()
+	var tail vbaantlr.IForTailContext
+	if f := c.ForStatement(); f != nil {
+		tail = f.ForTail()
+	} else if f := c.ForEachStatement(); f != nil {
+		tail = f.ForTail()
+	}
+	return tail != nil && tail.BoundVariableExpression() != nil
 }
 
 // --- With / Implements ---

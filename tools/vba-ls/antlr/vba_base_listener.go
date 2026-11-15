@@ -784,17 +784,11 @@ func (s *BasevbaListener) EnterPropertyParameters(ctx *PropertyParametersContext
 // ExitPropertyParameters is called when production propertyParameters is exited.
 func (s *BasevbaListener) ExitPropertyParameters(ctx *PropertyParametersContext) {}
 
-// EnterValidParameterList is called when production validParameterList is entered.
-func (s *BasevbaListener) EnterValidParameterList(ctx *ValidParameterListContext) {}
+// EnterPropertyParameterList is called when production propertyParameterList is entered.
+func (s *BasevbaListener) EnterPropertyParameterList(ctx *PropertyParameterListContext) {}
 
-// ExitValidParameterList is called when production validParameterList is exited.
-func (s *BasevbaListener) ExitValidParameterList(ctx *ValidParameterListContext) {}
-
-// EnterInvalidParameterList is called when production invalidParameterList is entered.
-func (s *BasevbaListener) EnterInvalidParameterList(ctx *InvalidParameterListContext) {}
-
-// ExitInvalidParameterList is called when production invalidParameterList is exited.
-func (s *BasevbaListener) ExitInvalidParameterList(ctx *InvalidParameterListContext) {}
+// ExitPropertyParameterList is called when production propertyParameterList is exited.
+func (s *BasevbaListener) ExitPropertyParameterList(ctx *PropertyParameterListContext) {}
 
 // EnterParameterList is called when production parameterList is entered.
 func (s *BasevbaListener) EnterParameterList(ctx *ParameterListContext) {}
@@ -813,12 +807,6 @@ func (s *BasevbaListener) EnterPositionalParameters(ctx *PositionalParametersCon
 
 // ExitPositionalParameters is called when production positionalParameters is exited.
 func (s *BasevbaListener) ExitPositionalParameters(ctx *PositionalParametersContext) {}
-
-// EnterOptionalParameters is called when production optionalParameters is entered.
-func (s *BasevbaListener) EnterOptionalParameters(ctx *OptionalParametersContext) {}
-
-// ExitOptionalParameters is called when production optionalParameters is exited.
-func (s *BasevbaListener) ExitOptionalParameters(ctx *OptionalParametersContext) {}
 
 // EnterValueParam is called when production valueParam is entered.
 func (s *BasevbaListener) EnterValueParam(ctx *ValueParamContext) {}
@@ -1002,23 +990,11 @@ func (s *BasevbaListener) EnterForStatement(ctx *ForStatementContext) {}
 // ExitForStatement is called when production forStatement is exited.
 func (s *BasevbaListener) ExitForStatement(ctx *ForStatementContext) {}
 
-// EnterSimpleForStatement is called when production simpleForStatement is entered.
-func (s *BasevbaListener) EnterSimpleForStatement(ctx *SimpleForStatementContext) {}
+// EnterForTail is called when production forTail is entered.
+func (s *BasevbaListener) EnterForTail(ctx *ForTailContext) {}
 
-// ExitSimpleForStatement is called when production simpleForStatement is exited.
-func (s *BasevbaListener) ExitSimpleForStatement(ctx *SimpleForStatementContext) {}
-
-// EnterExplicitForStatement is called when production explicitForStatement is entered.
-func (s *BasevbaListener) EnterExplicitForStatement(ctx *ExplicitForStatementContext) {}
-
-// ExitExplicitForStatement is called when production explicitForStatement is exited.
-func (s *BasevbaListener) ExitExplicitForStatement(ctx *ExplicitForStatementContext) {}
-
-// EnterNestedForStatement is called when production nestedForStatement is entered.
-func (s *BasevbaListener) EnterNestedForStatement(ctx *NestedForStatementContext) {}
-
-// ExitNestedForStatement is called when production nestedForStatement is exited.
-func (s *BasevbaListener) ExitNestedForStatement(ctx *NestedForStatementContext) {}
+// ExitForTail is called when production forTail is exited.
+func (s *BasevbaListener) ExitForTail(ctx *ForTailContext) {}
 
 // EnterForClause is called when production forClause is entered.
 func (s *BasevbaListener) EnterForClause(ctx *ForClauseContext) {}
@@ -1055,18 +1031,6 @@ func (s *BasevbaListener) EnterForEachStatement(ctx *ForEachStatementContext) {}
 
 // ExitForEachStatement is called when production forEachStatement is exited.
 func (s *BasevbaListener) ExitForEachStatement(ctx *ForEachStatementContext) {}
-
-// EnterSimpleForEachStatement is called when production simpleForEachStatement is entered.
-func (s *BasevbaListener) EnterSimpleForEachStatement(ctx *SimpleForEachStatementContext) {}
-
-// ExitSimpleForEachStatement is called when production simpleForEachStatement is exited.
-func (s *BasevbaListener) ExitSimpleForEachStatement(ctx *SimpleForEachStatementContext) {}
-
-// EnterExplicitForEachStatement is called when production explicitForEachStatement is entered.
-func (s *BasevbaListener) EnterExplicitForEachStatement(ctx *ExplicitForEachStatementContext) {}
-
-// ExitExplicitForEachStatement is called when production explicitForEachStatement is exited.
-func (s *BasevbaListener) ExitExplicitForEachStatement(ctx *ExplicitForEachStatementContext) {}
 
 // EnterForEachClause is called when production forEachClause is entered.
 func (s *BasevbaListener) EnterForEachClause(ctx *ForEachClauseContext) {}
@@ -1879,18 +1843,6 @@ func (s *BasevbaListener) EnterPositionalOrNamedArgumentList(ctx *PositionalOrNa
 // ExitPositionalOrNamedArgumentList is called when production positionalOrNamedArgumentList is exited.
 func (s *BasevbaListener) ExitPositionalOrNamedArgumentList(ctx *PositionalOrNamedArgumentListContext) {
 }
-
-// EnterPositionalArgument is called when production positionalArgument is entered.
-func (s *BasevbaListener) EnterPositionalArgument(ctx *PositionalArgumentContext) {}
-
-// ExitPositionalArgument is called when production positionalArgument is exited.
-func (s *BasevbaListener) ExitPositionalArgument(ctx *PositionalArgumentContext) {}
-
-// EnterRequiredPositionalArgument is called when production requiredPositionalArgument is entered.
-func (s *BasevbaListener) EnterRequiredPositionalArgument(ctx *RequiredPositionalArgumentContext) {}
-
-// ExitRequiredPositionalArgument is called when production requiredPositionalArgument is exited.
-func (s *BasevbaListener) ExitRequiredPositionalArgument(ctx *RequiredPositionalArgumentContext) {}
 
 // EnterNamedArgumentList is called when production namedArgumentList is entered.
 func (s *BasevbaListener) EnterNamedArgumentList(ctx *NamedArgumentListContext) {}

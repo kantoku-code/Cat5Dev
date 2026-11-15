@@ -10,6 +10,9 @@ import (
 )
 
 func main() {
+	// 初回解析の遅さ（ANTLR の DFA 構築）を隠すため、起動直後に合成モジュールを解析しておく
+	go warmUpParser()
+
 	db := loadDB()
 	defer db.Close()
 

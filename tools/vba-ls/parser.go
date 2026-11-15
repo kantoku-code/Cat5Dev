@@ -21,6 +21,7 @@ func parseModule(src string, lines []string, mode parseMode) *SymbolTable {
 	l := newSymbolListener(lines)
 	antlr.ParseTreeWalkerDefault.Walk(l, tree)
 	stats.Duration = time.Since(start)
+	stats.SyntaxErrors += l.grammarErrors // 文法では表していない制約の違反（For の ", i" など）
 	l.table.Stats = stats
 	l.finish()
 	return l.table
