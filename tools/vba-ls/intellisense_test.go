@@ -287,6 +287,50 @@ func TestDiagnosticsTable(t *testing.T) {
 	}
 }
 
+// 重大度: 組み込み・ワークスペースの型は Error、TLB（CATIA）型は TLB のどこにも無い名前だけを Warning にする。
+func TestDiagnosticsSeverity(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []DiagnosticSeverity
+	}{
+		{"基底型 Document の Part（派生型 PartDocument にある）", "Sub A()\n    Dim d As Document\n    x = d.Part\n    d.Name = 1\nEnd Sub\n", nil},
+		{"TLB のどこにも無い名前は Warning", "Sub A()\n    Dim d As PartDocument\n    d.Bogus\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityWarning}},
+		{"With の中の TLB 型", "Sub A()\n    Dim d As Document\n    With d\n        .Bodies.Count = 1\n        .Zzz = 1\n    End With\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityWarning}},
+		{"IUnknown のメソッド名は TLB の名前に数えない", "Sub A()\n    Dim d As Document\n    d.QueryInterface\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityWarning}},
+		{"組み込みの Collection は Error", "Sub A()\n    Dim c As New Collection\n    c.Bogus\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
+		{"組み込みの Scripting.File は Error", "Sub A()\n    Dim fso As New Scripting.FileSystemObject\n    fso.GetFile(\"a\").Bogus\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
+		{"TLB の名前でも組み込み型なら Error", "Sub A()\n    Dim c As New Collection\n    c.Part\nEnd Sub\n", []DiagnosticSeverity{DiagnosticSeverityError}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lfAndCRLF(t, tc.src, func(t *testing.T, src string) {
+				diags := diagsOf(t, src)
+				if len(diags) != len(tc.want) {
+					t.Fatalf("診断 = %+v, want %d 件", diags, len(tc.want))
+				}
+				for i, w := range tc.want {
+					if diags[i].Severity != w {
+						t.Errorf("診断[%d] の重大度 = %d, want %d（%s）", i, diags[i].Severity, w, diags[i].Message)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TLB のメンバー名を読めないときは安全側（TLB 型の診断を出さない）に倒す。
+func TestDiagnosticsTLBNamesUnavailable(t *testing.T) {
+	db := newTestTLBDatabase(t)
+	if _, err := db.db.Exec(`ALTER TABLE properties RENAME TO properties_x`); err != nil {
+		t.Fatal(err)
+	}
+	src := "Sub A()\n    Dim d As PartDocument\n    d.Bogus\n    Dim c As New Collection\n    c.Bogus\nEnd Sub\n"
+	diags := BuildDiagnostics(NewDocument("file:///test.bas", src, ParseSymbols(src), NewDefaultResolver(db, nil)))
+	if len(diags) != 1 || diags[0].Range.Start.Line != 4 || diags[0].Severity != DiagnosticSeverityError {
+		t.Fatalf("診断 = %+v, want 組み込み型の 1 件だけ", diags)
+	}
+}
+
 // --- セマンティックトークン ---
 
 func TestSemanticTokensScopeAndMembers(t *testing.T) {

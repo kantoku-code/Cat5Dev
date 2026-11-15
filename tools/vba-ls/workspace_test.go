@@ -298,6 +298,9 @@ func TestWorkspaceDiagnostics(t *testing.T) {
 			var got []string
 			for _, d := range BuildDiagnostics(doc) {
 				got = append(got, d.Message)
+				if d.Severity != DiagnosticSeverityError {
+					t.Errorf("ワークスペースの型の診断は Error のはず: %+v", d)
+				}
 			}
 			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
 				t.Errorf("診断 = %q, want %q", got, tc.want)

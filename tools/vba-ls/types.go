@@ -234,6 +234,9 @@ type TypeLister interface {
 	Types() []TypeInfo
 }
 
+// MemberNameIndex は「ライブラリ内のどこかの型にこの名前のメンバーがあるか」を答える（TLB の遅延バインディング対策）。
+type MemberNameIndex interface{ HasMemberNamed(name string) bool }
+
 // qualifiedOnlyProvider は修飾付きの参照（OwnsLibrary が true の Lib）でしか型を引かせないプロバイダ
 // （標準モジュール。"Dim p As Part" が同名の標準モジュールに化けないようにする）。
 type qualifiedOnlyProvider interface{ QualifiedOnly() bool }

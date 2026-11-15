@@ -43,9 +43,11 @@ CREATE TABLE parameters (
     type      TEXT    NOT NULL DEFAULT '',
     position  INTEGER NOT NULL DEFAULT 0
 );
-INSERT INTO interfaces(id, name) VALUES (1, 'PartDocument'), (2, 'Part'), (3, 'Bodies'), (4, 'Body'), (5, 'Collection'), (6, 'AnyObject');
+INSERT INTO interfaces(id, name) VALUES (1, 'PartDocument'), (2, 'Part'), (3, 'Bodies'), (4, 'Body'), (5, 'Collection'), (6, 'AnyObject'),
+    (7, 'Document');
 INSERT INTO properties(interface_id, name, type) VALUES (1, 'Part', 'Part'), (1, 'Name', 'String'),
-    (2, 'Bodies', 'Bodies'), (2, 'Name', 'String'), (3, 'Count', 'Long'), (4, 'Name', 'String'), (6, 'Name', 'String');
+    (2, 'Bodies', 'Bodies'), (2, 'Name', 'String'), (3, 'Count', 'Long'), (4, 'Name', 'String'), (6, 'Name', 'String'),
+    (7, 'Name', 'String');
 INSERT INTO methods(id, interface_id, name, return_type) VALUES (1, 1, 'Save', ''), (2, 3, 'Item', 'Body'), (3, 5, 'GetItem', 'CATBaseDispatch'),
     (4, 3, 'QueryInterface', 'void');
 INSERT INTO parameters(method_id, name, type, position) VALUES (2, 'iIndex', 'Variant', 0), (3, 'IDName', 'String', 0);

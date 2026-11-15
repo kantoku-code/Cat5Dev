@@ -102,6 +102,9 @@ type TLBProvider struct {
 
 	mu     sync.Mutex
 	merged map[int64]*memberSet
+
+	namesOnce sync.Once
+	names     map[string]bool // 全インターフェースのメンバー名（小文字）。読み込みに失敗したら nil
 }
 
 // newTLBProvider は db が nil なら interface の nil を返す（typed nil を作らない）。
@@ -279,4 +282,38 @@ WHERE m.interface_id = ? ORDER BY pa.method_id, pa.position`, it.id)
 		rows.Close()
 	}
 	return out
+}
+
+// HasMemberNamed は、どれかのインターフェースに name（大文字小文字無視）というメンバーがあるかを返す。
+// CATIA は遅延バインディングなので、宣言型が基底型でも派生型のメンバーが実行時に動く。診断ではこの集合に無い名前
+// （typo か型情報の欠落）だけを警告にする。初回にメソッドとプロパティの名前を一度だけ読み込む。
+// 読み込みに失敗したときは常に true を返す（安全側＝診断しない）。
+func (p *TLBProvider) HasMemberNamed(name string) bool {
+	p.namesOnce.Do(func() {
+		rows, err := p.db.db.Query(`SELECT name FROM methods UNION SELECT name FROM properties`)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vba-ls: メンバー名の読み込みに失敗: %v\n", err)
+			return
+		}
+		defer rows.Close()
+		names := map[string]bool{}
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				continue
+			}
+			if key := strings.ToLower(n); !tlbHiddenMembers[key] {
+				names[key] = true
+			}
+		}
+		if rows.Err() != nil {
+			fmt.Fprintf(os.Stderr, "vba-ls: メンバー名の読み込みに失敗: %v\n", rows.Err())
+			return
+		}
+		p.names = names
+	})
+	if p.names == nil {
+		return true
+	}
+	return p.names[strings.ToLower(name)]
 }

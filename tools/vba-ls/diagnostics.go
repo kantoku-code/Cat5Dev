@@ -8,6 +8,7 @@ import (
 // BuildDiagnostics は文書全体を走査して、存在しないメンバーへのアクセスを診断として返す。
 // 論理行（行継続を連結）ごとに文字列・コメントをマスクし、"." の直後の識別子をすべて調べる。
 // 受け手の型が解決でき、メンバー一覧が網羅的（Complete）な型の場合だけ診断する。
+// 組み込み型・ワークスペースの型は Error、TLB（CATIA）型は TLB 全体に無い名前だけを Warning にする。
 // TLB（CATIA）型のメンバーの戻り値を経由して求めた型は、typelib が基底型を宣言していることが多いため診断しない
 // （例: Part.UserSurfaces は Collection と宣言されているが実体は UserSurfaces）。
 func BuildDiagnostics(doc *Document) []Diagnostic {
@@ -53,12 +54,21 @@ func BuildDiagnostics(doc *Document) []Diagnostic {
 			if !ok || t.Array || r.viaTLBMember {
 				continue
 			}
-			ti, _, ok := doc.Types.Resolve(t)
+			ti, prov, ok := doc.Types.Resolve(t)
 			if !ok || ti.Kind == TypeKindPrimitive || !ti.Complete {
 				continue
 			}
 			if _, ok := doc.Types.Member(t, name); ok {
 				continue
+			}
+			sev := DiagnosticSeverityError
+			if _, isTLB := prov.(*TLBProvider); isTLB {
+				// CATIA は遅延バインディング。宣言型が基底型（Document 等）でも派生型のメンバーが実行時に動くため、
+				// TLB のどこにも無い名前（typo か型情報の欠落）だけを警告にする。型情報に欠落がありうるので Error にはしない。
+				if idx, ok := prov.(MemberNameIndex); ok && idx.HasMemberNamed(name) {
+					continue
+				}
+				sev = DiagnosticSeverityWarning
 			}
 			sl, sb := ll.Physical(a)
 			el, eb := ll.Physical(b)
@@ -70,7 +80,7 @@ func BuildDiagnostics(doc *Document) []Diagnostic {
 					Start: Position{Line: uint32(sl), Character: uint32(byteToUTF16Offset(doc.Lines[sl], sb))},
 					End:   Position{Line: uint32(el), Character: uint32(byteToUTF16Offset(doc.Lines[el], eb))},
 				},
-				Severity: DiagnosticSeverityError,
+				Severity: sev,
 				Source:   "vba-ls",
 				Message:  "'" + t.String() + "' に '" + name + "' は存在しません",
 			})

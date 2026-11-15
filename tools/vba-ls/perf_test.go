@@ -288,6 +288,7 @@ func TestTypedReservedNameKeepsFollowingSymbols(t *testing.T) {
 // TestWorkspaceIndexSampleDir は実プロジェクトを索引し、時間・件数・メモリと、ワークスペースの型による診断の増分を記録する。
 // CAT5DEV_SAMPLE_DIR が modules を指していれば、その親をワークスペースのルートにして modules の自動検出も確かめる。
 // CAT5DEV_WS_DIAG_BUDGET が設定されていれば、ワークスペース由来の診断の増分がそれを超えたら失敗にする。
+// CAT5DEV_DIAG_ERROR_BUDGET が設定されていれば、Error の診断の件数がそれを超えたら失敗にする。
 func TestWorkspaceIndexSampleDir(t *testing.T) {
 	files := sampleFiles(t)
 	dir := os.Getenv("CAT5DEV_SAMPLE_DIR")
@@ -378,6 +379,8 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 	base := NewDefaultResolver(db)
 	var extra []string
 	totalWS, totalBase := 0, 0
+	bySev := map[DiagnosticSeverity]int{}
+	var errSamples []string
 	for _, f := range files {
 		e := ws.Entry(f)
 		if e == nil {
@@ -390,6 +393,12 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 		without := BuildDiagnostics(newDocumentFull("file:///x.bas", text, lines, e.Table, nil, base))
 		totalWS += len(with)
 		totalBase += len(without)
+		for _, d := range with {
+			bySev[d.Severity]++
+			if d.Severity == DiagnosticSeverityError && len(errSamples) < 20 {
+				errSamples = append(errSamples, fmt.Sprintf("%s:%d: %s", filepath.Base(f), d.Range.Start.Line+1, d.Message))
+			}
+		}
 		seen := map[string]int{}
 		for _, d := range without {
 			seen[fmt.Sprintf("%d:%d:%s", d.Range.Start.Line, d.Range.Start.Character, d.Message)]++
@@ -410,6 +419,20 @@ func TestWorkspaceIndexSampleDir(t *testing.T) {
 			break
 		}
 		t.Logf("  %s", s)
+	}
+	t.Logf("診断の重大度（ワークスペースあり）: Error %d / Warning %d / その他 %d",
+		bySev[DiagnosticSeverityError], bySev[DiagnosticSeverityWarning], totalWS-bySev[DiagnosticSeverityError]-bySev[DiagnosticSeverityWarning])
+	for _, s := range errSamples {
+		t.Logf("  Error: %s", s)
+	}
+	if b := os.Getenv("CAT5DEV_DIAG_ERROR_BUDGET"); b != "" {
+		n, err := strconv.Atoi(b)
+		if err != nil {
+			t.Fatalf("CAT5DEV_DIAG_ERROR_BUDGET=%q: %v", b, err)
+		}
+		if e := bySev[DiagnosticSeverityError]; e > n {
+			t.Fatalf("Error の診断 %d 件が予算 %d 件を超えた", e, n)
+		}
 	}
 	if b := os.Getenv("CAT5DEV_WS_DIAG_BUDGET"); b != "" {
 		n, err := strconv.Atoi(b)
