@@ -1,6 +1,7 @@
 {
     "name": "cat5dev",
     "displayName": "CATIA V5 VBA",
+    "icon": "resources/catia-icon.png",
     "description": "We provide support for CATIA V5 VBA macro development",
     "version": "0.5.0",
     "repository": {
