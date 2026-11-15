@@ -11,7 +11,7 @@ import (
 )
 
 const serverName = "vba-ls"
-const serverVersion = "0.1.0"
+const serverVersion = "0.5.2"
 
 // documentStore はオープン中のドキュメントを保持する。
 type documentStore struct {
