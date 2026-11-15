@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // normalizeThenPlacement は "If x > 0 _\n    Then" を "If x > 0 Then" に変換する
 // "_" で終わる行の次の実質コード行が "Then" のみなら結合する
@@ -50,7 +53,28 @@ func isContinuationLine(trimmed string) bool {
 	if last.kind != segCode {
 		return false
 	}
-	return strings.HasSuffix(strings.TrimRight(last.text, " \t"), "_")
+	code := strings.TrimRight(last.text, " \t")
+	if !strings.HasSuffix(code, "_") {
+		return false
+	}
+	// A trailing underscore can belong to an identifier. Inspect the complete
+	// token, so numeric forms such as 1_ can still be repaired as before.
+	runes := []rune(code[:len(code)-1])
+	start := len(runes)
+	for start > 0 {
+		r := runes[start-1]
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && r != '_' {
+			break
+		}
+		start--
+	}
+	if start < len(runes) {
+		first := runes[start]
+		if unicode.IsLetter(first) || unicode.IsMark(first) || first == '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // splitColonStatements はコロン区切り文を複数行に分割する
@@ -94,8 +118,8 @@ func splitColonLine(line string) []string {
 		}
 		// コードセグメント内のコロンで分割
 		s := seg.text
-		for _, ch := range s {
-			if ch == ':' {
+		for i, ch := range s {
+			if ch == ':' && !(i+1 < len(s) && s[i+1] == '=') {
 				part := strings.TrimSpace(current.String())
 				if part != "" {
 					parts = append(parts, part)

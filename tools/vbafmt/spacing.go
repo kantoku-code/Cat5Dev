@@ -89,6 +89,9 @@ func ensureContinuationSpace(lines []string) []string {
 }
 
 func ensureContinuationSpaceLine(line string) string {
+	if !isContinuationLine(strings.TrimSpace(line)) {
+		return line
+	}
 	segs := parseSegments(line)
 	if len(segs) == 0 {
 		return line
@@ -175,6 +178,12 @@ func processOperatorSpacing(code string) string {
 	i := 0
 	for i < len(code) {
 		ch := code[i]
+		// Named arguments are a single token; never turn := into : =.
+		if ch == ':' && i+1 < len(code) && code[i+1] == '=' {
+			out.WriteString(":=")
+			i += 2
+			continue
+		}
 
 		if !isOperatorChar(ch) {
 			out.WriteByte(ch)

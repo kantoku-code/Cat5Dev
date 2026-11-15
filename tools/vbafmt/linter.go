@@ -297,7 +297,7 @@ func checkUnmatchedParens(lines []string, opts LintOptions) []Diagnostic {
 			stmtCode.WriteString(ct)
 			i++
 			// 末尾が _ なら継続
-			if !strings.HasSuffix(strings.TrimSpace(ct), "_") {
+			if !isContinuationLine(strings.TrimSpace(line)) {
 				break
 			}
 			// _ を除去
