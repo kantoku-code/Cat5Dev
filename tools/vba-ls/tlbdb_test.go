@@ -155,6 +155,14 @@ func TestBundledDatabaseUnchanged(t *testing.T) {
 	if items := h.completion(cp); len(items) == 0 {
 		t.Error("PartDocument の補完が空")
 	}
+	// 暗黙のグローバル CATIA（Application）のメンバー補完
+	h.didChange(DidChangeTextDocumentParams{TextDocument: VersionedTextDocumentIdentifier{URI: uri},
+		ContentChanges: []TextDocumentContentChangeEvent{{Text: "Sub M()\n    CATIA.ActiveDocument.\nEnd Sub\n"}}})
+	h.waitParsed(uri, time.Minute)
+	cp.Position = Position{Line: 1, Character: 25}
+	if items := h.completion(cp); !labelsOf(items)["FullName"] {
+		t.Errorf("CATIA.ActiveDocument. の補完に FullName が無い（%d 件）", len(items))
+	}
 	_ = h.diagnostics(uri)
 	_ = h.semanticTokens(SemanticTokensParams{TextDocument: TextDocumentIdentifier{URI: uri}})
 

@@ -600,6 +600,28 @@ func (p *TLBProvider) HasMemberNamed(name string) bool {
 	return p.names[strings.ToLower(name)]
 }
 
+// catiaGlobalDoc は暗黙のグローバル CATIA の説明。
+const catiaGlobalDoc = "CATIA のアプリケーション（マクロから暗黙に参照できるグローバル）"
+
+// Global は暗黙のグローバル CATIA を Application 型として返す（DB に Application があるときだけ）。
+func (p *TLBProvider) Global(name string) (TypeRef, bool) {
+	if !strings.EqualFold(name, "CATIA") {
+		return TypeRef{}, false
+	}
+	if ti, ok := p.LookupType("Application"); ok && ti.Kind == TypeKindInterface {
+		return ti.Ref, true
+	}
+	return TypeRef{}, false
+}
+
+// Globals は暗黙のグローバルの一覧（識別子補完・ホバー用）を返す。
+func (p *TLBProvider) Globals() []GlobalInfo {
+	if t, ok := p.Global("CATIA"); ok {
+		return []GlobalInfo{{Name: "CATIA", Type: t, Doc: catiaGlobalDoc}}
+	}
+	return nil
+}
+
 // Constant は TLB の Enum メンバーを非修飾の名前で引く（VBA と同じく catPaperA4 だけで参照できる。ホバー用）。
 func (p *TLBProvider) Constant(name string) (MemberInfo, bool) {
 	p.load()

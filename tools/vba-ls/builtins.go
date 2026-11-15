@@ -25,7 +25,7 @@ type builtinLibrary struct {
 	Aliases    []string        `json:"aliases,omitempty"`
 	Primitives []string        `json:"primitives,omitempty"`
 	Types      []builtinType   `json:"types"`
-	Globals    []builtinGlobal `json:"globals,omitempty"`   // Err / Debug（2-1: {"name":"CATIA","type":"CATIA.Application"}）
+	Globals    []builtinGlobal `json:"globals,omitempty"`   // Err / Debug（CATIA は TLBProvider.Global が DB の Application から作る）
 	Functions  []builtinFunc   `json:"functions,omitempty"` // 組み込み関数・ステートメント
 	Constants  []builtinConst  `json:"constants,omitempty"` // 列挙に属さない定数（vbCrLf など）
 }
@@ -96,7 +96,7 @@ type builtinTypeIdx struct {
 	byName  map[string]int
 }
 
-// GlobalInfo は暗黙のグローバル（Err / Debug）1 つ。
+// GlobalInfo は暗黙のグローバル（Err / Debug / CATIA）1 つ。
 type GlobalInfo struct {
 	Name string
 	Type TypeRef

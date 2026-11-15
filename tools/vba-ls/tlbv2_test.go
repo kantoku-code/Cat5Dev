@@ -347,3 +347,55 @@ func TestTLBV2EnumInEditor(t *testing.T) {
 		t.Errorf("Enum の診断 = %v", got)
 	}
 }
+
+func TestCATIAGlobal(t *testing.T) {
+	p := newTLBProvider(newTestTLBDatabaseV2(t)).(*TLBProvider)
+	if g, ok := p.Global("catia"); !ok || g != (TypeRef{Lib: "CATIA", Name: "Application"}) {
+		t.Errorf("Global(CATIA) = %+v, %v", g, ok)
+	}
+	if gs := p.Globals(); len(gs) != 1 || gs[0].Name != "CATIA" {
+		t.Errorf("Globals = %+v", gs)
+	}
+	if _, ok := newTLBProvider(newTestTLBDatabase(t)).(*TLBProvider).Global("CATIA"); ok {
+		t.Error("Application の無い DB で CATIA が解決された")
+	}
+
+	r := v2resolver(t)
+	got := labelsOf(completeAt(t, r, "Sub M()\n    CATIA.|\nEnd Sub\n"))
+	for _, want := range []string{"Documents", "ActiveDocument", "Quit", "Name"} {
+		if !got[want] {
+			t.Errorf("CATIA. の補完に %s が無い: %v", want, got)
+		}
+	}
+	if got := labelsOf(completeAt(t, r, "Sub M()\n    CATIA.ActiveDocument.|\nEnd Sub\n")); !got["FullName"] || !got["Close"] {
+		t.Errorf("CATIA.ActiveDocument. の補完 = %v", got)
+	}
+	// 同名のローカル変数が優先される
+	if got := labelsOf(completeAt(t, r, "Sub M()\n    Dim CATIA As Part\n    CATIA.|\nEnd Sub\n")); !got["Bodies"] || got["Documents"] {
+		t.Errorf("ローカル変数 CATIA の補完 = %v", got)
+	}
+	var catia *CompletionItem
+	items := completeAt(t, r, "Sub M()\n    |\nEnd Sub\n")
+	for i := range items {
+		if items[i].Label == "CATIA" {
+			catia = &items[i]
+		}
+	}
+	if catia == nil || catia.Kind != CompletionItemKindVariable || catia.Detail != "CATIA As Application" {
+		t.Errorf("識別子補完の CATIA = %+v", catia)
+	}
+	if got := labelsOf(completeAt(t, nil, "Sub M()\n    |\nEnd Sub\n")); got["CATIA"] {
+		t.Error("Application の無い DB で CATIA が識別子補完に出た")
+	}
+	if h := hoverWith(t, r, "Sub M()\n    CAT|IA.Quit\nEnd Sub\n"); !strings.Contains(h, "CATIA As Application") {
+		t.Errorf("CATIA のホバー = %q", h)
+	}
+	src, line, char := caretPos(t, "Sub M()\n    s = CATIA.FileSelectionBox(\"a\", |\nEnd Sub\n")
+	sh := BuildSignatureHelp(NewDocument("file:///test.bas", src, ParseSymbols(src), r), line, char)
+	if sh == nil || !strings.HasPrefix(sh.Signatures[0].Label, "FileSelectionBox(iTitle As String") || sh.ActiveParameter != 1 {
+		t.Errorf("CATIA.FileSelectionBox の signatureHelp = %+v", sh)
+	}
+	if got := diagMessages(t, r, "Sub M()\n    CATIA.Bogus\nEnd Sub\n"); len(got) != 1 || !strings.HasPrefix(got[0], "W:") {
+		t.Errorf("CATIA.Bogus の診断 = %v", got)
+	}
+}

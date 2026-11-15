@@ -150,6 +150,9 @@ func buildIdentifierItems(doc *Document, line int, ctx completionContext) []Comp
 	for _, it := range b.globals {
 		set.add(grpBuiltin, it)
 	}
+	for _, g := range doc.Types.Globals() {
+		set.add(grpBuiltin, globalItem(g)) // CATIA（VBA の Err / Debug は上で入っているので重複で除かれる）
+	}
 	// キーワード
 	if !ctx.AfterCall {
 		for _, it := range keywordsFor(ctx) {
@@ -289,8 +292,9 @@ func builtinItems() *builtinItemCache {
 				}
 			}
 			for _, g := range vba.Globals() {
-				c.globals = append(c.globals, CompletionItem{Label: g.Name, Kind: CompletionItemKindVariable,
-					Detail: g.Name + " As " + g.Type.Name, Documentation: plainDoc(g.Doc), LabelDetails: describe("VBA")})
+				it := globalItem(g)
+				it.LabelDetails = describe("VBA")
+				c.globals = append(c.globals, it)
 			}
 		}
 		for _, k := range bs.Keywords() {
@@ -326,6 +330,12 @@ func keywordsFor(ctx completionContext) []CompletionItem {
 		return b.stmtKeywords
 	}
 	return b.exprKeywords
+}
+
+// globalItem は暗黙のグローバル（Err / Debug / CATIA）を候補にする。
+func globalItem(g GlobalInfo) CompletionItem {
+	return CompletionItem{Label: g.Name, Kind: CompletionItemKindVariable, Detail: g.Name + " As " + g.Type.Name,
+		Documentation: plainDoc(g.Doc), LabelDetails: describe(g.Type.Lib)}
 }
 
 // keywordItems は CtxKeyword の候補（決まったキーワード）を返す。
