@@ -33,7 +33,17 @@ func repairSource(src string, lines []string) (string, int) {
 	var fixed map[int]string // 物理行 → 補修後の行
 	n := 0
 	for i := 0; i < len(lines); {
-		ll := buildLogicalLine(lines, i)
+		var ll logicalLine
+		if i+1 < len(lines) && hasContinuation(lines[i]) {
+			ll = buildLogicalLine(lines, i)
+		} else {
+			// 継続しない行（大半）は文字列を作らずにそのまま使う
+			if !mayNeedRepair(lines[i]) {
+				i++
+				continue
+			}
+			ll = logicalLine{Text: lines[i], First: i, Last: i, parts: []linePart{{line: i, length: len(lines[i])}}}
+		}
 		i = ll.Last + 1
 		if !mayNeedRepair(ll.Text) {
 			continue
@@ -82,20 +92,55 @@ func repairSource(src string, lines []string) (string, int) {
 }
 
 // mayNeedRepair は補修の対象になりうる行か（大半の行を早く飛ばすための粗い判定）。
+// 文字列・コメントを maskCode と同じ規則で読み飛ばし、閉じていない文字列・括弧か、末尾の演算子・語があるときだけ true。
+// 割り当てをしないので、大半の行（正しいコード）を安く飛ばせる。
 func mayNeedRepair(text string) bool {
-	if strings.ContainsAny(text, `"(`) {
+	inStr, stmtStart := false, true
+	depth, lastIdx := 0, -1
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inStr {
+			if c == '"' {
+				inStr, lastIdx = false, i
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inStr, stmtStart = true, false
+		case c == '\'':
+			i = len(text)
+		case c == ':':
+			stmtStart, lastIdx = true, i
+		case isBlankByte(c) || c == '\r':
+		case c == 0xE3 && strings.HasPrefix(text[i:], "　"):
+			i += len("　") - 1
+		case stmtStart && (c == 'r' || c == 'R') && isRemAt(text, i):
+			i = len(text)
+		default:
+			stmtStart = false
+			if c == '(' {
+				depth++
+			} else if c == ')' {
+				depth--
+			}
+			lastIdx = i
+		}
+	}
+	if inStr || depth > 0 {
 		return true
 	}
-	t := trimRightBlank(text)
-	if t == "" {
+	if lastIdx < 0 {
 		return false
 	}
-	switch t[len(t)-1] {
-	case '.', ',', '=', '+', '-', '*', '/', '\\', '<', '>', '&', '^':
+	switch c := text[lastIdx]; {
+	case strings.IndexByte(".,=+-*/\\<>&^(", c) >= 0:
 		return true
+	case c < 0x80 && unicode.IsLetter(rune(c)):
+		s := identStartBack(text, lastIdx+1)
+		return trailingOpWords[strings.ToLower(text[s:lastIdx+1])] // 末尾の語（And / To / New など）
 	}
-	r, _ := utf8.DecodeLastRuneInString(t)
-	return unicode.IsLetter(r) // 末尾の語（And / To / New など）
+	return false
 }
 
 // blankEdit は物理行 line のバイト位置 col から n バイトを空白にする補修。
