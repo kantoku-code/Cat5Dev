@@ -165,3 +165,53 @@ func TestServerOverJSONRPC(t *testing.T) {
 		t.Fatal("変更後の診断が通知されない")
 	}
 }
+
+// 入力途中のブロックの未完（Do の未終端）で後ろの宣言が表から落ちても、直前の正常な表で識別子補完を補う。
+func TestCompletionFallbackToGoodTable(t *testing.T) {
+	h := newLSPHandler(newTestResolver(t))
+	h.debounce = 10 * time.Millisecond
+	const uri = "file:///a.bas"
+	good := "Private mTop As Long\nSub A()\n    Dim x As Long\n    \nEnd Sub\nSub B()\nEnd Sub\nPrivate mZ As Long\n"
+	h.didOpen(DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, Text: good}})
+	if !h.waitParsed(uri, time.Minute) {
+		t.Fatal("解析が終わらない")
+	}
+	broken := "Private mTop As Long\nSub A()\n    Dim x As Long\n    Do\n    \nEnd Sub\nSub B()\nEnd Sub\nPrivate mZ As Long\n"
+	h.didChange(changeParams(uri, broken))
+	if !h.waitParsed(uri, time.Minute) {
+		t.Fatal("解析が終わらない")
+	}
+	doc := h.document(uri)
+	if doc.Table.Stats.SyntaxErrors == 0 || doc.Fallback == nil {
+		t.Fatalf("構文エラーのある版で Fallback が無い: %+v", doc.Table.Stats)
+	}
+	if doc.Table.FindByName("mZ", "module") != nil {
+		t.Fatal("前提: Do の未終端で後ろのモジュール変数が表から落ちていること")
+	}
+	labels := labelsOf(h.completion(completionParams(uri, 4, 4)))
+	for _, w := range []string{"B", "mZ", "mTop", "A"} {
+		if !labels[w] {
+			t.Errorf("補完に %s がない", w)
+		}
+	}
+	// 直った版を解析したら Fallback は使わない（直前の正常な表もその版になる）
+	fixed := "Private mTop As Long\nSub A()\n    Dim x As Long\n    Do\n    Loop\nEnd Sub\nSub C()\nEnd Sub\n"
+	h.didChange(changeParams(uri, fixed))
+	if !h.waitParsed(uri, time.Minute) {
+		t.Fatal("解析が終わらない")
+	}
+	doc = h.document(uri)
+	if doc.Fallback != nil || doc.Table.Stats.SyntaxErrors != 0 {
+		t.Fatalf("直った版で Fallback が残っている: %+v", doc.Table.Stats)
+	}
+	h.mu.Lock()
+	gt := h.docs[uri].goodTable
+	h.mu.Unlock()
+	if gt != doc.Table {
+		t.Error("goodTable が直った版の表に更新されていない")
+	}
+	labels = labelsOf(h.completion(completionParams(uri, 4, 4)))
+	if !labels["C"] || labels["B"] || labels["mZ"] {
+		t.Errorf("直った版の候補 = C あり・B / mZ なしのはず: B=%v mZ=%v C=%v", labels["B"], labels["mZ"], labels["C"])
+	}
+}

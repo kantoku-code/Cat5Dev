@@ -95,6 +95,16 @@ func buildIdentifierItems(doc *Document, line int, ctx completionContext) []Comp
 	if doc.Module != nil && doc.Module.Kind != ModuleStd && !ctx.AfterCall {
 		set.add(grpModule, keywordItem("Me"))
 	}
+	if fb := doc.Fallback; fb != nil {
+		// 構文エラーの間は、直前の正常な表にあったモジュールレベルの名前で補う（ローカルはスコープの行がずれるため使わない）
+		for i := range fb.Symbols {
+			s := &fb.Symbols[i]
+			if s.Scope != "module" || s.Owner != nil || !moduleSymbolWanted(s, ctx) {
+				continue
+			}
+			set.add(grpModule, symbolItem(s))
+		}
+	}
 	// プロジェクト: 他の標準モジュールの Public、モジュール名・フォーム名、他モジュールの Public Enum とメンバー
 	self := ""
 	if doc.Module != nil {

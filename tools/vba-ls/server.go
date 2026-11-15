@@ -40,6 +40,9 @@ type docState struct {
 	timer    *time.Timer   // 予約中の再解析
 	ready    chan struct{} // 最新の世代の解析待ち。解析が追いついたら close して nil にする
 	entry    *ModuleEntry  // table から作った自モジュールの entry（Me. 用。*_utf 以外は nil）
+	// goodTable は構文エラーの無かった最後の表。入力途中のブロックの未完（Do / For の未終端など）で
+	// 後ろの宣言が表から落ちている間、識別子補完の候補を補うのに使う（解決・診断には使わない）。
+	goodTable *SymbolTable
 }
 
 // lspHandler は jsonrpc2.Handler を実装する LSP サーバー。
@@ -332,6 +335,9 @@ func (h *lspHandler) reparse(uri string, gen int) {
 		return
 	}
 	st.table, st.tableGen, st.entry = table, gen, entry
+	if table.Stats.SyntaxErrors == 0 {
+		st.goodTable = table
+	}
 	latest := st.gen == gen
 	if latest && st.ready != nil {
 		close(st.ready)
@@ -385,9 +391,13 @@ func (h *lspHandler) document(uri string) *Document {
 		h.mu.Unlock()
 		return nil
 	}
-	text, lines, table, entry := st.text, st.lines, st.table, st.entry
+	text, lines, table, entry, good := st.text, st.lines, st.table, st.entry, st.goodTable
 	h.mu.Unlock()
-	return newDocumentFull(uri, text, lines, table, entry, h.types)
+	doc := newDocumentFull(uri, text, lines, table, entry, h.types)
+	if table != nil && table.Stats.SyntaxErrors > 0 && good != nil && good != table {
+		doc.Fallback = good
+	}
+	return doc
 }
 
 func (h *lspHandler) definition(p DefinitionParams) []Location {

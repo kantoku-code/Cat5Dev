@@ -12,6 +12,9 @@ type Document struct {
 	Types  *CompositeResolver
 	Self   TypeRef      // Me の型（クラス・フォームはモジュール名。標準モジュール・不明な拡張子はゼロ値）
 	Module *ModuleEntry // このファイルのモジュール（*_utf 以外なら nil）
+	// Fallback は Table に構文エラーがあるときの、直前の正常な表（サーバーが設定する。nil 可）。
+	// 識別子補完でモジュールレベルの名前を補うのにだけ使う。
+	Fallback *SymbolTable
 }
 
 // NewDocument は Document を作る。table が nil なら空の表、global が nil なら何も解決しない resolver を使う。
