@@ -180,7 +180,7 @@ export class CatiaSync {
             });
         });
     }
-    /** A lock left by this window's unconfirmed operation gets a release action; a running one does not. */
+    /** A lock left by an unconfirmed operation or an exited window gets a release action; a running one does not. */
     private showBusy(): void {
         if (!this.manager.hasQuarantine()) { void vscode.window.showWarningMessage(t('sync.busy')); return; }
         void vscode.window.showWarningMessage(t('sync.busyQuarantined'), t('dialog.releaseLock')).then(answer => {
@@ -193,7 +193,7 @@ export class CatiaSync {
                 const answer = await vscode.window.showWarningMessage(t('sync.releaseConfirm'), { modal: true }, t('dialog.releaseLock'));
                 if (answer !== t('dialog.releaseLock')) { return; }
                 if (this.manager.releaseQuarantined()) {
-                    this.output.appendLine('[recovery] Released this window\'s unconfirmed operation lock by user confirmation.');
+                    this.output.appendLine('[recovery] Released an unconfirmed or orphaned operation lock by user confirmation.');
                     void vscode.window.showInformationMessage(t('sync.lockRecovered'));
                 } else { void vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
                 return;

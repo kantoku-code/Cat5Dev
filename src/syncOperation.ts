@@ -120,27 +120,33 @@ export class SyncOperationManager {
             isClosed: () => closed
         };
     }
-    /** True when the active lock is an unconfirmed operation left behind by this manager (not one still running). */
-    hasQuarantine(): boolean {
-        const quarantined = this.quarantined;
-        if (!quarantined) { return false; }
-        try {
-            const owner = this.readOwner();
-            if (owner && owner.id === quarantined.id && owner.pid === process.pid) { return true; }
-        } catch { return false; }
-        this.quarantined = undefined; // The lock was released or recovered elsewhere.
-        return false;
-    }
     /**
-     * Force-release this manager's quarantined lock after user confirmation.
+     * The active lock if the user may release it after confirmation:
+     * an unconfirmed operation left behind by this manager (not one still running),
+     * or a lock whose owner process has exited (e.g. a window reloaded during a timed-out operation).
+     * Locks of live owners, including this process's in-flight operations, are never returned.
+     */
+    private releasableOwner(): Owner | undefined {
+        let owner: Owner | undefined;
+        try { owner = this.readOwner(); } catch { return undefined; }
+        if (this.quarantined && this.quarantined.id !== owner?.id) { this.quarantined = undefined; } // Released elsewhere.
+        if (!owner) { return undefined; }
+        if (owner.pid === process.pid) { return this.quarantined?.id === owner.id ? owner : undefined; }
+        try { return this.isProcessAlive(owner.pid) ? undefined : owner; } catch { return undefined; }
+    }
+    hasQuarantine(): boolean { return this.releasableOwner() !== undefined; }
+    /**
+     * Force-release a lock reported by hasQuarantine() after user confirmation.
+     * Unlike recover(), a running CATIA does not block this; the user has confirmed CATIA is idle.
      * The temporary directory is kept for diagnostics, as with recover().
      */
     releaseQuarantined(): boolean {
-        const quarantined = this.quarantined;
-        if (!quarantined || !this.hasQuarantine()) { return false; }
-        fs.renameSync(this.activePath, path.join(this.lockRoot, `.recovered-${quarantined.id}`));
-        quarantined.abandon();
-        this.quarantined = undefined;
+        const owner = this.releasableOwner();
+        if (!owner) { return false; }
+        // Same fixed tombstone as recover(), so a delayed release never retires a newer owner's lock.
+        try { fs.renameSync(this.activePath, path.join(this.lockRoot, `.recovered-${owner.id}`)); }
+        catch { return false; }
+        if (this.quarantined?.id === owner.id) { this.quarantined.abandon(); this.quarantined = undefined; }
         return true;
     }
     async recover(): Promise<boolean> {

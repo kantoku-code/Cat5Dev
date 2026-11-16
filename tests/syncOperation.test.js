@@ -76,6 +76,25 @@ test('quarantine record is cleared once the lock is released by a late result', 
     assert.equal(own.hasQuarantine(), false); assert.equal(own.releaseQuarantined(), false);
     own.acquire('push').close();
 });
+test('orphaned lock is releasable even while CATIA runs, but a live owner\'s lock is not', t => {
+    const root = fixture(t), owner = manager(root).acquire('push');
+    owner.markExternalRunning(path.join(owner.tempDir, 'result.json'), { operationId: owner.id, stepId: 'step', kind: 'push', targetProject: 'Review' });
+    // Simulate another process's lock: its owner pid is not this process.
+    const ownerPath = path.join(root, 'locks', 'active', 'owner.json');
+    fs.writeFileSync(ownerPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(ownerPath, 'utf8')), pid: process.pid + 1 }));
+    const live = manager(root, { isProcessAlive: () => true, isCatiaRunning: async () => true });
+    assert.equal(live.hasQuarantine(), false); assert.equal(live.releaseQuarantined(), false);
+    const failing = manager(root, { isProcessAlive: () => { throw Error('denied'); } });
+    assert.equal(failing.hasQuarantine(), false);
+    const orphan = manager(root, { isProcessAlive: () => false, isCatiaRunning: async () => true });
+    assert.equal(orphan.hasQuarantine(), true);
+    assert.equal(orphan.releaseQuarantined(), true);
+    assert.ok(fs.existsSync(owner.tempDir)); // Diagnostic data survives release.
+    const next = manager(root).acquire('push');
+    // A delayed second release must not retire the newer lock.
+    assert.equal(orphan.hasQuarantine(), false); assert.equal(orphan.releaseQuarantined(), false);
+    next.close();
+});
 test('real child processes exclude each other across workspaces and recover after crash', async t => {
     const root = fixture(t), args = [path.join(root, 'locks'), root];
     const spawn = mode => fork(path.join(__dirname, 'lock-worker.js'), [...args, mode], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
