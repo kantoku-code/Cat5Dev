@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { Language } from './i18n';
 
 export interface LintOptions {
@@ -149,6 +148,8 @@ export interface FormatterOptions {
     normalize_comment_space: boolean;
     expand_type_suffixes: boolean;
     format_on_save: boolean;
+    /** Pull で取り込んだファイルを整形する。toml にキーが無い場合は undefined */
+    format_on_pull: boolean | undefined;
 }
 
 export const DEFAULT_FORMATTER_OPTIONS: FormatterOptions = {
@@ -164,56 +165,38 @@ export const DEFAULT_FORMATTER_OPTIONS: FormatterOptions = {
     normalize_comma_spacing: false,
     normalize_comment_space: false,
     expand_type_suffixes: false,
-    format_on_save: true,
+    format_on_save: false,
+    format_on_pull: false,
 };
 
-/** ワークスペースルートの cat5dev.toml を読み込んで FormatterOptions を返す。
- *  toml に [formatter] セクションがなければ VSCode 設定にフォールバック。 */
+/** ワークスペースルートの cat5dev.toml の [formatter] を読み込んで FormatterOptions を返す。
+ *  toml・[formatter] セクションが無い場合、または enabled = false の場合は無効。 */
 export function readFormatterOptions(workspaceRoot: string): FormatterOptions {
+    const disabled: FormatterOptions = { ...DEFAULT_FORMATTER_OPTIONS, enabled: false, format_on_pull: undefined };
     const tomlPath = path.join(workspaceRoot, 'cat5dev.toml');
-    if (fs.existsSync(tomlPath)) {
-        let content: string;
-        try { content = fs.readFileSync(tomlPath, 'utf-8'); } catch { content = ''; }
-        const toml = parseToml(content);
-        const sec = toml['formatter'];
-        if (sec) {
-            if (getBool(sec, 'enabled', false) === false) {
-                return { ...DEFAULT_FORMATTER_OPTIONS, enabled: false };
-            }
-            return {
-                enabled: true,
-                indent_size:               getInt (sec, 'indent_size',               DEFAULT_FORMATTER_OPTIONS.indent_size),
-                capitalize_keywords:       getBool(sec, 'capitalize_keywords',       DEFAULT_FORMATTER_OPTIONS.capitalize_keywords),
-                fix_indentation:           getBool(sec, 'fix_indentation',           DEFAULT_FORMATTER_OPTIONS.fix_indentation),
-                trim_trailing_space:       getBool(sec, 'trim_trailing_space',       DEFAULT_FORMATTER_OPTIONS.trim_trailing_space),
-                ensure_continuation_space: getBool(sec, 'ensure_continuation_space', DEFAULT_FORMATTER_OPTIONS.ensure_continuation_space),
-                indent_continuation_lines: getBool(sec, 'indent_continuation_lines', DEFAULT_FORMATTER_OPTIONS.indent_continuation_lines),
-                max_blank_lines:           getInt (sec, 'max_blank_lines',           DEFAULT_FORMATTER_OPTIONS.max_blank_lines),
-                normalize_operator_spacing:getBool(sec, 'normalize_operator_spacing',DEFAULT_FORMATTER_OPTIONS.normalize_operator_spacing),
-                normalize_comma_spacing:   getBool(sec, 'normalize_comma_spacing',   DEFAULT_FORMATTER_OPTIONS.normalize_comma_spacing),
-                normalize_comment_space:   getBool(sec, 'normalize_comment_space',   DEFAULT_FORMATTER_OPTIONS.normalize_comment_space),
-                expand_type_suffixes:      getBool(sec, 'expand_type_suffixes',      DEFAULT_FORMATTER_OPTIONS.expand_type_suffixes),
-                format_on_save:            getBool(sec, 'format_on_save',            DEFAULT_FORMATTER_OPTIONS.format_on_save),
-            };
-        }
-    }
+    if (!fs.existsSync(tomlPath)) { return disabled; }
 
-    // フォールバック: VSCode 設定から読む
-    const cfg = vscode.workspace.getConfiguration('cat5dev.formatter');
+    let content: string;
+    try { content = fs.readFileSync(tomlPath, 'utf-8'); } catch { return disabled; }
+
+    const sec = parseToml(content)['formatter'];
+    if (!sec || getBool(sec, 'enabled', false) === false) { return disabled; }
+
     return {
-        enabled:                   false,
-        indent_size:               cfg.get<number> ('indentSize',              DEFAULT_FORMATTER_OPTIONS.indent_size),
-        capitalize_keywords:       cfg.get<boolean>('capitalizeKeywords',      DEFAULT_FORMATTER_OPTIONS.capitalize_keywords),
-        fix_indentation:           cfg.get<boolean>('fixIndentation',          DEFAULT_FORMATTER_OPTIONS.fix_indentation),
-        trim_trailing_space:       cfg.get<boolean>('trimTrailingSpace',       DEFAULT_FORMATTER_OPTIONS.trim_trailing_space),
-        ensure_continuation_space: cfg.get<boolean>('ensureContinuationSpace', DEFAULT_FORMATTER_OPTIONS.ensure_continuation_space),
-        indent_continuation_lines: cfg.get<boolean>('indentContinuationLines', DEFAULT_FORMATTER_OPTIONS.indent_continuation_lines),
-        max_blank_lines:           cfg.get<number> ('maxBlankLines',           DEFAULT_FORMATTER_OPTIONS.max_blank_lines),
-        normalize_operator_spacing:cfg.get<boolean>('normalizeOperatorSpacing',DEFAULT_FORMATTER_OPTIONS.normalize_operator_spacing),
-        normalize_comma_spacing:   cfg.get<boolean>('normalizeCommaSpacing',   DEFAULT_FORMATTER_OPTIONS.normalize_comma_spacing),
-        normalize_comment_space:   cfg.get<boolean>('normalizeCommentSpace',   DEFAULT_FORMATTER_OPTIONS.normalize_comment_space),
-        expand_type_suffixes:      cfg.get<boolean>('expandTypeSuffixes',      DEFAULT_FORMATTER_OPTIONS.expand_type_suffixes),
-        format_on_save:            cfg.get<boolean>('formatOnSave',            DEFAULT_FORMATTER_OPTIONS.format_on_save),
+        enabled: true,
+        indent_size:               getInt (sec, 'indent_size',               DEFAULT_FORMATTER_OPTIONS.indent_size),
+        capitalize_keywords:       getBool(sec, 'capitalize_keywords',       DEFAULT_FORMATTER_OPTIONS.capitalize_keywords),
+        fix_indentation:           getBool(sec, 'fix_indentation',           DEFAULT_FORMATTER_OPTIONS.fix_indentation),
+        trim_trailing_space:       getBool(sec, 'trim_trailing_space',       DEFAULT_FORMATTER_OPTIONS.trim_trailing_space),
+        ensure_continuation_space: getBool(sec, 'ensure_continuation_space', DEFAULT_FORMATTER_OPTIONS.ensure_continuation_space),
+        indent_continuation_lines: getBool(sec, 'indent_continuation_lines', DEFAULT_FORMATTER_OPTIONS.indent_continuation_lines),
+        max_blank_lines:           getInt (sec, 'max_blank_lines',           DEFAULT_FORMATTER_OPTIONS.max_blank_lines),
+        normalize_operator_spacing:getBool(sec, 'normalize_operator_spacing',DEFAULT_FORMATTER_OPTIONS.normalize_operator_spacing),
+        normalize_comma_spacing:   getBool(sec, 'normalize_comma_spacing',   DEFAULT_FORMATTER_OPTIONS.normalize_comma_spacing),
+        normalize_comment_space:   getBool(sec, 'normalize_comment_space',   DEFAULT_FORMATTER_OPTIONS.normalize_comment_space),
+        expand_type_suffixes:      getBool(sec, 'expand_type_suffixes',      DEFAULT_FORMATTER_OPTIONS.expand_type_suffixes),
+        format_on_save:            getBool(sec, 'format_on_save',            DEFAULT_FORMATTER_OPTIONS.format_on_save),
+        format_on_pull:            sec['format_on_pull'] === undefined ? undefined : getBool(sec, 'format_on_pull', false),
     };
 }
 
@@ -356,6 +339,7 @@ const tomlComments = {
         normalizeCommentSpace: '# コメント文字 (\') の後にスペースを入れる',
         expandTypeSuffixes: '# 型サフィックスの短縮形を展開 (% → Integer, $ → String 等)',
         formatOnSave: '# 保存時に自動フォーマット',
+        formatOnPull: '# CATIA から Pull したファイルを自動フォーマット',
         breadcrumbsSort: '# パンくずリストのシンボル並び順 (position = 記述順 / name = 名前順 / type = 種類順)\n# ワークスペース設定 (.vscode/settings.json) に反映され、このワークスペースの全ファイルに適用されます',
     },
     en: {
@@ -385,6 +369,7 @@ const tomlComments = {
         normalizeCommentSpace: '# Ensure a space after comment character (\')',
         expandTypeSuffixes: '# Expand type suffix shorthand (% → Integer, $ → String, etc.)',
         formatOnSave: '# Automatically format on save',
+        formatOnPull: '# Automatically format files pulled from CATIA',
         breadcrumbsSort: '# Symbol order in the breadcrumbs (position = source order / name = by name / type = by kind)\n# Written to the workspace settings (.vscode/settings.json) and applies to every file in this workspace',
     },
     zh: {
@@ -414,6 +399,7 @@ const tomlComments = {
         normalizeCommentSpace: '# 确保注释符号 (\') 后有空格',
         expandTypeSuffixes: '# 展开类型后缀简写 (% → Integer, $ → String 等)',
         formatOnSave: '# 保存时自动格式化',
+        formatOnPull: '# 自动格式化从 CATIA 拉取的文件',
         breadcrumbsSort: '# 面包屑导航中符号的排序方式 (position = 代码顺序 / name = 按名称 / type = 按类型)\n# 写入工作区设置 (.vscode/settings.json)，并应用于此工作区中的所有文件',
     },
 };
@@ -511,6 +497,9 @@ expand_type_suffixes = ${f.expand_type_suffixes}
 
 ${c.formatOnSave}
 format_on_save = ${f.format_on_save}
+
+${c.formatOnPull}
+format_on_pull = ${f.format_on_pull}
 
 [editor]
 ${c.breadcrumbsSort}

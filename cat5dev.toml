@@ -69,3 +69,6 @@ expand_type_suffixes = false
 
 # Automatically format on save
 format_on_save = false
+
+# Automatically format files pulled from CATIA
+format_on_pull = false

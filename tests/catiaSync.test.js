@@ -11,7 +11,7 @@ const vscode = {
     workspace: {
         get workspaceFolders() { return [{ uri: { fsPath: state.root } }]; },
         get textDocuments() { return state.documents || []; },
-        getConfiguration() { return { get: (_, fallback) => fallback, inspect: () => ({}) }; }
+        getConfiguration(section) { return { get: (key, fallback) => state?.config?.[`${section}.${key}`] ?? fallback, inspect: () => ({}) }; }
     },
     commands: { executeCommand: async command => { state.events.push(['command', command]); } },
     window: {
@@ -290,4 +290,20 @@ test('Push strips a UTF-8 BOM before comparing and sending', async t => {
     assert.deepEqual(changed.steps, ['check', 'push']);
     assert.equal(sent, 'Sub B()\r\n    x = 2\r\nEnd Sub');
     assert.ok(!changed.events.some(e => e[0] === 'error'), JSON.stringify(changed.events));
+});
+test('format on pull follows [formatter] format_on_pull, falling back to the legacy VSCode setting only when the key is absent', async t => {
+    const cases = [
+        { formatter: '', legacy: true, expected: false },
+        { formatter: '[formatter]\nenabled = false\nformat_on_pull = true\n', legacy: true, expected: false },
+        { formatter: '[formatter]\nenabled = true\nformat_on_pull = true\n', legacy: false, expected: true },
+        { formatter: '[formatter]\nenabled = true\nformat_on_pull = false\n', legacy: true, expected: false },
+        { formatter: '[formatter]\nenabled = true\n', legacy: true, expected: true },
+        { formatter: '[formatter]\nenabled = true\n', legacy: undefined, expected: false },
+    ];
+    for (const c of cases) {
+        const { root, sync } = setup(t);
+        fs.appendFileSync(path.join(root, 'cat5dev.toml'), c.formatter);
+        state.config = { 'cat5dev.formatter.formatOnPull': c.legacy };
+        assert.equal(sync.formatOnPull(root), c.expected, JSON.stringify(c));
+    }
 });

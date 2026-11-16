@@ -5,7 +5,7 @@ import * as iconv from 'iconv-lite';
 import { VbaServer } from './vbaServer';
 import { formatVbaDocument } from './formatter';
 import { t, getLanguage } from './i18n';
-import { defaultEncodingFor, readProjectSettings, writeTomlProjectKey } from './lintConfig';
+import { defaultEncodingFor, readFormatterOptions, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { OperationContext, SyncBusyError, SyncOperationManager } from './syncOperation';
 import { CatiaExecutionError, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
 import { CatiaItem, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName, stripBom } from './catiaTypes';
@@ -26,6 +26,12 @@ export class CatiaSync {
     }
     private encoding(root: string): string {
         return readProjectSettings(root).encoding || defaultEncodingFor(getLanguage());
+    }
+    /** cat5dev.toml の [formatter] format_on_pull。未記載なら旧 VSCode 設定 cat5dev.formatter.formatOnPull を読む（互換） */
+    private formatOnPull(root: string): boolean {
+        const opts = readFormatterOptions(root);
+        if (!opts.enabled) { return false; }
+        return opts.format_on_pull ?? vscode.workspace.getConfiguration('cat5dev.formatter').get<boolean>('formatOnPull', false);
     }
     private dirty(filePath: string): boolean {
         return vscode.workspace.textDocuments.some(doc => doc.isDirty && path.resolve(doc.uri.fsPath).toLowerCase() === path.resolve(filePath).toLowerCase());
@@ -84,9 +90,10 @@ export class CatiaSync {
                 const request = createCatiaRequest(context, 'pull', project, this.encoding(root));
                 const result = await this.step(context, request);
                 const incoming = new Map<string, string>();
+                const formatOnPull = this.formatOnPull(root);
                 for (const item of result.items) {
                     let text = normalizeModuleText(iconv.decode(fs.readFileSync(path.join(request.directory, item.file)), request.encoding)) + '\n';
-                    if (vscode.workspace.getConfiguration('cat5dev.formatter').get<boolean>('formatOnPull', false)) {
+                    if (formatOnPull) {
                         text = await formatVbaDocument(text, this.server, this.output, root) ?? text;
                     }
                     incoming.set(item.name + extensionForType[item.type], text);
