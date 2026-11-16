@@ -86,7 +86,8 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true
+format_on_save = false
+format_on_pull = false
 
 [editor]
 breadcrumbs_sort = "name"    # Breadcrumbs sort order: position / name / type
@@ -120,7 +121,7 @@ See [Lint and Formatter](lint-format.md#vba-formatter).
 
 Notifications and dialog messages can be shown in Japanese, English, or Chinese (Simplified). Switch with the 🌐 button at the top of the panel (`CATIA: Switch Language`).
 
-- After switching, messages appear in the new language immediately (the message "Please reload VSCode to apply language changes." appears, but the change takes effect without reloading).
+- After switching, messages appear in the new language immediately (no reload needed).
 - Tree labels (Modules, etc.), command names, and Lint messages are not translated.
 
 The language is determined in this order:
@@ -140,10 +141,9 @@ The language selected with the 🌐 button is saved to `cat5dev.toml` if it exis
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `cat5dev.language` | — | Display language. `language` in `cat5dev.toml` takes precedence |
-| `cat5dev.formatter.formatOnPull` | `false` | Format files imported by Pull (`[formatter] enabled = true` in `cat5dev.toml` is also required) |
 
 > [!NOTE]
-> The Settings editor also shows formatter settings such as `cat5dev.formatter.indentSize`, but they are currently not used. Put formatter settings in the `[formatter]` section of `cat5dev.toml`.
+> Formatter settings go in the `[formatter]` section of `cat5dev.toml`. For compatibility, the old VSCode setting `cat5dev.formatter.formatOnPull` is still read, but only when `format_on_pull` is not written in `cat5dev.toml`.
 
 ### Environment variables (advanced)
 | Variable | Description |

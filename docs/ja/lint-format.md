@@ -61,16 +61,13 @@ unmatched_blocks     = true
 
 ## VBA フォーマッタ
 
-コードの書式を整えます。VSCode の「ドキュメントのフォーマット」（`Shift+Alt+F`）と、ファイル保存時に動きます。
+コードの書式を整えます。VSCode の「ドキュメントのフォーマット」（`Shift+Alt+F`）で動きます。設定すれば、ファイル保存時と Pull 時にも整形できます。
 
 ### 有効にする
 ```toml
 [formatter]
 enabled = true
 ```
-
-> [!IMPORTANT]
-> `enabled = true` にすると、`format_on_save` の既定値が `true` のため、**保存するたびに整形されます**。保存時の整形が不要な場合は `format_on_save = false` を書いてください。
 
 ### 既定で行う処理
 | 処理 | 例 | キー |
@@ -112,18 +109,20 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true              # 保存時に整形
+format_on_save = false             # 保存時に整形
+format_on_pull = false             # Pull で取り込んだファイルを整形
 ```
 
 ### 整形のタイミング
 | タイミング | 条件 |
 |------------|------|
 | `Shift+Alt+F`（ドキュメントのフォーマット） | `enabled = true` |
-| ファイル保存時 | `enabled = true` かつ `format_on_save = true`（VSCode の `editor.formatOnSave` とは無関係） |
-| Pull 時 | `enabled = true` かつ VSCode の設定 `cat5dev.formatter.formatOnPull` が `true` |
+| ファイル保存時 | `enabled = true` かつ `format_on_save = true` |
+| Pull 時 | `enabled = true` かつ `format_on_pull = true` |
 
 - 選択範囲だけの整形（「選択範囲のフォーマット」）には対応していません。常にファイル全体を整形します。
-- VSCode の設定にある `cat5dev.formatter.*`（`formatOnPull` 以外）は現在使われていません。設定は `cat5dev.toml` に書いてください。
+- VSCode の `editor.formatOnSave` を有効にしていると、`format_on_save` の値に関係なく保存時に整形されます（`enabled = true` のとき）。
+- フォーマッタの設定はすべて `cat5dev.toml` の `[formatter]` に書きます。VSCode の設定画面にフォーマッタの項目はありません。
 
 ### コマンドラインで使う
 フォーマッタ本体 `vbafmt.exe`（拡張機能フォルダの `bin/` にあります）は単体のコマンドとしても使えます。ファイル（または標準入力）を 1 つ受け取り、整形結果を標準出力に書き出します。`cat5dev.toml` は読まず、オプションは引数で指定します（一覧は `vbafmt.exe -h`）。

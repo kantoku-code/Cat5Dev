@@ -86,7 +86,8 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true
+format_on_save = false
+format_on_pull = false
 
 [editor]
 breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name / type
@@ -120,7 +121,7 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 
 通知やダイアログのメッセージを日本語・英語・中国語（簡体字）で表示できます。パネル上部の 🌐 ボタン（`CATIA: Switch Language`）で切り替えます。
 
-- 切り替えるとメッセージはすぐに新しい言語になります（「再読み込みしてください」と表示されますが、再読み込みしなくても反映されます）。
+- 切り替えるとメッセージはすぐに新しい言語になります（再読み込みは不要です）。
 - ツリーの表示名（Modules など）、コマンド名、Lint のメッセージは翻訳されません。
 
 言語は次の順に決まります。
@@ -140,10 +141,9 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 | 設定 | 既定値 | 説明 |
 |------|--------|------|
 | `cat5dev.language` | — | 表示言語。`cat5dev.toml` の `language` が優先されます |
-| `cat5dev.formatter.formatOnPull` | `false` | Pull で取り込んだファイルを整形する（`cat5dev.toml` の `[formatter] enabled = true` も必要） |
 
 > [!NOTE]
-> 設定画面には `cat5dev.formatter.indentSize` などのフォーマッタ設定も表示されますが、現在は使われていません。フォーマッタの設定は `cat5dev.toml` の `[formatter]` に書いてください。
+> フォーマッタの設定は `cat5dev.toml` の `[formatter]` に書きます。以前の VSCode の設定 `cat5dev.formatter.formatOnPull` は、`cat5dev.toml` に `format_on_pull` が無い場合に限り、互換のため引き続き読み込まれます。
 
 ### 環境変数（上級者向け）
 | 環境変数 | 説明 |

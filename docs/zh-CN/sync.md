@@ -62,7 +62,7 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 > 如果恢复处理也失败，`.cat5dev-pull-XXXXXX/` 文件夹会保留下来，其位置会显示在错误消息中。在从其中的 `backup/` 恢复完文件之前，**请不要删除此文件夹**。
 
 ### Pull 时自动格式化
-将 VSCode 设置 `cat5dev.formatter.formatOnPull` 设为 `true` 后，导入的文件会先经格式化程序格式化再保存。同时还需要在 `cat5dev.toml` 中设置 `[formatter] enabled = true`（参见 [Lint 与格式化程序](lint-format.md)）。格式化后的文件换行符为 CRLF。
+在 `cat5dev.toml` 的 `[formatter]` 中写上 `enabled = true` 和 `format_on_pull = true` 后，导入的文件会先经格式化程序格式化再保存（参见 [Lint 与格式化程序](lint-format.md)）。格式化后的文件换行符为 CRLF。
 
 ---
 

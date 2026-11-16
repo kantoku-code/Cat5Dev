@@ -86,7 +86,8 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true
+format_on_save = false
+format_on_pull = false
 
 [editor]
 breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / type
@@ -120,7 +121,7 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 
 通知和对话框的消息可以用日语、英语、中文（简体）显示。通过面板顶部的 🌐 按钮（`CATIA: Switch Language`）切换。
 
-- 切换后消息会立即使用新语言（虽然会提示“请重新加载 VSCode 以应用语言更改。”，但即使不重新加载也会生效）。
+- 切换后消息会立即使用新语言（无需重新加载）。
 - 树视图的显示名称（Modules 等）、命令名称和 Lint 消息不会被翻译。
 
 语言按以下顺序确定。
@@ -140,10 +141,9 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `cat5dev.language` | — | 显示语言。`cat5dev.toml` 中的 `language` 优先 |
-| `cat5dev.formatter.formatOnPull` | `false` | 格式化通过 Pull 导入的文件（还需要在 `cat5dev.toml` 中设置 `[formatter] enabled = true`） |
 
 > [!NOTE]
-> 设置界面中还会显示 `cat5dev.formatter.indentSize` 等格式化程序设置，但目前未被使用。格式化程序的设置请写在 `cat5dev.toml` 的 `[formatter]` 中。
+> 格式化程序的设置写在 `cat5dev.toml` 的 `[formatter]` 中。为保持兼容，仅当 `cat5dev.toml` 中没有写 `format_on_pull` 时，仍会读取旧的 VSCode 设置 `cat5dev.formatter.formatOnPull`。
 
 ### 环境变量（面向高级用户）
 | 环境变量 | 说明 |

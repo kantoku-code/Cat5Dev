@@ -62,7 +62,7 @@ The ☁️↓ button at the top of the panel (`CATIA: Pull VBA Modules`) imports
 > If the restore itself also fails, the `.cat5dev-pull-XXXXXX/` folder remains and its location is shown in the error message. **Do not delete this folder** until you have restored your files from the `backup/` folder inside it.
 
 ### Formatting on Pull
-If you set the VSCode setting `cat5dev.formatter.formatOnPull` to `true`, pulled files are formatted by the formatter before they are saved. `[formatter] enabled = true` in `cat5dev.toml` is also required (see [Lint and Formatter](lint-format.md)). Formatted files use CRLF line endings.
+If you write `enabled = true` and `format_on_pull = true` in the `[formatter]` section of `cat5dev.toml`, pulled files are formatted by the formatter before they are saved (see [Lint and Formatter](lint-format.md)). Formatted files use CRLF line endings.
 
 ---
 

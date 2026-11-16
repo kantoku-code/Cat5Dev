@@ -60,7 +60,10 @@ Check `encoding` in the `[project]` section of `cat5dev.toml`. `shift_jis` is ty
 
 ## Code changes every time I save
 
-When `[formatter] enabled = true`, formatting on save (`format_on_save`) is enabled by default. If you do not want it, add `format_on_save = false` to `cat5dev.toml`.
+When `[formatter] enabled = true`, files are formatted on save in either of these cases. If you do not want it, turn off both.
+
+- `format_on_save = true` in `cat5dev.toml`
+- VSCode's `editor.formatOnSave` is enabled (files are formatted regardless of `format_on_save`)
 
 ## Completion or hover does not appear
 

@@ -61,16 +61,13 @@ unmatched_blocks     = true
 
 ## VBA 格式化程序
 
-整理代码的格式。在 VSCode 的“格式化文档”（`Shift+Alt+F`）和保存文件时运行。
+整理代码的格式。在 VSCode 的“格式化文档”（`Shift+Alt+F`）时运行。通过设置，也可以在保存文件时和 Pull 时格式化。
 
 ### 启用
 ```toml
 [formatter]
 enabled = true
 ```
-
-> [!IMPORTANT]
-> 设置 `enabled = true` 后，由于 `format_on_save` 的默认值为 `true`，**每次保存时都会格式化**。如果不需要保存时格式化，请写上 `format_on_save = false`。
 
 ### 默认执行的处理
 | 处理 | 示例 | 键 |
@@ -112,18 +109,20 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true              # 保存时格式化
+format_on_save = false             # 保存时格式化
+format_on_pull = false             # 格式化通过 Pull 导入的文件
 ```
 
 ### 格式化的时机
 | 时机 | 条件 |
 |------|------|
 | `Shift+Alt+F`（格式化文档） | `enabled = true` |
-| 保存文件时 | `enabled = true` 且 `format_on_save = true`（与 VSCode 的 `editor.formatOnSave` 无关） |
-| Pull 时 | `enabled = true` 且 VSCode 设置 `cat5dev.formatter.formatOnPull` 为 `true` |
+| 保存文件时 | `enabled = true` 且 `format_on_save = true` |
+| Pull 时 | `enabled = true` 且 `format_on_pull = true` |
 
 - 不支持只格式化选定范围（“格式化选定内容”）。始终格式化整个文件。
-- VSCode 设置中的 `cat5dev.formatter.*`（`formatOnPull` 除外）目前未被使用。请在 `cat5dev.toml` 中进行设置。
+- 如果启用了 VSCode 的 `editor.formatOnSave`，则无论 `format_on_save` 如何，保存时都会格式化（`enabled = true` 时）。
+- 格式化程序的所有设置都写在 `cat5dev.toml` 的 `[formatter]` 中。VSCode 设置界面中没有格式化程序的设置项。
 
 ### 在命令行中使用
 格式化程序本体 `vbafmt.exe`（位于扩展文件夹的 `bin/` 中）也可以作为独立命令使用。它接收一个文件（或标准输入），并将格式化结果输出到标准输出。它不读取 `cat5dev.toml`，选项通过参数指定（列表见 `vbafmt.exe -h`）。

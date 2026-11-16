@@ -62,7 +62,7 @@ Cat5Dev は CATIA V5 の VBA プロジェクトと、ワークスペースの `m
 > 元に戻す処理まで失敗した場合は、`.cat5dev-pull-XXXXXX/` フォルダが残り、その場所がエラーメッセージに表示されます。中の `backup/` からファイルを復元し終えるまで、**このフォルダは削除しないでください**。
 
 ### Pull 時の自動整形
-VSCode の設定 `cat5dev.formatter.formatOnPull` を `true` にすると、取り込んだファイルをフォーマッタで整形してから保存します。`cat5dev.toml` の `[formatter] enabled = true` も必要です（[Lint とフォーマッタ](lint-format.md) を参照）。整形されたファイルは改行が CRLF になります。
+`cat5dev.toml` の `[formatter]` で `enabled = true` と `format_on_pull = true` を書くと、取り込んだファイルをフォーマッタで整形してから保存します（[Lint とフォーマッタ](lint-format.md) を参照）。整形されたファイルは改行が CRLF になります。
 
 ---
 

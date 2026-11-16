@@ -60,7 +60,10 @@ CATIA に同じ名前のユーザーフォームが無い場合は作成でき�
 
 ## 保存するたびにコードが書き換わる
 
-`[formatter] enabled = true` のとき、保存時の整形（`format_on_save`）は既定で有効です。不要なら `cat5dev.toml` に `format_on_save = false` を書いてください。
+`[formatter] enabled = true` のときに、次のどちらかで保存時に整形されます。不要なら両方を無効にしてください。
+
+- `cat5dev.toml` の `format_on_save = true`
+- VSCode の設定 `editor.formatOnSave` が有効（`format_on_save` に関係なく整形されます）
 
 ## 補完やホバーが表示されない
 

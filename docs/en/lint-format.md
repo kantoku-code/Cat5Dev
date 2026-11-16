@@ -61,16 +61,13 @@ unmatched_blocks     = true
 
 ## VBA Formatter
 
-Formats your code. It runs on VSCode's "Format Document" (`Shift+Alt+F`) and when a file is saved.
+Formats your code. It runs on VSCode's "Format Document" (`Shift+Alt+F`). You can also configure it to format on save and on Pull.
 
 ### Enabling the formatter
 ```toml
 [formatter]
 enabled = true
 ```
-
-> [!IMPORTANT]
-> Once you set `enabled = true`, **code is formatted every time you save**, because `format_on_save` defaults to `true`. If you do not want formatting on save, add `format_on_save = false`.
 
 ### What it does by default
 | Operation | Example | Key |
@@ -112,18 +109,20 @@ normalize_operator_spacing = false
 normalize_comma_spacing = false
 normalize_comment_space = false
 expand_type_suffixes = false
-format_on_save = true              # format on save
+format_on_save = false             # format on save
+format_on_pull = false             # format files imported by Pull
 ```
 
 ### When formatting runs
 | When | Condition |
 |------|-----------|
 | `Shift+Alt+F` (Format Document) | `enabled = true` |
-| On file save | `enabled = true` and `format_on_save = true` (independent of VSCode's `editor.formatOnSave`) |
-| On Pull | `enabled = true` and the VSCode setting `cat5dev.formatter.formatOnPull` is `true` |
+| On file save | `enabled = true` and `format_on_save = true` |
+| On Pull | `enabled = true` and `format_on_pull = true` |
 
 - Formatting only a selection ("Format Selection") is not supported. The whole file is always formatted.
-- The `cat5dev.formatter.*` VSCode settings (other than `formatOnPull`) are currently not used. Put your settings in `cat5dev.toml`.
+- If VSCode's `editor.formatOnSave` is enabled, files are formatted on save regardless of `format_on_save` (when `enabled = true`).
+- All formatter settings go in the `[formatter]` section of `cat5dev.toml`. The VSCode Settings editor has no formatter settings.
 
 ### Command-line usage
 The formatter binary `vbafmt.exe` (in the `bin/` folder of the extension) can also be used as a standalone command. It takes one file (or standard input) and writes the formatted result to standard output. It does not read `cat5dev.toml`; specify options as arguments (run `vbafmt.exe -h` for the list).

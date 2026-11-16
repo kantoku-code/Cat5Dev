@@ -60,7 +60,10 @@ Push 只会写入 CATIA 的内存。请**在 CATIA 的 VBA 编辑器中保存项
 
 ## 每次保存时代码都会被改写
 
-`[formatter] enabled = true` 时，保存时格式化（`format_on_save`）默认启用。如果不需要，请在 `cat5dev.toml` 中写上 `format_on_save = false`。
+`[formatter] enabled = true` 时，以下任一情况都会在保存时格式化。如果不需要，请将两者都关闭。
+
+- `cat5dev.toml` 中的 `format_on_save = true`
+- 启用了 VSCode 设置 `editor.formatOnSave`（无论 `format_on_save` 如何都会格式化）
 
 ## 补全或悬停不显示
 
