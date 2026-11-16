@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="270" viewBox="0 0 860 270" font-family="'Segoe UI', Meiryo, 'Yu Gothic', 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4A5568"/>
+    </marker>
+    <marker id="arrow-save" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#C05621"/>
+    </marker>
+  </defs>
+  <rect width="860" height="270" fill="#FFFFFF"/>
+
+  <!-- VSCode -->
+  <rect x="20" y="60" width="210" height="140" rx="10" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="2"/>
+  <text x="125" y="95" text-anchor="middle" font-size="18" font-weight="bold" fill="#1A365D">VSCode</text>
+  <text x="125" y="125" text-anchor="middle" font-size="14" fill="#2D3748">modules/ フォルダ</text>
+  <text x="125" y="150" text-anchor="middle" font-size="12" fill="#4A5568">.bas_utf / .cls_utf / .frm_utf</text>
+  <text x="125" y="178" text-anchor="middle" font-size="13" fill="#4A5568">編集・補完・Lint・整形</text>
+
+  <!-- CATIA (memory) -->
+  <rect x="330" y="60" width="210" height="140" rx="10" fill="#EAF6EE" stroke="#2F855A" stroke-width="2"/>
+  <text x="435" y="95" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4532">CATIA V5</text>
+  <text x="435" y="125" text-anchor="middle" font-size="14" fill="#2D3748">VBA プロジェクト</text>
+  <text x="435" y="150" text-anchor="middle" font-size="13" fill="#4A5568">（VBA エディタのメモリ上）</text>
+
+  <!-- Saved file -->
+  <rect x="660" y="60" width="180" height="140" rx="10" fill="#FFF4E5" stroke="#C05621" stroke-width="2"/>
+  <text x="750" y="95" text-anchor="middle" font-size="18" font-weight="bold" fill="#7B341E">保存済み</text>
+  <text x="750" y="125" text-anchor="middle" font-size="14" fill="#2D3748">VBA プロジェクト</text>
+  <text x="750" y="150" text-anchor="middle" font-size="13" fill="#4A5568">（.catvba など）</text>
+
+  <!-- Push -->
+  <line x1="232" y1="100" x2="326" y2="100" stroke="#4A5568" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="280" y="88" text-anchor="middle" font-size="15" font-weight="bold" fill="#2D3748">Push</text>
+  <!-- Pull -->
+  <line x1="328" y1="160" x2="234" y2="160" stroke="#4A5568" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="280" y="185" text-anchor="middle" font-size="15" font-weight="bold" fill="#2D3748">Pull</text>
+
+  <!-- Save -->
+  <line x1="542" y1="130" x2="656" y2="130" stroke="#C05621" stroke-width="2.5" marker-end="url(#arrow-save)"/>
+  <text x="600" y="100" text-anchor="middle" font-size="13" fill="#7B341E">VBA エディタで</text>
+  <text x="600" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#7B341E">保存（必須）</text>
+
+  <text x="430" y="242" text-anchor="middle" font-size="13" fill="#C05621">Push は CATIA のメモリ上に書き込むだけです。CATIA の VBA エディタで保存しないと変更は失われます。</text>
+</svg>

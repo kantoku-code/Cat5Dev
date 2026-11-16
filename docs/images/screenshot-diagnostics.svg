@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" viewBox="0 0 800 400" font-family="'Segoe UI', Meiryo, 'Yu Gothic', 'Hiragino Sans', 'Noto Sans JP', sans-serif">
+  <rect width="800" height="400" fill="#F1F3F5"/>
+  <rect x="12" y="12" width="776" height="376" rx="10" fill="none" stroke="#ADB5BD" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="400" y="180" text-anchor="middle" font-size="26" font-weight="bold" fill="#868E96">画像準備中</text>
+  <text x="400" y="222" text-anchor="middle" font-size="18" fill="#495057">スクリーンショット：Lint の波線と「問題」パネル</text>
+  <text x="400" y="256" text-anchor="middle" font-size="13" fill="#868E96">例：Option Explicit 未宣言の警告</text>
+</svg>
