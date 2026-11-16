@@ -83,7 +83,7 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
    - 如果有 VBA 中不可用的名称，或仅大小写不同的重复名称，则报错并中止。
 3. **存在仅在 CATIA 中存在的模块时** — 显示确认对话框。
 
-   <img src="images/screenshot-push-dialog.svg" alt="Push 的删除确认对话框（图片准备中）" width="560">
+   <img src="images/screenshot-push-dialog.png" alt="Push 时的删除确认对话框" width="560">
 
    - **是 (删除)** — 也从 CATIA 中删除，使其与 VSCode 端保持一致。
    - **否 (保留)** — 保留 CATIA 端的模块。
@@ -103,7 +103,7 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 
 单击活动栏中的 Cat5Dev 图标，侧边面板中会显示 `modules/` 文件夹的内容。
 
-<img src="images/screenshot-panel.svg" alt="Cat5Dev 面板（图片准备中）" width="560">
+<img src="images/screenshot-panel.png" alt="Cat5Dev 面板" width="560">
 
 - 最上方显示目标项目名称。未设置目标项目时不显示任何内容。
 - 其下按以下顺序只显示有文件的类型（显示名称为英文）。

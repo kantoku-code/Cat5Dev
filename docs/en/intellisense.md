@@ -20,7 +20,7 @@ Type information for CATIA V5 objects (`Part`, `PartDocument`, `HybridShapeFacto
 
 ## Code completion
 
-<img src="images/screenshot-completion.svg" alt="Member completion (image coming soon)" width="560">
+<img src="images/screenshot-completion.png" alt="Member completion" width="560">
 
 | Where you type | Suggestions | Example |
 |----------------|-------------|---------|
@@ -38,7 +38,7 @@ Type information for CATIA V5 objects (`Part`, `PartDocument`, `HybridShapeFacto
 
 ## Hover
 
-<img src="images/screenshot-hover.svg" alt="Hover (image coming soon)" width="560">
+<img src="images/screenshot-hover.png" alt="Hover documentation" width="560">
 
 Move the mouse over an identifier to see its declaration and description.
 

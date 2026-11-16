@@ -12,7 +12,9 @@ Changes to `cat5dev.toml` take effect as soon as you save the file (no need to r
 
 Code is checked when a file is opened, when it is edited (0.5 seconds after you stop typing), and when it is saved. Problems are shown as squiggles in the editor and in the Problems panel. The source shown in the Problems panel is `cat5dev`.
 
-<img src="images/screenshot-diagnostics.svg" alt="Lint squiggles and the Problems panel (image coming soon)" width="560">
+<img src="images/screenshot-diagnostics.png" alt="Lint diagnostics in the editor and Problems panel" width="560">
+
+Some lint diagnostic messages are currently displayed in Japanese.
 
 ### Enabling Lint
 ```toml

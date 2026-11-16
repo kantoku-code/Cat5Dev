@@ -21,7 +21,7 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 | **VBA Formatter** | Keyword capitalization, indentation, and whitespace / blank line cleanup (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-formatter) |
 | **Multilingual UI** | 日本語, English, 简体中文 | [Configuration](docs/en/configuration.md#display-language) |
 
-<img src="docs/en/images/screenshot-completion.png" alt="CATIA API completion (image coming soon)" width="560">
+<img src="docs/en/images/screenshot-completion.png" alt="CATIA API completion" width="560">
 
 ---
 
@@ -45,7 +45,7 @@ Cat5Dev is distributed as a `.vsix` file.
 2. **Install it in VSCode**\
    Open the Extensions view (`Ctrl+Shift+X`), and choose **Install from VSIX...** from the `⋯` menu at the top right.
 
-   ![Installation steps](resources/installation.png)
+   ![Installation steps](docs/en/images/installation.png)
 
 3. **Select the file**\
    Select the downloaded `.vsix` file to install it.
@@ -74,7 +74,7 @@ Cat5Dev is distributed as a `.vsix` file.
 8. Click the ☁️↑ button (Push) to send your changes to CATIA.
 9. **Save the project in the CATIA VBA editor** (see the note below).
 
-<img src="docs/en/images/screenshot-panel.png" alt="Cat5Dev panel (image coming soon)" width="560">
+<img src="docs/en/images/screenshot-panel.png" alt="Cat5Dev panel" width="560">
 
 > [!TIP]
 > Lint and the formatter are disabled by default. To use them, set `enabled = true` in the `[lint]` and `[formatter]` sections of `cat5dev.toml` (see [Lint and Formatter](docs/en/lint-format.md)).

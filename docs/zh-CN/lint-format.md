@@ -12,7 +12,9 @@
 
 在打开文件时、编辑时（停止输入 0.5 秒后）和保存时检查代码，并通过编辑器中的波浪线和“问题”面板显示问题。“问题”面板中显示的来源为 `cat5dev`。
 
-<img src="images/screenshot-diagnostics.svg" alt="Lint 的波浪线与问题面板（图片准备中）" width="560">
+<img src="images/screenshot-diagnostics.png" alt="Lint 波浪线标记与“问题”面板" width="560">
+
+截图中的部分 Lint 诊断信息由扩展提供，目前仍以日语显示。
 
 ### 启用
 ```toml

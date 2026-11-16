@@ -20,7 +20,7 @@ Cat5Dev 内置了 VBA 语言服务器（`vba-ls`），在编辑 `.bas_utf` / `.c
 
 ## 代码补全
 
-<img src="images/screenshot-completion.svg" alt="成员补全（图片准备中）" width="560">
+<img src="images/screenshot-completion.png" alt="成员补全" width="560">
 
 | 输入位置 | 显示的候选项 | 示例 |
 |----------|--------------|------|
@@ -38,7 +38,7 @@ Cat5Dev 内置了 VBA 语言服务器（`vba-ls`），在编辑 `.bas_utf` / `.c
 
 ## 悬停
 
-<img src="images/screenshot-hover.svg" alt="悬停显示（图片准备中）" width="560">
+<img src="images/screenshot-hover.png" alt="悬停提示" width="560">
 
 将鼠标悬停在标识符上，会显示其声明和说明。
 

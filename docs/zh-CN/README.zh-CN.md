@@ -21,7 +21,7 @@ Cat5Dev 是一款用于在 VSCode 中开发 CATIA V5 VBA 宏的扩展。
 | **VBA 格式化程序** | 关键字大写、缩进、整理空白与空行（默认禁用） | [Lint 与格式化程序](lint-format.md#vba-格式化程序) |
 | **多语言显示** | 日本語、English、简体中文 | [配置](configuration.md#显示语言) |
 
-<img src="images/screenshot-completion.svg" alt="CATIA API 的补全（图片准备中）" width="560">
+<img src="images/screenshot-completion.png" alt="CATIA API 代码补全" width="560">
 
 ---
 
@@ -45,7 +45,7 @@ Cat5Dev 以 `.vsix` 文件形式分发。
 2. **在 VSCode 中安装**\
    打开扩展视图（`Ctrl+Shift+X`），从右上角的 `⋯` 菜单中选择 **从 VSIX 安装...**。
 
-   ![安装步骤](../../resources/installation.png)
+   ![安装步骤](images/installation.png)
 
 3. **选择文件**\
    选择下载的 `.vsix` 文件进行安装。
@@ -74,7 +74,7 @@ Cat5Dev 以 `.vsix` 文件形式分发。
 8. 单击 ☁️↑ 按钮（Push），更改会被发送到 CATIA。
 9. **在 CATIA 的 VBA 编辑器中保存项目**（请参阅下面的注意事项）。
 
-<img src="images/screenshot-panel.svg" alt="Cat5Dev 面板（图片准备中）" width="560">
+<img src="images/screenshot-panel.png" alt="Cat5Dev 面板" width="560">
 
 > [!TIP]
 > Lint 和格式化程序默认处于禁用状态。如需使用，请在 `cat5dev.toml` 的 `[lint]` 和 `[formatter]` 中设置 `enabled = true`（参见 [Lint 与格式化程序](lint-format.md)）。

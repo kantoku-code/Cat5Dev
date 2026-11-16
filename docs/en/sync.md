@@ -83,7 +83,7 @@ The ☁️↑ button at the top of the panel (`CATIA: Push VBA Modules`) writes 
    - Names that are invalid in VBA, or duplicates that differ only in case, cause an error and Push stops.
 3. **If some modules exist only in CATIA** — A confirmation dialog appears.
 
-   <img src="images/screenshot-push-dialog.svg" alt="Push delete confirmation dialog (image coming soon)" width="560">
+   <img src="images/screenshot-push-dialog.png" alt="Push delete confirmation dialog" width="560">
 
    - **Yes (Delete)** — Deletes them from CATIA too, so CATIA matches VSCode.
    - **No (Keep)** — Keeps those modules in CATIA.
@@ -103,7 +103,7 @@ The ☁️↑ button at the top of the panel (`CATIA: Push VBA Modules`) writes 
 
 Click the Cat5Dev icon in the Activity Bar to show the contents of the `modules/` folder in the side panel.
 
-<img src="images/screenshot-panel.svg" alt="Cat5Dev panel (image coming soon)" width="560">
+<img src="images/screenshot-panel.png" alt="Cat5Dev panel" width="560">
 
 - The target project name is shown at the top. Nothing is shown when no target project is set.
 - Below it, only the types that have files are shown, in this order:
