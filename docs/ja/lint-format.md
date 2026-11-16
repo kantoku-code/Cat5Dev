@@ -1,6 +1,6 @@
 # Lint とフォーマッタ
 
-[← README に戻る](../README.ja.md)
+[← README に戻る](README.ja.md)
 
 どちらも**既定では無効**です。ワークスペースのルートにある `cat5dev.toml` で有効にします（`cat5dev.toml` が無い場合は [設定](configuration.md) を参照して作成してください）。
 
@@ -12,7 +12,7 @@
 
 ファイルを開いたとき・編集したとき（入力が止まって 0.5 秒後）・保存したときにコードを検査し、問題をエディタの波線と「問題」パネルに表示します。「問題」パネルの出所（ソース）は `cat5dev` です。
 
-<img src="../images/screenshot-diagnostics.svg" alt="Lint の波線と問題パネル（画像準備中）" width="560">
+<img src="images/screenshot-diagnostics.svg" alt="Lint の波線と問題パネル（画像準備中）" width="560">
 
 ### 有効にする
 ```toml

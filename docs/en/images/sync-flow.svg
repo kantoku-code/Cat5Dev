@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="660" viewBox="0 0 820 660" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#718096"/>
+    </marker>
+  </defs>
+  <rect width="820" height="660" fill="#FFFFFF"/>
+
+  <!-- ===== Pull ===== -->
+  <text x="200" y="38" text-anchor="middle" font-size="20" font-weight="bold" fill="#1A365D">Pull (CATIA → VSCode)</text>
+
+  <rect x="50" y="60" width="300" height="64" rx="8" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="1.5"/>
+  <text x="200" y="86" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Check for unsaved edits</text>
+  <text x="200" y="108" text-anchor="middle" font-size="12" fill="#4A5568">Stops if modules/ has unsaved files</text>
+  <line x1="200" y1="124" x2="200" y2="148" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="150" width="300" height="64" rx="8" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="1.5"/>
+  <text x="200" y="176" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Get modules from CATIA</text>
+  <text x="200" y="198" text-anchor="middle" font-size="12" fill="#4A5568">Standard modules / classes / UserForms</text>
+  <line x1="200" y1="214" x2="200" y2="238" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="240" width="300" height="80" rx="8" fill="#FFFBEA" stroke="#B7791F" stroke-width="1.5"/>
+  <text x="200" y="266" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Files only in the local folder</text>
+  <text x="200" y="288" text-anchor="middle" font-size="12" fill="#4A5568">Confirmation: Yes (Delete) / No (Keep)</text>
+  <text x="200" y="306" text-anchor="middle" font-size="12" fill="#4A5568">Closing the dialog cancels Pull</text>
+  <line x1="200" y1="320" x2="200" y2="344" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="346" width="300" height="64" rx="8" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="1.5"/>
+  <text x="200" y="372" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Write to modules/</text>
+  <text x="200" y="394" text-anchor="middle" font-size="12" fill="#4A5568">Changed files only, backed up first</text>
+  <line x1="200" y1="410" x2="200" y2="434" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="50" y="436" width="300" height="64" rx="8" fill="#EAF6EE" stroke="#2F855A" stroke-width="1.5"/>
+  <text x="200" y="462" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Done</text>
+  <text x="200" y="484" text-anchor="middle" font-size="12" fill="#4A5568">On failure, restored from the backup</text>
+
+  <!-- ===== Push ===== -->
+  <text x="610" y="38" text-anchor="middle" font-size="20" font-weight="bold" fill="#1A365D">Push (VSCode → CATIA)</text>
+
+  <rect x="460" y="60" width="300" height="64" rx="8" fill="#FFFBEA" stroke="#B7791F" stroke-width="1.5"/>
+  <text x="610" y="86" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Check for unsaved edits</text>
+  <text x="610" y="108" text-anchor="middle" font-size="12" fill="#4A5568">Warns; Proceed sends the saved content</text>
+  <line x1="610" y1="124" x2="610" y2="148" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="150" width="300" height="64" rx="8" fill="#FFFBEA" stroke="#B7791F" stroke-width="1.5"/>
+  <text x="610" y="176" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Check module names</text>
+  <text x="610" y="198" text-anchor="middle" font-size="12" fill="#4A5568">&gt;31 chars: warning / invalid or dup: error</text>
+  <line x1="610" y1="214" x2="610" y2="238" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="240" width="300" height="64" rx="8" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="1.5"/>
+  <text x="610" y="266" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Compare with CATIA</text>
+  <text x="610" y="288" text-anchor="middle" font-size="12" fill="#4A5568">Sends only changed or added modules</text>
+  <line x1="610" y1="304" x2="610" y2="328" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="330" width="300" height="80" rx="8" fill="#FFFBEA" stroke="#B7791F" stroke-width="1.5"/>
+  <text x="610" y="356" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Modules only in CATIA</text>
+  <text x="610" y="378" text-anchor="middle" font-size="12" fill="#4A5568">Confirmation: Yes (Delete) / No (Keep)</text>
+  <text x="610" y="396" text-anchor="middle" font-size="12" fill="#4A5568">Closing the dialog cancels Push</text>
+  <line x1="610" y1="410" x2="610" y2="434" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="436" width="300" height="64" rx="8" fill="#EAF2FB" stroke="#2B6CB0" stroke-width="1.5"/>
+  <text x="610" y="462" text-anchor="middle" font-size="15" font-weight="bold" fill="#1A202C">Write to CATIA</text>
+  <text x="610" y="484" text-anchor="middle" font-size="12" fill="#4A5568">UserForms not in CATIA are skipped</text>
+  <line x1="610" y1="500" x2="610" y2="524" stroke="#718096" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="526" width="300" height="64" rx="8" fill="#FFF4E5" stroke="#C05621" stroke-width="2"/>
+  <text x="610" y="552" text-anchor="middle" font-size="15" font-weight="bold" fill="#7B341E">Save in the CATIA VBA editor</text>
+  <text x="610" y="574" text-anchor="middle" font-size="12" fill="#7B341E">Manual step (not saved automatically)</text>
+
+  <!-- Legend -->
+  <rect x="50" y="618" width="18" height="14" rx="3" fill="#EAF2FB" stroke="#2B6CB0"/>
+  <text x="76" y="630" font-size="12" fill="#4A5568">Automatic step</text>
+  <rect x="210" y="618" width="18" height="14" rx="3" fill="#FFFBEA" stroke="#B7791F"/>
+  <text x="236" y="630" font-size="12" fill="#4A5568">Confirmation or warning</text>
+  <rect x="420" y="618" width="18" height="14" rx="3" fill="#FFF4E5" stroke="#C05621"/>
+  <text x="446" y="630" font-size="12" fill="#4A5568">User action</text>
+</svg>

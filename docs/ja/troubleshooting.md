@@ -1,6 +1,6 @@
 # トラブルシューティング
 
-[← README に戻る](../README.ja.md)
+[← README に戻る](README.ja.md)
 
 ## まず確認すること：出力パネル
 

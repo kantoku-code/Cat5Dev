@@ -1,6 +1,6 @@
 # Cat5Dev
 
-[English](../README.md) | 日本語 | [简体中文](README.zh-CN.md)
+[English](../../README.md) | 日本語 | [简体中文](../zh-CN/README.zh-CN.md)
 
 Cat5Dev は、CATIA V5 の VBA マクロを VSCode で開発するための拡張機能です。
 CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取りし、VSCode 上で補完・Lint・整形を使って編集できます。
@@ -13,13 +13,13 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 
 | 機能 | 概要 | 詳細 |
 |------|------|------|
-| **Pull / Push** | CATIA の VBA プロジェクトと `modules/` フォルダの間でモジュールを同期。変更のあったものだけを送り、削除の前には確認 | [同期](ja/sync.md) |
-| **モジュールツリー** | サイドパネルにモジュールを種類別に表示。名前変更・削除・パスのコピー | [同期](ja/sync.md#モジュールツリー) |
-| **IntelliSense** | CATIA API を含むコード補完、ホバー、定義へ移動、引数のヒント、存在しないメンバーの検出 | [IntelliSense](ja/intellisense.md) |
-| **シンボルナビゲーション** | アウトライン、パンくずリスト、`Ctrl+Shift+O` でプロシージャへ移動 | [IntelliSense](ja/intellisense.md#シンボルナビゲーション) |
-| **VBA Lint** | `Option Explicit` 漏れ、未使用変数、`End If` の書き忘れなど 9 種類のルール（既定は無効） | [Lint とフォーマッタ](ja/lint-format.md#vba-lint) |
-| **VBA フォーマッタ** | キーワードの大文字化、インデント、空白・空行の整理（既定は無効） | [Lint とフォーマッタ](ja/lint-format.md#vba-フォーマッタ) |
-| **多言語表示** | 日本語・English・简体中文 | [設定](ja/configuration.md#表示言語) |
+| **Pull / Push** | CATIA の VBA プロジェクトと `modules/` フォルダの間でモジュールを同期。変更のあったものだけを送り、削除の前には確認 | [同期](sync.md) |
+| **モジュールツリー** | サイドパネルにモジュールを種類別に表示。名前変更・削除・パスのコピー | [同期](sync.md#モジュールツリー) |
+| **IntelliSense** | CATIA API を含むコード補完、ホバー、定義へ移動、引数のヒント、存在しないメンバーの検出 | [IntelliSense](intellisense.md) |
+| **シンボルナビゲーション** | アウトライン、パンくずリスト、`Ctrl+Shift+O` でプロシージャへ移動 | [IntelliSense](intellisense.md#シンボルナビゲーション) |
+| **VBA Lint** | `Option Explicit` 漏れ、未使用変数、`End If` の書き忘れなど 9 種類のルール（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-lint) |
+| **VBA フォーマッタ** | キーワードの大文字化、インデント、空白・空行の整理（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-フォーマッタ) |
+| **多言語表示** | 日本語・English・简体中文 | [設定](configuration.md#表示言語) |
 
 <img src="images/screenshot-completion.svg" alt="CATIA API の補完（画像準備中）" width="560">
 
@@ -45,7 +45,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 2. **VSCode にインストール**\
    拡張機能ビュー（`Ctrl+Shift+X`）を開き、右上の `⋯` メニューから **VSIX からのインストール...** を選びます。
 
-   ![インストール手順](../resources/installation.png)
+   ![インストール手順](../../resources/installation.png)
 
 3. **ファイルを選択**\
    ダウンロードした `.vsix` ファイルを選んでインストールします。
@@ -77,7 +77,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 <img src="images/screenshot-panel.svg" alt="Cat5Dev パネル（画像準備中）" width="560">
 
 > [!TIP]
-> Lint とフォーマッタは既定で無効です。使う場合は `cat5dev.toml` の `[lint]` と `[formatter]` で `enabled = true` にしてください（[Lint とフォーマッタ](ja/lint-format.md)）。
+> Lint とフォーマッタは既定で無効です。使う場合は `cat5dev.toml` の `[lint]` と `[formatter]` で `enabled = true` にしてください（[Lint とフォーマッタ](lint-format.md)）。
 
 ---
 
@@ -86,7 +86,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 Push は CATIA のメモリ上の VBA プロジェクトに書き込むだけです。**保存しないまま CATIA を閉じると、Push した変更はすべて失われます。**\
 VSCode から Push した後は、CATIA の VBA エディタで保存してください（`Ctrl+S`）。
 
-また、Push では **VSCode 側に無いモジュールを CATIA から削除するかどうか** を確認されることがあります。内容をよく確認してから選んでください（[同期](ja/sync.md#pushvscode--catia)）。
+また、Push では **VSCode 側に無いモジュールを CATIA から削除するかどうか** を確認されることがあります。内容をよく確認してから選んでください（[同期](sync.md#pushvscode--catia)）。
 
 ---
 
@@ -94,11 +94,11 @@ VSCode から Push した後は、CATIA の VBA エディタで保存してく�
 
 | ページ | 内容 |
 |--------|------|
-| [CATIA との同期](ja/sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、同期ロックと復旧、文字コード |
-| [IntelliSense](ja/intellisense.md) | 補完・ホバー・定義へ移動・引数のヒント、型ヒント `'@As`、CATIA API の型情報 |
-| [Lint とフォーマッタ](ja/lint-format.md) | Lint のルール一覧、フォーマッタの処理内容とオプション |
-| [設定リファレンス](ja/configuration.md) | `cat5dev.toml` の全項目、表示言語、VSCode の設定、作成されるファイル |
-| [トラブルシューティング](ja/troubleshooting.md) | よくある問題と対処、出力パネルの見方 |
+| [CATIA との同期](sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、同期ロックと復旧、文字コード |
+| [IntelliSense](intellisense.md) | 補完・ホバー・定義へ移動・引数のヒント、型ヒント `'@As`、CATIA API の型情報 |
+| [Lint とフォーマッタ](lint-format.md) | Lint のルール一覧、フォーマッタの処理内容とオプション |
+| [設定リファレンス](configuration.md) | `cat5dev.toml` の全項目、表示言語、VSCode の設定、作成されるファイル |
+| [トラブルシューティング](troubleshooting.md) | よくある問題と対処、出力パネルの見方 |
 
 ---
 

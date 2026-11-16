@@ -1,6 +1,6 @@
 # IntelliSense（補完・ホバー・定義へ移動）
 
-[← README に戻る](../README.ja.md)
+[← README に戻る](README.ja.md)
 
 Cat5Dev には VBA 用の言語サーバー（`vba-ls`）が入っており、`.bas_utf` / `.cls_utf` / `.frm_utf` ファイルの編集中に次の機能が使えます。設定は不要です。
 
@@ -20,7 +20,7 @@ CATIA V5 のオブジェクト（`Part`、`PartDocument`、`HybridShapeFactory` 
 
 ## コード補完
 
-<img src="../images/screenshot-completion.svg" alt="メンバー補完（画像準備中）" width="560">
+<img src="images/screenshot-completion.svg" alt="メンバー補完（画像準備中）" width="560">
 
 | 入力する場所 | 表示される候補 | 例 |
 |--------------|----------------|-----|
@@ -38,7 +38,7 @@ CATIA V5 のオブジェクト（`Part`、`PartDocument`、`HybridShapeFactory` 
 
 ## ホバー
 
-<img src="../images/screenshot-hover.svg" alt="ホバー表示（画像準備中）" width="560">
+<img src="images/screenshot-hover.svg" alt="ホバー表示（画像準備中）" width="560">
 
 識別子にマウスを重ねると、宣言や説明を表示します。
 

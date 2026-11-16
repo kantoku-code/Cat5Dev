@@ -1,0 +1,135 @@
+# Lint 与格式化程序
+
+[← 返回 README](README.zh-CN.md)
+
+两者**默认均为禁用**。请在工作区根目录的 `cat5dev.toml` 中启用（如果没有 `cat5dev.toml`，请参阅 [配置](configuration.md) 创建）。
+
+对 `cat5dev.toml` 的更改在保存后立即生效（无需重新加载 VSCode）。
+
+---
+
+## VBA Lint
+
+在打开文件时、编辑时（停止输入 0.5 秒后）和保存时检查代码，并通过编辑器中的波浪线和“问题”面板显示问题。“问题”面板中显示的来源为 `cat5dev`。
+
+<img src="images/screenshot-diagnostics.svg" alt="Lint 的波浪线与问题面板（图片准备中）" width="560">
+
+### 启用
+```toml
+[lint]
+enabled = true
+```
+
+> [!NOTE]
+> 通过 `CATIA: Initialize Project (cat5dev.toml)` 创建的 `cat5dev.toml` 中为 `enabled = false`。要使用 Lint，请将其改为 `true`。
+
+### 规则列表
+| 代码 | 内容 | 严重程度 | `[lint.rules]` 的键 | 默认值 |
+|------|------|----------|---------------------|--------|
+| VBA001 | 未声明 `Option Explicit` | 警告 | `option_explicit` | `true` |
+| VBA002 | 使用了 `On Error Resume Next` | 警告 | `on_error_resume_next` | `false` |
+| VBA003 | 使用了 `GoTo`（`On Error GoTo` 除外） | 警告 | `goto` | `false` |
+| VBA004 | 行过长 | 警告 | `max_line_length` | `100`（字符。`0` 为禁用） |
+| VBA005 | 使用 `Dim` 声明的变量未被使用 | 警告 | `unused_variables` | `true` |
+| VBA006 | 嵌套过深 | 警告 | `max_nesting_depth` | `5`（`0` 为禁用） |
+| VBA007 | `Sub` / `Function` 的行数过多 | 警告 | `max_function_lines` | `300`（行。`0` 为禁用） |
+| VBA008 | 括号不匹配 | 错误 | `unmatched_parens` | `true` |
+| VBA009 | 缺少 `End If` / `End Sub` / `End Function` 等 | 错误 | `unmatched_blocks` | `true` |
+
+`true` / `false` 类规则设为 `false` 即禁用，数值类规则设为 `0` 即禁用。
+
+```toml
+[lint.rules]
+option_explicit      = true
+on_error_resume_next = false
+goto                 = false
+max_line_length      = 100
+unused_variables     = true
+max_nesting_depth    = 5
+max_function_lines   = 300
+unmatched_parens     = true
+unmatched_blocks     = true
+```
+
+### 注意事项
+- 无论显示语言如何设置，Lint 消息始终以日语显示。
+- VBA005 只检查 `Dim` 中的第一个变量（`Dim a, b` 中只检查 `a`）。检查对象是过程内的 `Dim`，不包括 `Private` / `Public` / `Static` 声明。
+- VBA006 将过程本身计为 1 层。`Select Case` 计为 2 层。
+- 检测不存在的成员（来源 `vba-ls`）是与 Lint 不同的功能。请参阅 [IntelliSense](intellisense.md#检测不存在的成员)。
+
+---
+
+## VBA 格式化程序
+
+整理代码的格式。在 VSCode 的“格式化文档”（`Shift+Alt+F`）和保存文件时运行。
+
+### 启用
+```toml
+[formatter]
+enabled = true
+```
+
+> [!IMPORTANT]
+> 设置 `enabled = true` 后，由于 `format_on_save` 的默认值为 `true`，**每次保存时都会格式化**。如果不需要保存时格式化，请写上 `format_on_save = false`。
+
+### 默认执行的处理
+| 处理 | 示例 | 键 |
+|------|------|-----|
+| 关键字大写 | `dim` → `Dim`、`end if` → `End If` | `capitalize_keywords` |
+| 修正缩进 | `Sub` / `If` / `For` / `Do` / `With` / `Select Case` 等代码块 | `fix_indentation` |
+| 删除行尾空白 | | `trim_trailing_space` |
+| 在续行符 `_` 前添加空格 | `Show(_` → `Show( _` | `ensure_continuation_space` |
+| 续行缩进 | 以 `_` 结尾的行的下一行缩进一级 | `indent_continuation_lines` |
+| 整理空行 | 连续空行最多保留 2 行 | `max_blank_lines` |
+
+- 缩进单位为 `indent_size`（默认 4 个空格）。
+- `Select Case` 内部，`Case` 缩进 1 级，其内容缩进 2 级。写在一行中的 `If … Then …` 不视为代码块。
+- 续行缩进仅在 `fix_indentation = true` 时生效。只有 `)` 或 `]` 的行不会缩进。
+- 整理空行时，如果 `End Sub` 等之后紧接着下一个过程，会插入 1 个空行。设置 `max_blank_lines = 0` 后，将完全不整理空行。
+- 不会修改字符串和注释中的内容。
+- 格式化后的文件换行符为 CRLF，并且末尾带 1 个换行。
+
+### 选项（默认禁用）
+| 键 | 示例 |
+|-----|------|
+| `normalize_operator_spacing` | `x=1+2` → `x = 1 + 2` |
+| `normalize_comma_spacing` | `foo(a,b)` → `foo(a, b)` |
+| `normalize_comment_space` | `'comment` → `' comment` |
+| `expand_type_suffixes` | `Dim x%` → `Dim x As Integer` |
+
+### 全部选项与默认值
+```toml
+[formatter]
+enabled = false                    # true 为启用
+indent_size = 4
+capitalize_keywords = true
+fix_indentation = true
+trim_trailing_space = true
+ensure_continuation_space = true
+indent_continuation_lines = true
+max_blank_lines = 2                # 0 = 禁用
+normalize_operator_spacing = false
+normalize_comma_spacing = false
+normalize_comment_space = false
+expand_type_suffixes = false
+format_on_save = true              # 保存时格式化
+```
+
+### 格式化的时机
+| 时机 | 条件 |
+|------|------|
+| `Shift+Alt+F`（格式化文档） | `enabled = true` |
+| 保存文件时 | `enabled = true` 且 `format_on_save = true`（与 VSCode 的 `editor.formatOnSave` 无关） |
+| Pull 时 | `enabled = true` 且 VSCode 设置 `cat5dev.formatter.formatOnPull` 为 `true` |
+
+- 不支持只格式化选定范围（“格式化选定内容”）。始终格式化整个文件。
+- VSCode 设置中的 `cat5dev.formatter.*`（`formatOnPull` 除外）目前未被使用。请在 `cat5dev.toml` 中进行设置。
+
+### 在命令行中使用
+格式化程序本体 `vbafmt.exe`（位于扩展文件夹的 `bin/` 中）也可以作为独立命令使用。它接收一个文件（或标准输入），并将格式化结果输出到标准输出。它不读取 `cat5dev.toml`，选项通过参数指定（列表见 `vbafmt.exe -h`）。
+
+```bat
+vbafmt.exe modules\Module1.bas_utf > Module1_formatted.bas_utf
+vbafmt.exe --normalize-comma-spacing modules\Module1.bas_utf
+vbafmt.exe --check modules\Module1.bas_utf   :: 需要格式化时退出码为 1（适用于 CI）
+```

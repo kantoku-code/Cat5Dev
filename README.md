@@ -1,289 +1,126 @@
 # Cat5Dev
 
-English | [日本語](docs/README.ja.md) | [简体中文](docs/README.zh-CN.md)
+English | [日本語](docs/ja/README.ja.md) | [简体中文](docs/zh-CN/README.zh-CN.md)
 
-Cat5Dev is a VSCode extension that syncs VBA modules between VSCode and CATIA V5.
+Cat5Dev is a VSCode extension for developing CATIA V5 VBA macros in VSCode.
+It transfers modules between a CATIA VBA project and VSCode, so you can edit them in VSCode with completion, lint, and formatting.
+
+<img src="docs/en/images/workflow.png" alt="Edit in VSCode, send to CATIA with Push, then save in the CATIA VBA editor" width="760">
 
 ---
 
 ## Features
 
-### Pull / Push VBA Modules
-Sync VBA modules between CATIA V5 and your local workspace.
+| Feature | Summary | Details |
+|---------|---------|---------|
+| **Pull / Push** | Sync modules between the CATIA VBA project and the `modules/` folder. Only changed modules are sent, and you are asked before anything is deleted | [Sync](docs/en/sync.md) |
+| **Module tree** | Shows modules by type in a side panel. Rename, delete, and copy path | [Sync](docs/en/sync.md#module-tree) |
+| **IntelliSense** | Code completion including the CATIA API, hover, Go to Definition, parameter hints, and detection of nonexistent members | [IntelliSense](docs/en/intellisense.md) |
+| **Symbol navigation** | Outline, breadcrumbs, and `Ctrl+Shift+O` to jump to a procedure | [IntelliSense](docs/en/intellisense.md#symbol-navigation) |
+| **VBA Lint** | 9 rules, such as missing `Option Explicit`, unused variables, and missing `End If` (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-lint) |
+| **VBA Formatter** | Keyword capitalization, indentation, and whitespace / blank line cleanup (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-formatter) |
+| **Multilingual UI** | 日本語, English, 简体中文 | [Configuration](docs/en/configuration.md#display-language) |
 
-- **Pull** — Export all VBA modules from the target CATIA project to the local `modules/` folder
-- **Push** — Import local VBA modules back into CATIA (only changed files are transferred, unchanged modules are skipped for speed)
-
-### Target Project Selection
-Select the CATIA VBA project to sync with via a quick-pick dialog.
-The selected project name is saved in `cat5dev.toml` under the `[project]` section and persists across sessions.
-
-### Module Tree View
-A dedicated panel in the Activity Bar shows the current state of your workspace.
-
-- Displays the target project name
-- Modules are grouped by type:
-  - **Standard Modules** (`.bas_utf`)
-  - **Class Modules** (`.cls_utf`)
-  - **UserForms** (`.frm_utf`)
-- Click any module to open it in the editor
-- The tree updates automatically when the target project is changed
-- Right-click any module to access context menu options:
-  - **Rename** — Rename the module file
-  - **Delete** — Delete the module file (with confirmation)
-  - **Copy Path** — Copy the full file path to clipboard
-
-### Toolbar Buttons
-Quick-access buttons are available in the panel title bar:
-
-| Icon | Action |
-|------|--------|
-| ☁️↓ | Pull from CATIA |
-| ☁️↑ | Push to CATIA |
-| ⚙️ | Select target project |
-| 🔄 | Refresh module list |
-| 🌐 | Switch language |
-
-### Multi-Language Support
-The extension supports **Japanese (日本語)**, **English**, and **Chinese (简体中文)**.
-- Click the 🌐 button in the panel title bar to switch languages
-- The language preference is saved in `cat5dev.toml` under the `[project]` section
-- All UI messages, TreeView labels, and tooltips will be translated
-- A reload of VSCode is required to apply the new language setting
-
-### Symbol Navigation
-VBA symbols are recognized and exposed to VSCode's navigation features:
-
-- **Breadcrumb** — Shows the current `Sub` / `Function` / `Property` name as you move the cursor
-- **Outline view** — Lists all procedures and properties in the current file
-- **Go to Symbol** (`Ctrl+Shift+O`) — Jump directly to any procedure
-
-Recognized symbol types: `Sub`, `Function`, `Property Get/Let/Set`, `Type`, `Enum`
-
-**Breadcrumb symbol order (`cat5dev.toml`):**
-
-```toml
-[editor]
-breadcrumbs_sort = "name"   # position = source order / name = by name / type = by kind
-```
-
-The value is written to the workspace settings (`.vscode/settings.json`) as `breadcrumbs.symbolSortOrder`, so it applies to every file in this workspace. If the key is absent, the workspace setting is left untouched.
-
-### VBA Linter
-
-A built-in VBA linter runs in real time as you edit `.bas_utf`, `.cls_utf`, and `.frm_utf` files.
-Diagnostics are displayed inline as squiggly underlines and shown in the **Problems** panel.
-
-**Rules:**
-
-| Code | Rule | Severity |
-|------|------|----------|
-| VBA001 | `Option Explicit` not declared | Warning |
-| VBA002 | `On Error Resume Next` usage | Warning |
-| VBA003 | `GoTo` usage (excluding `On Error GoTo`) | Warning |
-| VBA004 | Line exceeds maximum length (default: 100) | Warning |
-| VBA005 | Variable declared with `Dim` but never used | Warning |
-| VBA006 | Nesting depth exceeds threshold (default: 5) | Warning |
-| VBA007 | Sub/Function exceeds line count threshold (default: 300) | Warning |
-| VBA008 | Mismatched parentheses | Error |
-| VBA009 | Missing `End If` / `End Sub` / `End Function` etc. | Error |
-
-**Configuration (`cat5dev.toml`):**
-
-Linting is **disabled by default**. To enable it, create a `cat5dev.toml` file in your workspace root:
-
-1. Run **`cat5dev.init`** from the Command Palette to generate a configuration template, or
-2. Manually create `cat5dev.toml` with the following structure:
-
-```toml
-[project]
-target_project = ""
-language = "en"
-
-[lint]
-enabled = true
-
-[lint.rules]
-option_explicit       = true
-on_error_resume_next  = false
-goto                  = false
-max_line_length       = 100   # 0 = disabled
-unused_variables      = true
-max_nesting_depth     = 5     # 0 = disabled
-max_function_lines    = 300   # 0 = disabled
-unmatched_parens      = true
-unmatched_blocks      = true
-
-[formatter]
-enabled = false
-# ... (see Formatter section below)
-```
-
-Changes to `cat5dev.toml` take effect immediately on save — no reload required.
-
-### VBA Formatter (`Shift+Alt+F` / on save)
-
-A built-in VBA code formatter is available on demand (`Shift+Alt+F`) or automatically on save.
-
-The formatter is **disabled by default**. To enable it, set `enabled = true` in `cat5dev.toml`:
-
-```toml
-[formatter]
-enabled = true
-```
-
-**Default formatting (when enabled):**
-- Keyword capitalization (`dim` → `Dim`, `end if` → `End If`, etc.)
-- Indentation correction (blocks: `Sub`, `If`, `For`, `With`, `Select Case`, etc.)
-- Trailing whitespace removal
-- Space before continuation marker (`Show(_` → `Show( _`)
-- Continuation line indentation (`_` lines get +1 extra indent; closing-only lines like `)` are exempt)
-- Blank line normalization (max 2 consecutive blank lines; blank line guaranteed between procedures)
-
-**Optional formatting (disabled by default):**
-
-| `cat5dev.toml` key | Description |
-|---------------------|-------------|
-| `normalize_operator_spacing` | `x=1+2` → `x = 1 + 2` |
-| `normalize_comma_spacing` | `foo(a,b)` → `foo(a, b)` |
-| `normalize_comment_space` | `'comment` → `' comment` |
-| `expand_type_suffixes` | `Dim x%` → `Dim x As Integer` |
-
-**Full `cat5dev.toml` formatter configuration:**
-
-```toml
-[formatter]
-enabled = true
-indent_size = 4
-capitalize_keywords = true
-fix_indentation = true
-trim_trailing_space = true
-ensure_continuation_space = true
-indent_continuation_lines = true
-max_blank_lines = 2
-normalize_operator_spacing = false
-normalize_comma_spacing = false
-normalize_comment_space = false
-expand_type_suffixes = false
-format_on_save = false
-```
+<img src="docs/en/images/screenshot-completion.png" alt="CATIA API completion (image coming soon)" width="560">
 
 ---
 
 ## Requirements
 
-- CATIA V5 must be running with a VBA project open
-- Windows (uses COM automation via `cscript.exe`)
+- Windows (64-bit)
+- CATIA V5 running, with the VBA project you want to sync open
+- VSCode 1.85 or later
+
+Cat5Dev communicates with CATIA over COM through the Windows built-in `cscript.exe` (32-bit).
 
 ---
 
 ## Installation
 
-Cat5Dev is distributed as a `.vsix` file. Install it as follows:
+Cat5Dev is distributed as a `.vsix` file.
 
-1. **Download the `.vsix` file**  
-   Obtain `cat5dev-x.x.x.vsix` (or later) from the release page.
+1. **Download the `.vsix` file**\
+   Get `cat5dev-x.x.x.vsix` from the [Releases page](https://github.com/kantoku-code/Cat5Dev/releases).
 
-2. **Install in VSCode**  
-   In VSCode, open the Extensions view (`Ctrl+Shift+X`), then click the `⋯` menu in the top-right corner and select **Install from VSIX...**
+2. **Install it in VSCode**\
+   Open the Extensions view (`Ctrl+Shift+X`), and choose **Install from VSIX...** from the `⋯` menu at the top right.
 
-   ![Installation Steps](./resources/installation.png)
+   ![Installation steps](resources/installation.png)
 
-3. **Select the file**  
-   Choose the downloaded `.vsix` file and confirm installation.
+3. **Select the file**\
+   Select the downloaded `.vsix` file to install it.
 
-### ⚠️ Important: Backup CATIA Settings Before First Use
-
-Before using Cat5Dev for the first time, **backup your CATIA V5 settings folder**:
-
-- **Folder path**: `%APPDATA%\Dassault Systemes\CATSettings`
-- **Why**: In rare cases, CATIA settings can become corrupted or misconfigured. Having a backup allows you to restore settings if needed.
-
-**Backup procedure:**
-```
-1. Press Win+R and type: %APPDATA%
-2. Navigate to Dassault Systemes\CATSettings
-3. Right-click and select "Copy"
-4. Paste it in a safe location (e.g., Desktop, OneDrive, etc.)
-5. Rename the backup folder (e.g., "CATSettings_backup_2026-04-18")
-```
-
----
-
-## File Structure
-
-```
-<workspace>/
-├── .gitignore                      # Generated by cat5dev.init
-├── cat5dev.toml                    # Configuration file (generated by cat5dev.init)
-└── modules/
-    ├── MyModule.bas_utf            # Standard Module
-    ├── MyClass.cls_utf             # Class Module
-    └── MyForm.frm_utf              # UserForm
-```
-
-> Settings are stored in `cat5dev.toml` under the `[project]` section:
-> - `target_project` — The name of the target CATIA VBA project
-> - `language` — `"ja"` for Japanese, `"en"` for English, `"zh"` for Chinese (default: `"ja"`)
-> - `encoding` — The character encoding of VBA code transfer (e.g., `"gbk"`, `"shift_jis"`, `"utf-8"`). Defaults to `"gbk"` for Chinese (`"zh"`), and `"shift_jis"` for Japanese (`"ja"`) and English (`"en"`).
+> [!WARNING]
+> **Before using Cat5Dev for the first time, back up your CATIA V5 settings folder.**\
+> In rare cases, CATIA settings can become corrupted. With a backup, you can restore them.
+>
+> 1. Press `Win+R` and enter `%APPDATA%`
+> 2. Open the `Dassault Systemes\CATSettings` folder
+> 3. Copy the folder and paste it somewhere safe (Desktop, OneDrive, etc.)
+> 4. Rename it (e.g. `CATSettings_backup_2026-04-18`)
 
 ---
 
 ## Getting Started
 
-1. Install the extension
-2. Open a workspace folder in VSCode
-3. Click the **Cat5Dev** icon in the Activity Bar
-4. Click ⚙️ to select the target CATIA VBA project
-5. Click ☁️↓ **Pull** to import modules from CATIA into the `modules/` folder
-6. Edit your VBA code in VSCode
-7. Click ☁️↑ **Push** to sync changes back to CATIA
+1. Open a working folder in VSCode.
+2. Run **`CATIA: Initialize Project (cat5dev.toml)`** from the Command Palette (`Ctrl+Shift+P`).\
+   This creates the settings file `cat5dev.toml` and a `.gitignore`.
+3. Start CATIA V5 and open the VBA project you want to sync.
+4. Click the **CATIA V5 VBA** icon in the Activity Bar to open the panel.
+5. Click the ⚙️ button and select the target VBA project.
+6. Click the ☁️↓ button (Pull) to import the modules into the `modules/` folder.
+7. Edit the code in VSCode.
+8. Click the ☁️↑ button (Push) to send your changes to CATIA.
+9. **Save the project in the CATIA VBA editor** (see the note below).
+
+<img src="docs/en/images/screenshot-panel.png" alt="Cat5Dev panel (image coming soon)" width="560">
+
+> [!TIP]
+> Lint and the formatter are disabled by default. To use them, set `enabled = true` in the `[lint]` and `[formatter]` sections of `cat5dev.toml` (see [Lint and Formatter](docs/en/lint-format.md)).
 
 ---
 
-## Important: Save in CATIA's VBA Editor after Push
+## Important: Save in the CATIA VBA Editor After Pushing
 
-After pushing from VSCode, **you must save the project in CATIA's VBA Editor** (Tools > Save, or `Ctrl+S` inside the VBA Editor).
+Push only writes to the VBA project in CATIA's memory. **If you close CATIA without saving, all pushed changes are lost.**\
+After pushing from VSCode, save in the CATIA VBA editor (`Ctrl+S`).
 
-Push writes the module code into CATIA's in-memory VBE. If CATIA is closed without saving, all pushed changes will be lost.
-
-```
-VSCode (edit) → Push → Save in CATIA's VBA Editor ✅
-                         ↓
-                       Changes are persisted in the CATIA document
-```
+Push may also ask **whether to delete modules from CATIA that do not exist in VSCode**. Check the list carefully before you choose (see [Sync](docs/en/sync.md#push-vscode--catia)).
 
 ---
 
-## Notes
+## Documentation
 
-- VBA files are stored in UTF-8 encoding with a `_utf` suffix to distinguish them from CATIA's native Shift-JIS exports
-- The extension targets CATIA V5's VBE (Visual Basic Editor) via COM (`MSAPC.Apc`)
-- Debug execution within VSCode is not currently supported; use CATIA's own VBA IDE for debugging
+| Page | Contents |
+|------|----------|
+| [Syncing with CATIA](docs/en/sync.md) | How Pull / Push work and their confirmation dialogs, the module tree, the sync lock and recovery, character encoding |
+| [IntelliSense](docs/en/intellisense.md) | Completion, hover, Go to Definition, parameter hints, the `'@As` type hint, CATIA API type information |
+| [Lint and Formatter](docs/en/lint-format.md) | Lint rules, formatter operations and options |
+| [Configuration Reference](docs/en/configuration.md) | All `cat5dev.toml` settings, display language, VSCode settings, files that are created |
+| [Troubleshooting](docs/en/troubleshooting.md) | Common problems and fixes, reading the Output panel |
+
+---
+
+## Limitations
+
+- You cannot debug in VSCode. Use the CATIA VBA editor for debugging.
+- Only the code of UserForms is handled. Edit the form design (control layout) in the CATIA VBA editor.
+- Push cannot create new UserForms. Create an empty form with the same name in CATIA first.
 
 ---
 
 ## Why VBA?
 
-I’ve experimented with CATIA V5 macro development in several languages, but there are a few reasons why I ultimately returned to VBA:
+I have tried developing CATIA V5 macros in several languages, but I came back to VBA for a few reasons:
 
 - **Native support** — VBA is built directly into CATIA V5
 - **Best development environment** — The VBE is still the most complete and stable option
-- **Surprisingly fast** — In many cases, VBA outperformed alternatives
-- **Compact distribution** — No external runtimes or dependencies required
+- **Surprisingly fast** — In many cases VBA outperformed the alternatives
+- **Compact distribution** — No external runtime or dependencies required
 
-Do I *like* VBA as a language?  
-Well… that’s a different question entirely.
-
----
-
-## Notes on Encoding
-VBA files are synchronized between VSCode (UTF-8) and CATIA V5 (native ANSI, e.g., Shift-JIS or GBK). 
-By default, Cat5Dev automatically detects and sets the transfer encoding based on the configured language:
-- `"gbk"` for Chinese (`"zh"`)
-- `"shift_jis"` for Japanese (`"ja"`) and English (`"en"`)
-
-You can customize this by setting the `encoding` property under the `[project]` section in `cat5dev.toml` (e.g., `encoding = "gb2312"` or `encoding = "shift_jis"`). If you run into any issues, please feel free to let me know.
+Do I like VBA as a language?\
+That is another story.
 
 ---
 

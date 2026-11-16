@@ -1,6 +1,6 @@
 # 設定リファレンス
 
-[← README に戻る](../README.ja.md)
+[← README に戻る](README.ja.md)
 
 Cat5Dev の設定は、主にワークスペースのルートに置く `cat5dev.toml` に書きます。
 

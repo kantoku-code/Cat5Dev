@@ -1,10 +1,10 @@
 # CATIA との同期（Pull / Push）
 
-[← README に戻る](../README.ja.md)
+[← README に戻る](README.ja.md)
 
 Cat5Dev は CATIA V5 の VBA プロジェクトと、ワークスペースの `modules/` フォルダの間でモジュールをやり取りします。
 
-<img src="../images/sync-flow.svg" alt="Pull と Push の流れ" width="760">
+<img src="images/sync-flow.svg" alt="Pull と Push の流れ" width="760">
 
 - [対象プロジェクトの選択](#対象プロジェクトの選択)
 - [Pull（CATIA → VSCode）](#pullcatia--vscode)
@@ -83,7 +83,7 @@ VSCode の設定 `cat5dev.formatter.formatOnPull` を `true` にすると、取�
    - VBA で使えない名前や、大文字小文字違いの重複があるとエラーで中止します。
 3. **CATIA にだけ存在するモジュールがある場合** — 確認ダイアログを表示します。
 
-   <img src="../images/screenshot-push-dialog.svg" alt="Push の削除確認ダイアログ（画像準備中）" width="560">
+   <img src="images/screenshot-push-dialog.svg" alt="Push の削除確認ダイアログ（画像準備中）" width="560">
 
    - **はい（削除する）** — CATIA からも削除して、VSCode 側と同じ状態にします。
    - **いいえ（残す）** — CATIA 側のモジュールは残します。
@@ -103,7 +103,7 @@ VSCode の設定 `cat5dev.formatter.formatOnPull` を `true` にすると、取�
 
 アクティビティバーの Cat5Dev アイコンを押すと、サイドパネルに `modules/` フォルダの内容が表示されます。
 
-<img src="../images/screenshot-panel.svg" alt="Cat5Dev パネル（画像準備中）" width="560">
+<img src="images/screenshot-panel.svg" alt="Cat5Dev パネル（画像準備中）" width="560">
 
 - 一番上に対象プロジェクト名が表示されます。対象プロジェクトが未設定のときは何も表示されません。
 - その下に、ファイルがある種類だけ次の順で表示されます（表示名は英語です）。
@@ -125,11 +125,13 @@ VSCode の設定 `cat5dev.formatter.formatOnPull` を `true` にすると、取�
 | 🌐 | CATIA: Switch Language | 表示言語を切り替える |
 
 ### 右クリックメニュー
+モジュールを右クリックすると表示されます（メニュー名は英語です）。
+
 | メニュー | 動作 |
 |----------|------|
-| 名前変更 | ファイル名（＝モジュール名）を変更します。VBA で使える名前で、他と重複しないことが必要です。ユーザーフォームの場合は警告が出ます（下記） |
-| 削除 | 確認のうえ、ファイルをごみ箱に移動します |
-| パスをコピー | ファイルのフルパスをクリップボードにコピーします |
+| Rename（名前変更） | ファイル名（＝モジュール名）を変更します。VBA で使える名前で、他と重複しないことが必要です。ユーザーフォームの場合は警告が出ます（下記） |
+| Delete（削除） | 確認のうえ、ファイルをごみ箱に移動します |
+| Copy Path（パスをコピー） | ファイルのフルパスをクリップボードにコピーします |
 
 - 未保存の編集があるファイルは、名前変更・削除ともに実行できません。先に保存してください。
 - ユーザーフォームの名前を変えると、次の Push で新しい名前のフォームを作れず（上記 4.）、古い名前のフォームの削除確認が表示されます。削除を選ぶとフォームのデザインが失われます。
