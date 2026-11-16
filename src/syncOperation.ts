@@ -15,6 +15,7 @@ export interface OperationContext {
     markExternalRunning(resultPath: string, expected: CatiaExpectation): void;
     markSettled(): void;
     close(): void;
+    isClosed(): boolean;
 }
 export interface SyncOperationManagerOptions {
     lockRoot?: string; tempRoot?: string;
@@ -56,6 +57,8 @@ export class SyncOperationManager {
     private readonly activePath: string;
     private readonly isProcessAlive: (pid: number) => boolean;
     private readonly isCatiaRunning: () => Promise<boolean>;
+    /** This process's operation whose run ended while CATIA completion was still unconfirmed. */
+    private quarantined?: { id: string; abandon: () => void };
     constructor(options: SyncOperationManagerOptions = {}) {
         const local = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local');
         const root = path.resolve(options.lockRoot ?? path.join(local, 'Cat5Dev', 'operation-lock'));
@@ -98,17 +101,47 @@ export class SyncOperationManager {
                 const next: Owner = { ...owner, phase: 'settled' }; this.replaceOwner(next); owner = next;
             },
             close: () => {
-                if (closed || owner.phase === 'external-running') { return; }
+                if (closed) { return; }
+                if (owner.phase === 'external-running') {
+                    // Keep the lock, but let this window release it explicitly once the user confirms CATIA is idle.
+                    this.quarantined = { id, abandon: () => { closed = true; } };
+                    return;
+                }
                 let cleanupError: unknown;
                 try { this.removeTemp(owner); } catch (e) { cleanupError = e; }
                 this.assertOwner(owner.id);
                 const released = path.join(this.lockRoot, `.released-${owner.id}`);
                 fs.renameSync(this.activePath, released);
                 closed = true;
+                if (this.quarantined?.id === id) { this.quarantined = undefined; }
                 fs.rmSync(released, { recursive: true, force: true });
                 if (cleanupError) { throw cleanupError; }
-            }
+            },
+            isClosed: () => closed
         };
+    }
+    /** True when the active lock is an unconfirmed operation left behind by this manager (not one still running). */
+    hasQuarantine(): boolean {
+        const quarantined = this.quarantined;
+        if (!quarantined) { return false; }
+        try {
+            const owner = this.readOwner();
+            if (owner && owner.id === quarantined.id && owner.pid === process.pid) { return true; }
+        } catch { return false; }
+        this.quarantined = undefined; // The lock was released or recovered elsewhere.
+        return false;
+    }
+    /**
+     * Force-release this manager's quarantined lock after user confirmation.
+     * The temporary directory is kept for diagnostics, as with recover().
+     */
+    releaseQuarantined(): boolean {
+        const quarantined = this.quarantined;
+        if (!quarantined || !this.hasQuarantine()) { return false; }
+        fs.renameSync(this.activePath, path.join(this.lockRoot, `.recovered-${quarantined.id}`));
+        quarantined.abandon();
+        this.quarantined = undefined;
+        return true;
     }
     async recover(): Promise<boolean> {
         let owner: Owner | undefined;

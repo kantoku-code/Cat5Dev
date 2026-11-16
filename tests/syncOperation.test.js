@@ -52,6 +52,30 @@ test('two stale reclaimers never retire a newly acquired lock', async t => {
     resolve2(false); assert.equal(await b, false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'locks', 'active', 'owner.json'))).id, next.id); next.close();
 });
+test('only this manager\'s quarantined (not running) lock can be force-released', t => {
+    const root = fixture(t), own = manager(root), other = manager(root);
+    const context = own.acquire('push');
+    context.markExternalRunning(path.join(context.tempDir, 'result.json'), { operationId: context.id, stepId: 'step', kind: 'push', targetProject: 'Review' });
+    // Still running: the in-flight operation is never offered for release.
+    assert.equal(own.hasQuarantine(), false); assert.equal(own.releaseQuarantined(), false);
+    context.close();
+    assert.equal(other.hasQuarantine(), false); assert.equal(other.releaseQuarantined(), false);
+    assert.equal(own.hasQuarantine(), true);
+    assert.equal(own.releaseQuarantined(), true);
+    assert.ok(context.isClosed()); assert.equal(own.hasQuarantine(), false);
+    assert.ok(fs.existsSync(context.tempDir)); // Diagnostic data survives release.
+    assert.throws(() => context.markSettled());
+    const next = other.acquire('push'); assert.equal(own.hasQuarantine(), false); next.close();
+});
+test('quarantine record is cleared once the lock is released by a late result', t => {
+    const root = fixture(t), own = manager(root);
+    const context = own.acquire('push');
+    context.markExternalRunning(path.join(context.tempDir, 'result.json'), { operationId: context.id, stepId: 'step', kind: 'push', targetProject: 'Review' });
+    context.close(); assert.equal(own.hasQuarantine(), true);
+    context.markSettled(); context.close();
+    assert.equal(own.hasQuarantine(), false); assert.equal(own.releaseQuarantined(), false);
+    own.acquire('push').close();
+});
 test('real child processes exclude each other across workspaces and recover after crash', async t => {
     const root = fixture(t), args = [path.join(root, 'locks'), root];
     const spawn = mode => fork(path.join(__dirname, 'lock-worker.js'), [...args, mode], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });

@@ -32,6 +32,8 @@ function readResult(resultPath: string, request: CatiaRequest): CatiaResult {
 /** A late, validated terminal result can release a quarantined operation. */
 function watchLateResult(context: OperationContext, request: CatiaRequest, resultPath: string, log?: (text: string) => void): void {
     const timer = setInterval(() => {
+        // The lock was released explicitly; a late result must not touch a newer operation.
+        if (context.isClosed()) { clearInterval(timer); return; }
         try {
             readResult(resultPath, request);
             clearInterval(timer);

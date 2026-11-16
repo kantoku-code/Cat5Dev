@@ -73,6 +73,21 @@ test('timeout retains lock until a late valid terminal result arrives', async t 
     await new Promise(resolve => setTimeout(resolve, 1150));
     assert.ok(!fs.existsSync(context.tempDir));
 });
+test('force-released timeout ignores a late result and keeps the newer lock', async t => {
+    const root = fixture(t);
+    const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
+    const context = manager.acquire('push');
+    const request = createCatiaRequest(context, 'push', 'Review', 'shift_jis');
+    await assert.rejects(runCatiaRequest(context, request, { timeoutMs: 10, execute: async () => new Promise(() => {}) }), e => e.uncertain);
+    context.close();
+    assert.equal(manager.releaseQuarantined(), true);
+    const next = manager.acquire('push');
+    fs.writeFileSync(path.join(request.directory, 'result.json'), JSON.stringify(result(request)));
+    await new Promise(resolve => setTimeout(resolve, 1150));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'locks', 'active', 'owner.json'))).id, next.id);
+    assert.ok(fs.existsSync(context.tempDir)); // The abandoned watcher did not clean up.
+    next.close();
+});
 test('module text normalization unifies CRLF, CR and LF and trims trailing whitespace', () => {
     assert.equal(normalizeModuleText('a\r\nb\rc\nd\r\n\r\n  '), 'a\nb\nc\nd');
     assert.equal(normalizeModuleText('a\r\nb'), normalizeModuleText('a\nb\n'));

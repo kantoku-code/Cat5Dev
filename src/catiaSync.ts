@@ -44,7 +44,7 @@ export class CatiaSync {
             return await task(context, root);
         } catch (error) {
             this.output.appendLine(`[${kind}] ${error instanceof Error ? error.stack : String(error)}`);
-            if (error instanceof SyncBusyError) { void vscode.window.showWarningMessage(t('sync.busy')); }
+            if (error instanceof SyncBusyError) { this.showBusy(); }
             else if (error instanceof PullRecoveryError) {
                 void vscode.window.showErrorMessage(t('sync.recoveryFailed', error.recoveryPath, error.unrestored.join(', ')));
                 this.output.show(true);
@@ -180,8 +180,24 @@ export class CatiaSync {
             });
         });
     }
+    /** A lock left by this window's unconfirmed operation gets a release action; a running one does not. */
+    private showBusy(): void {
+        if (!this.manager.hasQuarantine()) { void vscode.window.showWarningMessage(t('sync.busy')); return; }
+        void vscode.window.showWarningMessage(t('sync.busyQuarantined'), t('dialog.releaseLock')).then(answer => {
+            if (answer === t('dialog.releaseLock')) { return this.recoverLock(); }
+        });
+    }
     async recoverLock(): Promise<void> {
         try {
+            if (this.manager.hasQuarantine()) {
+                const answer = await vscode.window.showWarningMessage(t('sync.releaseConfirm'), { modal: true }, t('dialog.releaseLock'));
+                if (answer !== t('dialog.releaseLock')) { return; }
+                if (this.manager.releaseQuarantined()) {
+                    this.output.appendLine('[recovery] Released this window\'s unconfirmed operation lock by user confirmation.');
+                    void vscode.window.showInformationMessage(t('sync.lockRecovered'));
+                } else { void vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
+                return;
+            }
             const recovered = await this.manager.recover();
             if (recovered) { void vscode.window.showInformationMessage(t('sync.lockRecovered')); }
             else { void vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }

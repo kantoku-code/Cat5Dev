@@ -47,7 +47,9 @@ export const messages = {
         'sync.localChanged': '未保存の編集、またはPull中のローカル変更を検出したため中止しました。保存して再実行してください。',
         'sync.recoveryFailed': 'Pullの復元が完了しませんでした。退避先: {0}\n未復旧: {1}',
         'sync.partialFailure': 'CATIA操作に失敗がありました。成功: {0}件、失敗: {1}件。詳細はOutputを確認してください。',
-        'sync.unconfirmed': 'CATIA操作の完了を確認できません。再操作を防止しています。CATIA側の状態を確認してください。',
+        'sync.unconfirmed': 'CATIA操作の完了を確認できません。再操作を防止しています。CATIA側のMsgBox等を閉じた後、再実行時に表示される「ロック解除」で復旧できます。',
+        'sync.busyQuarantined': '前回のCATIA操作の完了を確認できず、同期ロックが保留されています。CATIA側のMsgBox等を閉じてから「ロック解除」を押してください。',
+        'sync.releaseConfirm': 'CATIA側のダイアログが閉じられ、前回の操作が終わっていることを確認してください。\n\nロックを解除すると、前回の処理が後からCATIAで実行された場合に重複する可能性があります。解除しますか？',
         'sync.lockRecovered': '同期ロックの復旧が完了しました。',
         'sync.lockRecoveryBlocked': '同期ロックを安全に解除できません。実行中の操作が終了しない場合はCATIAを終了し、VSCodeウィンドウを再読み込みしてから復旧コマンドを実行してください。',
         // Sidebar & TreeView
@@ -95,6 +97,7 @@ export const messages = {
         'dialog.delete': 'はい（削除する）',
         'dialog.keep': 'いいえ（残す）',
         'dialog.continue': '続行',
+        'dialog.releaseLock': 'ロック解除',
 
         // Progress titles
         'progress.pull': 'CATIAからVBAをプルしています ({0})...',
@@ -169,7 +172,9 @@ export const messages = {
         'sync.localChanged': 'Pull stopped because a module has unsaved edits or local files changed during Pull. Save and try again.',
         'sync.recoveryFailed': 'Pull recovery is incomplete. Backup: {0}\nUnrestored: {1}',
         'sync.partialFailure': 'CATIA operation failed. Succeeded: {0}; failures: {1}. See Output for details.',
-        'sync.unconfirmed': 'CATIA completion could not be confirmed. Further operations are blocked. Check the state in CATIA.',
+        'sync.unconfirmed': 'CATIA completion could not be confirmed. Further operations are blocked. After closing any MsgBox in CATIA, use "Release Lock" shown on the next attempt to recover.',
+        'sync.busyQuarantined': 'The previous CATIA operation could not be confirmed, so the synchronization lock is held. Close any MsgBox in CATIA, then click "Release Lock".',
+        'sync.releaseConfirm': 'Make sure the dialogs in CATIA are closed and the previous operation has finished.\n\nIf the previous operation runs later in CATIA after the lock is released, it may be applied twice. Release the lock?',
         'sync.lockRecovered': 'The synchronization lock has been recovered.',
         'sync.lockRecoveryBlocked': 'The synchronization lock cannot be safely released. If the operation does not finish, close CATIA, reload this VSCode window, and run recovery again.',
         // Sidebar & TreeView
@@ -217,6 +222,7 @@ export const messages = {
         'dialog.delete': 'Yes (Delete)',
         'dialog.keep': 'No (Keep)',
         'dialog.continue': 'Proceed',
+        'dialog.releaseLock': 'Release Lock',
 
         // Progress titles
         'progress.pull': 'Pulling VBA from CATIA ({0})...',
@@ -291,7 +297,9 @@ export const messages = {
         'sync.localChanged': '检测到未保存的编辑或Pull期间的本地更改，已停止Pull。请保存后重试。',
         'sync.recoveryFailed': 'Pull恢复未完成。备份: {0}\n未恢复: {1}',
         'sync.partialFailure': 'CATIA操作失败。成功: {0}；失败: {1}。详情请查看输出面板。',
-        'sync.unconfirmed': '无法确认CATIA操作已完成。已阻止后续操作，请检查CATIA中的状态。',
+        'sync.unconfirmed': '无法确认CATIA操作已完成。已阻止后续操作。关闭CATIA中的MsgBox等后，可通过再次执行时显示的“解除锁定”恢复。',
+        'sync.busyQuarantined': '无法确认上一次CATIA操作已完成，同步锁处于保留状态。请关闭CATIA中的MsgBox等，然后点击“解除锁定”。',
+        'sync.releaseConfirm': '请确认CATIA中的对话框已关闭，且上一次操作已结束。\n\n解除锁定后，如果上一次操作稍后在CATIA中执行，可能会重复应用。是否解除锁定？',
         'sync.lockRecovered': '同步锁已恢复。',
         'sync.lockRecoveryBlocked': '无法安全释放同步锁。如果操作无法结束，请关闭CATIA，重新加载VSCode窗口，然后再次运行恢复命令。',
         // Sidebar & TreeView
@@ -339,6 +347,7 @@ export const messages = {
         'dialog.delete': '是 (删除)',
         'dialog.keep': '否 (保留)',
         'dialog.continue': '继续',
+        'dialog.releaseLock': '解除锁定',
 
         // Progress titles
         'progress.pull': '正在从 CATIA Pull VBA ({0})...',
