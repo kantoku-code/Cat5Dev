@@ -16,16 +16,19 @@ const vscode = {
     commands: { executeCommand: async command => { state.events.push(['command', command]); } },
     window: {
         withProgress: async (_options, task) => task(),
-        showInformationMessage: async message => { state.events.push(['info', message]); },
-        showErrorMessage: async message => { state.events.push(['error', message]); },
+        // hangNotifications: VS Code はボタンなし通知の Promise をユーザーが閉じるまで resolve しない
+        showInformationMessage: message => { state.events.push(['info', message]); return notification(); },
+        showErrorMessage: message => { state.events.push(['error', message]); return notification(); },
         showWarningMessage: async (message, _options, ...actions) => {
             state.events.push(['warning', message]);
+            if (!_options?.modal && !actions.length) return notification();
             if (state.choice === 'continue') return actions.find(action => action === '続行');
             return state.choice === 'delete' ? actions[0] : state.choice === 'keep' ? actions[1] : undefined;
         },
         showQuickPick: async () => state.selection
     }
 };
+function notification() { return state.hangNotifications ? new Promise(() => {}) : Promise.resolve(undefined); }
 const originalLoad = Module._load;
 Module._load = function (id, ...args) { return id === 'vscode' ? vscode : originalLoad.call(this, id, ...args); };
 const { CatiaSync } = require('../out/catiaSync');
@@ -35,7 +38,7 @@ function setup(t, options = {}) {
     fs.writeFileSync(path.join(root, 'cat5dev.toml'), `[project]\ntarget_project = "${options.noTarget ? '' : 'Review'}"\nlanguage = "ja"\nencoding = "shift_jis"\n`);
     const localFiles = options.localFiles || { 'C5D_UserModule.bas_utf': 'old', 'LocalOnly.cls_utf': 'local' };
     for (const [name, content] of Object.entries(localFiles)) fs.writeFileSync(path.join(root, 'modules', name), content);
-    state = { root, events: [], choice: options.choice, selection: options.selection, documents: options.documents };
+    state = { root, events: [], choice: options.choice, selection: options.selection, documents: options.documents, hangNotifications: options.hangNotifications };
     const steps = [], applies = [], deletes = [];
     const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
     const output = { appendLine: () => {}, show: () => {} };
@@ -290,6 +293,26 @@ test('Push strips a UTF-8 BOM before comparing and sending', async t => {
     assert.deepEqual(changed.steps, ['check', 'push']);
     assert.equal(sent, 'Sub B()\r\n    x = 2\r\nEnd Sub');
     assert.ok(!changed.events.some(e => e[0] === 'error'), JSON.stringify(changed.events));
+});
+const settles = (promise, label) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} did not finish while notifications stay open`)), 2000).unref())]);
+test('Pull/Push finish and release the lock without waiting for notifications to be dismissed', async t => {
+    const cases = [
+        { label: 'pull success', op: 'pull', options: { choice: 'keep' }, expect: ['info', '正常にプル'] },
+        { label: 'pull deletion cancelled', op: 'pull', options: {}, expect: ['info', 'プル'] },
+        { label: 'pull failure', op: 'pull', options: { fail: 'pull' }, expect: ['error', ''] },
+        { label: 'pull local change conflict', op: 'pull', options: { choice: 'keep', beforeResult: request => {
+            if (request.kind === 'pull') fs.writeFileSync(path.join(state.root, 'modules', 'C5D_UserModule.bas_utf'), 'edited');
+        } }, expect: ['warning', 'ローカル変更'] },
+        { label: 'push success', op: 'push', options: { choice: 'keep' }, expect: ['info', 'プッシュしました'] },
+        { label: 'push no changes', op: 'push', options: { localFiles: { 'A.bas_utf': 'Sub A()\nEnd Sub\n' }, remote: [deletionRemote[0]] }, expect: ['info', '変更されていません'] },
+        { label: 'push failure', op: 'push', options: { fail: 'check' }, expect: ['error', ''] },
+    ];
+    for (const c of cases) {
+        const { sync, events, root } = setup(t, { ...c.options, hangNotifications: true });
+        await settles(sync[c.op](), c.label);
+        assert.ok(has(events, ...c.expect), `${c.label}: ${JSON.stringify(events)}`);
+        assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')), c.label);
+    }
 });
 test('format on pull follows [formatter] format_on_pull, falling back to the legacy VSCode setting only when the key is absent', async t => {
     const cases = [

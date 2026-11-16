@@ -44,19 +44,19 @@ export class CatiaSync {
             return await task(context, root);
         } catch (error) {
             this.output.appendLine(`[${kind}] ${error instanceof Error ? error.stack : String(error)}`);
-            if (error instanceof SyncBusyError) { await vscode.window.showWarningMessage(t('sync.busy')); }
+            if (error instanceof SyncBusyError) { void vscode.window.showWarningMessage(t('sync.busy')); }
             else if (error instanceof PullRecoveryError) {
-                await vscode.window.showErrorMessage(t('sync.recoveryFailed', error.recoveryPath, error.unrestored.join(', ')));
+                void vscode.window.showErrorMessage(t('sync.recoveryFailed', error.recoveryPath, error.unrestored.join(', ')));
                 this.output.show(true);
-            } else if (error instanceof PullConflictError) { await vscode.window.showWarningMessage(t('sync.localChanged')); }
+            } else if (error instanceof PullConflictError) { void vscode.window.showWarningMessage(t('sync.localChanged')); }
             else if (error instanceof CatiaExecutionError && error.uncertain) {
-                this.output.show(true); await vscode.window.showErrorMessage(t('sync.unconfirmed'));
+                this.output.show(true); void vscode.window.showErrorMessage(t('sync.unconfirmed'));
             } else if (error instanceof CatiaExecutionError && error.result?.failures.length) {
                 this.output.show(true);
-                await vscode.window.showErrorMessage(t('sync.partialFailure', String(error.result.succeededCount), String(error.result.failures.length)));
+                void vscode.window.showErrorMessage(t('sync.partialFailure', String(error.result.succeededCount), String(error.result.failures.length)));
             } else {
                 this.output.show(true);
-                await vscode.window.showErrorMessage(t(kind === 'pull' ? 'error.pullFailed' : kind === 'push' ? 'error.pushFailed' : 'error.selectFailed'));
+                void vscode.window.showErrorMessage(t(kind === 'pull' ? 'error.pullFailed' : kind === 'push' ? 'error.pushFailed' : 'error.selectFailed'));
             }
             return undefined;
         } finally {
@@ -68,11 +68,11 @@ export class CatiaSync {
     }
     private async select(context: OperationContext, root: string): Promise<string | undefined> {
         const result = await this.step(context, createCatiaRequest(context, 'list', '', this.encoding(root)));
-        if (!result.projects.length) { await vscode.window.showInformationMessage(t('info.projectNotFound')); return undefined; }
+        if (!result.projects.length) { void vscode.window.showInformationMessage(t('info.projectNotFound')); return undefined; }
         const selected = await vscode.window.showQuickPick(result.projects, { placeHolder: t('select.placeholder') });
         if (selected) {
             writeTomlProjectKey(root, 'target_project', selected);
-            await vscode.window.showInformationMessage(t('info.projectSelected', selected));
+            void vscode.window.showInformationMessage(t('info.projectSelected', selected));
             await vscode.commands.executeCommand('cat5dev.refreshTree');
         }
         return selected;
@@ -102,12 +102,12 @@ export class CatiaSync {
                 let deleteMissing = false;
                 if (deletions.length) {
                     const answer = await vscode.window.showWarningMessage(t('sync.pullDeletions', deletions.join('\n')), { modal: true }, t('dialog.delete'), t('dialog.keep'));
-                    if (answer === undefined) { await vscode.window.showInformationMessage(t('info.pullCancelled')); return; }
+                    if (answer === undefined) { void vscode.window.showInformationMessage(t('info.pullCancelled')); return; }
                     deleteMissing = answer === t('dialog.delete');
                 }
                 const applied = applyPull(root, snapshot, incoming, deleteMissing, { isDirty: file => this.dirty(file) });
                 this.output.appendLine(`[Pull] received=${result.succeededCount} written=${applied.writtenCount} deleted=${applied.deletedCount}`);
-                await vscode.window.showInformationMessage(t('info.pullSuccess', String(result.succeededCount)));
+                void vscode.window.showInformationMessage(t('info.pullSuccess', String(result.succeededCount)));
                 await vscode.commands.executeCommand('cat5dev.refreshTree');
             });
         });
@@ -115,13 +115,13 @@ export class CatiaSync {
     push(): Promise<void | undefined> {
         return this.run('push', async (context, root) => {
             const directory = path.join(root, 'modules');
-            if (!fs.existsSync(directory)) { await vscode.window.showInformationMessage(t('error.noModulesDir')); return; }
+            if (!fs.existsSync(directory)) { void vscode.window.showInformationMessage(t('error.noModulesDir')); return; }
             const files = fs.readdirSync(directory).filter(name => moduleExtension.test(name));
-            if (!files.length) { await vscode.window.showInformationMessage(t('error.noModuleFiles')); return; }
+            if (!files.length) { void vscode.window.showInformationMessage(t('error.noModuleFiles')); return; }
             // Push sends the content saved on disk; warn before selecting a project or contacting CATIA.
             const unsaved = files.filter(file => this.dirty(path.join(directory, file)));
             if (unsaved.length && await vscode.window.showWarningMessage(t('warning.unsavedModules', unsaved.join('\n')), { modal: true }, t('dialog.continue')) !== t('dialog.continue')) {
-                await vscode.window.showInformationMessage(t('info.pushCancelled')); return;
+                void vscode.window.showInformationMessage(t('info.pushCancelled')); return;
             }
             const project = await this.target(context, root); if (!project) { return; }
             const encoding = this.encoding(root);
@@ -151,18 +151,18 @@ export class CatiaSync {
                     return !other || other.type !== item.type || item.comparable !== normalizeModuleText(iconv.decode(fs.readFileSync(path.join(check.directory, other.file)), encoding));
                 });
                 const missing = remote.items.filter(item => !seen.has(item.name.toLowerCase())).map(item => item.name);
-                if (!changed.length && !missing.length) { await vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
+                if (!changed.length && !missing.length) { void vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
                 let deletions: string[] = [];
                 if (missing.length) {
                     const answer = await vscode.window.showWarningMessage(t('warning.deleteModules', missing.join(', ')), { modal: true }, t('dialog.delete'), t('dialog.keep'));
-                    if (answer === undefined) { await vscode.window.showInformationMessage(t('info.pushCancelled')); return; }
+                    if (answer === undefined) { void vscode.window.showInformationMessage(t('info.pushCancelled')); return; }
                     if (answer === t('dialog.delete')) { deletions = missing; }
                 }
                 const newForms = changed.filter(item => item.type === 3 && !remoteByName.has(item.name.toLowerCase()));
-                if (newForms.length) { await vscode.window.showWarningMessage(t('warning.newUserForms', newForms.map(item => item.name).join(', '))); }
+                if (newForms.length) { void vscode.window.showWarningMessage(t('warning.newUserForms', newForms.map(item => item.name).join(', '))); }
                 const transferable = changed.filter(item => !newForms.includes(item));
                 if (!transferable.length && !deletions.length) {
-                    await vscode.window.showInformationMessage(changed.length ? t('warning.noMoreFiles') : t('info.noChanges', String(local.length)));
+                    void vscode.window.showInformationMessage(changed.length ? t('warning.noMoreFiles') : t('info.noChanges', String(local.length)));
                     return;
                 }
                 const request = createCatiaRequest(context, 'push', project, encoding);
@@ -173,7 +173,7 @@ export class CatiaSync {
                 });
                 request.deletions = deletions;
                 const result = await this.step(context, request);
-                await vscode.window.showInformationMessage(result.updatedCount === 0 && result.deletedCount > 0
+                void vscode.window.showInformationMessage(result.updatedCount === 0 && result.deletedCount > 0
                     ? t('info.pushDeleteOnly', String(result.deletedCount))
                     : t('info.pushSuccess', String(result.updatedCount), '', result.deletedCount ? t('push.deleteSync') : ''));
                 await vscode.commands.executeCommand('cat5dev.refreshTree');
@@ -183,8 +183,8 @@ export class CatiaSync {
     async recoverLock(): Promise<void> {
         try {
             const recovered = await this.manager.recover();
-            if (recovered) { await vscode.window.showInformationMessage(t('sync.lockRecovered')); }
-            else { await vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
-        } catch (error) { this.output.appendLine(`[recovery] ${String(error)}`); await vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
+            if (recovered) { void vscode.window.showInformationMessage(t('sync.lockRecovered')); }
+            else { void vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
+        } catch (error) { this.output.appendLine(`[recovery] ${String(error)}`); void vscode.window.showWarningMessage(t('sync.lockRecoveryBlocked')); }
     }
 }
