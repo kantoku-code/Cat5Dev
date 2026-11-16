@@ -157,8 +157,6 @@ CATIA の処理が 60 秒以内に終わらなかった場合や、途中で異�
 - 元の操作を実行した VSCode ウィンドウがまだ動いている場合や、CATIA（`CNEXT.exe`）が起動したままの場合は、安全のため復旧を拒否します。
 - ロックの情報は `%LOCALAPPDATA%\Cat5Dev\operation-lock\` に保存されます。
 
-開発者向けの詳しい仕様は [synchronization-safety.md](../synchronization-safety.md)（英語）を参照してください。
-
 ---
 
 ## 文字コード（エンコーディング）

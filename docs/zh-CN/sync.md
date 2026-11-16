@@ -155,8 +155,6 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 - 如果执行原操作的 VSCode 窗口仍在运行，或 CATIA（`CNEXT.exe`）仍处于启动状态，为安全起见会拒绝恢复。
 - 锁的信息保存在 `%LOCALAPPDATA%\Cat5Dev\operation-lock\` 中。
 
-面向开发者的详细规格请参阅 [synchronization-safety.md](../synchronization-safety.md)（英文）。
-
 ---
 
 ## 字符编码

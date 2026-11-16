@@ -155,8 +155,6 @@ In this case, the **sync lock** stays in place to prevent accidental double writ
 - For safety, recovery is refused if the VSCode window that started the original operation is still running, or if CATIA (`CNEXT.exe`) is still running.
 - Lock information is stored in `%LOCALAPPDATA%\Cat5Dev\operation-lock\`.
 
-For the detailed developer specification, see [synchronization-safety.md](../synchronization-safety.md).
-
 ---
 
 ## Character encoding
