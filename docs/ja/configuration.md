@@ -42,7 +42,10 @@ temp/
 *.tmp
 *.bak
 .claude/
+cat5dev.toml
 ```
+
+`cat5dev.toml` は設定を変えるたびに差分が出るので、Git の管理から外しています。すでにコミット済みのリポジトリでは `.gitignore` に書いても効かないため、`git rm --cached cat5dev.toml` を実行してから、その変更をコミットしてください。
 </details>
 
 ---

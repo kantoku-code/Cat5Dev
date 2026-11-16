@@ -42,7 +42,10 @@ temp/
 *.tmp
 *.bak
 .claude/
+cat5dev.toml
 ```
+
+`cat5dev.toml` 每次修改设置都会产生差异，因此不纳入 Git 管理。如果它已经被提交，仅写入 `.gitignore` 不会生效，请先运行 `git rm --cached cat5dev.toml`，再提交该变更。
 </details>
 
 ---

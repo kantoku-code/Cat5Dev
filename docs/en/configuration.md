@@ -42,7 +42,10 @@ temp/
 *.tmp
 *.bak
 .claude/
+cat5dev.toml
 ```
+
+`cat5dev.toml` is excluded from Git because it changes every time you edit a setting. If it is already committed, adding it to `.gitignore` has no effect; run `git rm --cached cat5dev.toml` and commit that change.
 </details>
 
 ---

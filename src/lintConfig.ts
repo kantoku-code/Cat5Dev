@@ -250,6 +250,9 @@ temp/
 
 # Claude Code
 .claude/
+
+# CAT5Dev settings
+cat5dev.toml
 `;
 }
 
