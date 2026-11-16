@@ -83,7 +83,7 @@ Cat5Dev は CATIA V5 の VBA プロジェクトと、ワークスペースの `m
    - VBA で使えない名前や、大文字小文字違いの重複があるとエラーで中止します。
 3. **CATIA にだけ存在するモジュールがある場合** — 確認ダイアログを表示します。
 
-   <img src="images/screenshot-push-dialog.svg" alt="Push の削除確認ダイアログ（画像準備中）" width="560">
+   <img src="images/screenshot-push-dialog.png" alt="Push の削除確認ダイアログ" width="560">
 
    - **はい（削除する）** — CATIA からも削除して、VSCode 側と同じ状態にします。
    - **いいえ（残す）** — CATIA 側のモジュールは残します。
@@ -103,7 +103,7 @@ Cat5Dev は CATIA V5 の VBA プロジェクトと、ワークスペースの `m
 
 アクティビティバーの Cat5Dev アイコンを押すと、サイドパネルに `modules/` フォルダの内容が表示されます。
 
-<img src="images/screenshot-panel.svg" alt="Cat5Dev パネル（画像準備中）" width="560">
+<img src="images/screenshot-panel.png" alt="Cat5Dev パネル" width="560">
 
 - 一番上に対象プロジェクト名が表示されます。対象プロジェクトが未設定のときは何も表示されません。
 - その下に、ファイルがある種類だけ次の順で表示されます（表示名は英語です）。

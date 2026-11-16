@@ -21,7 +21,7 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 | **VBA フォーマッタ** | キーワードの大文字化、インデント、空白・空行の整理（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-フォーマッタ) |
 | **多言語表示** | 日本語・English・简体中文 | [設定](configuration.md#表示言語) |
 
-<img src="images/screenshot-completion.svg" alt="CATIA API の補完（画像準備中）" width="560">
+<img src="images/screenshot-completion.png" alt="CATIA API の補完" width="560">
 
 ---
 
@@ -45,7 +45,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 2. **VSCode にインストール**\
    拡張機能ビュー（`Ctrl+Shift+X`）を開き、右上の `⋯` メニューから **VSIX からのインストール...** を選びます。
 
-   ![インストール手順](../../resources/installation.png)
+   ![インストール手順](images/installation.png)
 
 3. **ファイルを選択**\
    ダウンロードした `.vsix` ファイルを選んでインストールします。
@@ -74,7 +74,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 8. ☁️↑ ボタン（Push）を押すと、変更が CATIA に送られます。
 9. **CATIA の VBA エディタでプロジェクトを保存します**（下記の注意を参照）。
 
-<img src="images/screenshot-panel.svg" alt="Cat5Dev パネル（画像準備中）" width="560">
+<img src="images/screenshot-panel.png" alt="Cat5Dev パネル" width="560">
 
 > [!TIP]
 > Lint とフォーマッタは既定で無効です。使う場合は `cat5dev.toml` の `[lint]` と `[formatter]` で `enabled = true` にしてください（[Lint とフォーマッタ](lint-format.md)）。
