@@ -5,7 +5,7 @@ import { CatiaVbaTreeProvider } from './treeView';
 import { VbaDocumentSymbolProvider } from './symbolProvider';
 import { VbaDocumentFormatter, registerFormatOnSave } from './formatter';
 import { VbaServer } from './vbaServer';
-import { t, getLanguage, setLanguage, Language, messages } from './i18n';
+import { t, getLanguage, setLanguage, Language } from './i18n';
 import { registerLinter } from './linter';
 import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { startLspClient } from './lspClient';
@@ -51,8 +51,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (selected && selected.value !== currentLang) {
             const nextLang = selected.value as Language;
             await setLanguage(nextLang);
-            const msg = (messages[nextLang] as any)['language.reload'] || messages.ja['language.reload'];
-            vscode.window.showInformationMessage(msg);
+            // t() は呼び出しのたびに言語を読み直すため、切替は即時に反映される
+            vscode.window.showInformationMessage(t('language.switched', selected.label));
         }
     });
 

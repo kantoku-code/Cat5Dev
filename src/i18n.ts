@@ -127,7 +127,7 @@ export const messages = {
 
         // Language switch
         'language.description': '(現在の言語)',
-        'language.reload': '言語変更を反映するにはVSCodeを再読み込みしてください。',
+        'language.switched': '表示言語を {0} に切り替えました。',
 
         // Push
         'push.deleteSync': '（削除同期を含む）',
@@ -249,7 +249,7 @@ export const messages = {
 
         // Language switch
         'language.description': '(Current language)',
-        'language.reload': 'Please reload VSCode to apply language changes.',
+        'language.switched': 'Display language switched to {0}.',
 
         // Push
         'push.deleteSync': ' (includes deletion sync)',
@@ -371,7 +371,7 @@ export const messages = {
 
         // Language switch
         'language.description': '(当前语言)',
-        'language.reload': '请重新加载 VSCode 以应用语言更改。',
+        'language.switched': '显示语言已切换为 {0}。',
 
         // Push
         'push.deleteSync': '（包含删除同步）',
