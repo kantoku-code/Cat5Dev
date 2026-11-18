@@ -21,9 +21,22 @@ Thumbs.db
 # Go
 *.exe
 
-# Package locks (必要に応じて)
-package-lock.json
+# Package locks（npm の package-lock.json は管理対象とする）
 yarn.lock
+
+# VS Code extension tests
+.vscode-test/
+
+# Claude Code 個人設定
+.claude/settings.local.json
+
+# 内部メモ
+/LSP_PLAN.md
+
+# SQLite の一時ファイル（catia_api.db）
+bin/*-journal
+bin/*-wal
+bin/*-shm
 
 *.vsix
 /temp
