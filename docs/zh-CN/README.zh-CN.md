@@ -29,6 +29,7 @@ Cat5Dev 是一款用于在 VSCode 中开发 CATIA V5 VBA 宏的扩展。
 
 - Windows（64 位）
 - CATIA V5 已启动，并已打开要同步的 VBA 项目
+- **执行 Pull / Push 前，已启动 CATIA 的 VBA 编辑器（`Alt+F11`）**
 - VSCode 1.85 或更高版本
 
 本扩展通过 Windows 自带的 `cscript.exe`（32 位版）以 COM 方式与 CATIA 通信。
@@ -66,7 +67,8 @@ Cat5Dev 以 `.vsix` 文件形式分发。
 1. 在 VSCode 中打开工作文件夹。
 2. 在命令面板（`Ctrl+Shift+P`）中运行 **`CATIA: Initialize Project (cat5dev.toml)`**。\
    这会创建配置文件 `cat5dev.toml` 和 `.gitignore`。
-3. 启动 CATIA V5，并打开要同步的 VBA 项目。
+3. 启动 CATIA V5，并打开要同步的 VBA 项目。\
+   **同时请启动 VBA 编辑器（`Alt+F11`）。** 未启动 VBA 编辑器时无法执行 Pull / Push。
 4. 单击活动栏中的 **CATIA V5 VBA** 图标打开面板。
 5. 单击 ⚙️ 按钮，选择目标 VBA 项目。
 6. 单击 ☁️↓ 按钮（Pull），模块会被导入到 `modules/` 文件夹。

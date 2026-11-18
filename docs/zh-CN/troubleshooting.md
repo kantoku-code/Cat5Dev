@@ -23,6 +23,7 @@
 
 - 请确认 CATIA V5 已启动。CATIA 未启动时，会显示“Pull 失败。”等消息。
 - 请确认目标 VBA 项目已在 CATIA 中打开。未打开时，日志中会记录“Target project not found”。
+- **请确认已启动 CATIA 的 VBA 编辑器（`Alt+F11`）。** 未启动 VBA 编辑器时无法执行 Pull / Push。
 - 请确认 `cat5dev.toml` 中的 `target_project` 与 CATIA 中的项目名称一致（区分大小写）。
 - 详细信息请查看输出面板的“CATIA VBA Sync”。
 

@@ -23,6 +23,7 @@ Error details are logged in VSCode's Output panel (**View** → **Output** in th
 
 - Make sure CATIA V5 is running. If CATIA is not running, messages such as "Pull failed. Check the Output panel for details." appear.
 - Make sure the target VBA project is open in CATIA. If it is not, "Target project not found" is logged.
+- **Make sure the CATIA VBA editor (`Alt+F11`) is open.** Pull / Push does not work unless the VBA editor is open.
 - Make sure `target_project` in `cat5dev.toml` matches the project name in CATIA (case-sensitive).
 - For details, check "CATIA VBA Sync" in the Output panel.
 

@@ -29,6 +29,7 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 
 - Windows (64-bit)
 - CATIA V5 running, with the VBA project you want to sync open
+- **The CATIA VBA editor (`Alt+F11`) open before you Pull / Push**
 - VSCode 1.85 or later
 
 Cat5Dev communicates with CATIA over COM through the Windows built-in `cscript.exe` (32-bit).
@@ -66,7 +67,8 @@ Cat5Dev is distributed as a `.vsix` file.
 1. Open a working folder in VSCode.
 2. Run **`CATIA: Initialize Project (cat5dev.toml)`** from the Command Palette (`Ctrl+Shift+P`).\
    This creates the settings file `cat5dev.toml` and a `.gitignore`.
-3. Start CATIA V5 and open the VBA project you want to sync.
+3. Start CATIA V5 and open the VBA project you want to sync.\
+   **Also open the VBA editor (`Alt+F11`).** Pull / Push does not work unless the VBA editor is open.
 4. Click the **CATIA V5 VBA** icon in the Activity Bar to open the panel.
 5. Click the ⚙️ button and select the target VBA project.
 6. Click the ☁️↓ button (Pull) to import the modules into the `modules/` folder.

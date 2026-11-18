@@ -29,6 +29,7 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 
 - Windows（64 ビット）
 - CATIA V5 が起動しており、同期したい VBA プロジェクトが開かれていること
+- **Pull / Push の前に、CATIA の VBA エディタ（`Alt+F11`）が起動していること**
 - VSCode 1.85 以降
 
 CATIA とは、Windows 標準の `cscript.exe`（32 ビット版）を通じて COM で通信します。
@@ -66,7 +67,8 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 1. VSCode で作業用のフォルダを開きます。
 2. コマンドパレット（`Ctrl+Shift+P`）から **`CATIA: Initialize Project (cat5dev.toml)`** を実行します。\
    設定ファイル `cat5dev.toml` と `.gitignore` が作成されます。
-3. CATIA V5 を起動し、同期したい VBA プロジェクトを開きます。
+3. CATIA V5 を起動し、同期したい VBA プロジェクトを開きます。\
+   **VBA エディタ（`Alt+F11`）も起動しておいてください。** VBA エディタが起動していないと Pull / Push はできません。
 4. アクティビティバーの **CATIA V5 VBA** アイコンを押してパネルを開きます。
 5. ⚙️ ボタンを押し、対象の VBA プロジェクトを選びます。
 6. ☁️↓ ボタン（Pull）を押すと、モジュールが `modules/` フォルダに取り込まれます。
