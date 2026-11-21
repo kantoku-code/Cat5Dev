@@ -26,6 +26,17 @@
 //   the read-only file so the user can try to save it in the VBA editor. A timeout (60 s, dialog?), an unreachable CATIA or a vanished
 //   CNEXT.exe ("CATIA crashed after step X") aborts the run; a COM exception of a step does not.
 //   Reports: temp/probe-bridge-unload-<time>.json / temp/probe-bridge-unload-cleanup-<time>.json.
+//
+// Read-only from the start (does a .catvba that is read-only BEFORE CATIA loads it stay unsaved? Setting the attribute after the
+// load did not help: CATIA kept a writable handle and the VBA editor saved over it):
+//        node scripts/probe-bridge.js --readonly-fresh        (right after a CATIA start, VBA editor NOT opened yet)
+//        node scripts/probe-bridge.js --readonly-fresh-check  (no CATIA call; after the user tried to save in the VBA editor)
+//   --readonly-fresh puts the bridge at %LOCALAPPDATA%\Cat5Dev\bridge\C5D_Bridge-<first 8 hex of sha256>.catvba (reused when the hash
+//   matches, else replaced; never the plain C5D_Bridge.catvba above), sets and verifies the read-only attribute, records CNEXT.exe and
+//   vbscript.dll, then runs READONLY_FRESH_STEPS (version, install C5D_ProbeReadonly, projects, call) one --no-retry call at a time
+//   with that path as the library, and records time/size/read-only/lock of the file again. A failed step does not stop the run.
+//   --readonly-fresh-check records the same file facts plus the hash (vs the source) and compares them with the latest run's report.
+//   Reports: temp/probe-bridge-readonly-fresh-<time>.json / temp/probe-bridge-readonly-fresh-check-<time>.json.
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -234,16 +245,44 @@ const UNLOAD_STEPS = [
 /** --unload-cleanup: unloads C5D_Bridge (auto-loading it first if needed); the read-only attribute is left as it is. */
 const CLEANUP_STEPS = [installUnloaderStep('cleanup-install'), unloadSelfStep('cleanup-unload', ['cleanup-install'])];
 
+const READONLY_FRESH_RESULT = 'readonly-fresh:ok';
+/**
+ * VBA written into C5D_ProbeReadonly by --readonly-fresh: C5D_Probe plus C5D_ProbeProjects taken over from PROBE_SOURCE
+ * (C5D_Bridge itself has no VBProjects function, so the projects step needs this module first).
+ */
+const READONLY_FRESH_SOURCE = [
+    'Option Explicit',
+    'Public Function C5D_Probe() As Variant',
+    `    C5D_Probe = "${READONLY_FRESH_RESULT}"`,
+    'End Function',
+    PROBE_SOURCE.slice(PROBE_SOURCE.indexOf('Public Function C5D_ProbeProjects'))
+].join('\r\n');
+/**
+ * --readonly-fresh, in run order (right after a CATIA start, VBA editor not opened; library = the read-only hash-named copy).
+ * No requires: every step runs and is recorded even when an earlier one failed (only a timeout / crash / unreachable CATIA aborts).
+ */
+const READONLY_FRESH_STEPS = [
+    versionStep('version'),
+    { name: 'install', module: BRIDGE_MODULE, func: 'C5D_Install', args: [READONLY_MODULE, READONLY_FRESH_SOURCE], expected: 'ok' },
+    { name: 'projects', module: READONLY_MODULE, func: 'C5D_ProbeProjects', args: [], pattern: /^count=\d+;err=0$/ },
+    { name: 'call', module: READONLY_MODULE, func: 'C5D_Probe', args: [], expected: READONLY_FRESH_RESULT }
+];
+
 const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + '       node scripts/probe-bridge.js --check-only\n'
     + '       node scripts/probe-bridge.js --unload-experiment | --unload-cleanup\n'
+    + '       node scripts/probe-bridge.js --readonly-fresh | --readonly-fresh-check\n'
     + `  steps (default: all, always run in this order): ${STEP_NAMES.join(' ')}\n`
     + `  --unload-experiment: ${UNLOAD_STEPS.map(s => s.name).join(' ')} (no copy; stops with C5D_Bridge loaded read-only)\n`
     + `  --unload-cleanup: ${CLEANUP_STEPS.map(s => s.name).join(' ')} (read-only attribute stays)\n`
+    + `  --readonly-fresh: read-only hash-named copy (${BRIDGE_PROJECT}-<sha256 8>.catvba), then ${READONLY_FRESH_STEPS.map(s => s.name).join(' ')}\n`
+    + '    (run right after a CATIA start, before the VBA editor is opened)\n'
+    + '  --readonly-fresh-check: only records the hash-named copy (time, size, read-only, lock, hash); CATIA is not called\n'
     + '  Never runs a .catvbs/.CATScript. --check-only only reads CNEXT.exe modules and the bridge files.';
 
-const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup' };
-/** { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'help', steps }. Throws on bad arguments. */
+const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup',
+    '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check' };
+/** { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'help', steps }. Throws on bad arguments. */
 function parseArgs(args) {
     if (args.some(arg => arg === '--help' || arg === '-h')) return { mode: 'help', steps: [] };
     const modes = new Set();
@@ -258,6 +297,7 @@ function parseArgs(args) {
     if (option && steps.size) throw new Error(`${option} takes no steps\n${USAGE}`);
     if (option === '--unload-experiment') return { mode: 'unload-experiment', steps: UNLOAD_STEPS.map(s => s.name) };
     if (option === '--unload-cleanup') return { mode: 'unload-cleanup', steps: CLEANUP_STEPS.map(s => s.name) };
+    if (option === '--readonly-fresh') return { mode: 'readonly-fresh', steps: READONLY_FRESH_STEPS.map(s => s.name) };
     if (option) return { mode: MODE_OPTIONS[option], steps: [] };
     return { mode: 'run', steps: steps.size ? STEP_NAMES.filter(name => steps.has(name)) : [...STEP_NAMES] };
 }
@@ -337,6 +377,62 @@ function copyBridge(source, target, copy = fs.copyFileSync, chmod = fs.chmodSync
     result.after = fileState(target);
     result.ok = result.after.sha256 !== null && result.after.sha256 === result.source.sha256;
     if (!result.ok) result.message = [result.message, 'hash of the copy differs from the source'].filter(Boolean).join('; ');
+    return result;
+}
+
+/** C5D_Bridge-<first 8 hex of the sha256>.catvba (the production-like name of the --readonly-fresh copy). */
+function hashedBridgeName(sourceSha256) {
+    if (!/^[0-9a-f]{64}$/.test(String(sourceSha256))) throw new Error(`not a sha256: ${sourceSha256}`);
+    return `${BRIDGE_PROJECT}-${sourceSha256.slice(0, 8)}.catvba`;
+}
+/** %LOCALAPPDATA%\Cat5Dev\bridge\C5D_Bridge-<8 hex>.catvba (never the plain C5D_Bridge.catvba of the other modes). */
+function hashedBridgePath(sourceSha256, env = process.env) {
+    if (!env.LOCALAPPDATA) throw new Error('%LOCALAPPDATA% is not set');
+    return path.join(env.LOCALAPPDATA, 'Cat5Dev', 'bridge', hashedBridgeName(sourceSha256));
+}
+/** libuv's UV_FS_O_EXLOCK on Windows (share mode 0); not in fs.constants of node 22. */
+const UV_FS_O_EXLOCK = 0x10000000;
+/**
+ * Whether another process has the file open: opens it for reading with share mode 0 and closes it (nothing written, works on a
+ * read-only file). { inUse: false } | { inUse: true, code: 'EBUSY' } | { inUse: null, code } (other error) | { skipped }.
+ */
+function lockProbe(file, open = fs.openSync, close = fs.closeSync, platform = process.platform) {
+    if (platform !== 'win32') return { skipped: 'not Windows' };
+    if (!fs.existsSync(file)) return { skipped: 'missing' };
+    try { close(open(file, fs.constants.O_RDONLY | UV_FS_O_EXLOCK)); return { inUse: false, code: null, message: null }; } catch (error) {
+        return { inUse: error.code === 'EBUSY' ? true : null, code: error.code ?? null, message: error.message };
+    }
+}
+/**
+ * --readonly-fresh: puts the bridge at the hash-named target and sets the read-only attribute (before any CATIA call).
+ * Same hash -> reused (only the attribute is ensured); missing -> copied; different -> replaced (read-only cleared first).
+ * A locked target is reported (locked: true), not thrown. ok = target hash equals the source and the attribute is verified set.
+ * Returns { ok, action, locked, code, message, source, before, readOnly (setReadOnly result), after }.
+ */
+function prepareHashedBridge(source, target, copy = fs.copyFileSync, chmod = fs.chmodSync) {
+    if (!fs.existsSync(source)) throw new Error(`${source} does not exist (save the VBA project ${BRIDGE_PROJECT} there first)`);
+    const result = { ok: false, action: null, locked: false, code: null, message: null, source: fileState(source), before: fileState(target), readOnly: null, after: null };
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (result.before.exists && result.before.sha256 === result.source.sha256) result.action = 'reused';
+    else {
+        result.action = result.before.exists ? 'replaced' : 'copied';
+        try {
+            if (result.before.readOnly) chmod(target, 0o666);
+            copy(source, target);
+        } catch (error) {
+            if (!LOCK_CODES.includes(error.code)) throw error;
+            Object.assign(result, { locked: true, code: error.code, message: error.message });
+            if (result.before.readOnly) { try { chmod(target, 0o444); } catch { /* reported by after.readOnly */ } }
+            result.after = fileState(target);
+            return result;
+        }
+    }
+    result.readOnly = setReadOnly(target, { chmod });
+    result.after = result.readOnly.after ?? fileState(target);
+    const sameHash = result.after.sha256 !== null && result.after.sha256 === result.source.sha256;
+    result.ok = sameHash && result.after.readOnly === true;
+    result.message = [!sameHash && 'hash of the target differs from the source', result.after.readOnly !== true && `read-only attribute not set (${result.readOnly.message})`]
+        .filter(Boolean).join('; ') || null;
     return result;
 }
 
@@ -613,6 +709,36 @@ async function runUnload(report, options) {
     checkCnext(report, first.snapshot);
     const pids = first.snapshot.cnextPids;
     if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step.');
+    const { entries, aborted } = await runSequence(report, steps, paths.target, pids, (step, earlier) => {
+        const unload2 = earlier.find(e => e.step === 'unload-2');
+        if (!unload2?.match) report.notes.push('unload-2 did not remove C5D_Bridge; it may still be loaded, so readonly-version may answer from the loaded project instead of auto-loading the read-only file.');
+        const ro = setReadOnly(paths.target);
+        return { run: { local: true, ...ro, match: ro.ok },
+            entry: { ok: ro.ok, match: ro.ok, code: ro.code, message: ro.message, lockProbe: ro.lockProbe, readOnlyAfter: ro.after?.readOnly ?? null } };
+    });
+    report.bridge.targetAtEnd = fileState(paths.target);
+    const startHash = report.bridge.target.sha256, endHash = report.bridge.targetAtEnd.sha256;
+    if (startHash && endHash && startHash !== endHash) report.notes.push(`${paths.target} changed during the run (CATIA saved the project?).`);
+    if (report.bridge.target.sha256 && report.bridge.source.sha256 && report.bridge.target.sha256 !== report.bridge.source.sha256) {
+        report.notes.push(`${paths.target} differs from ${paths.source} at the start (saved from the VBA editor?).`);
+    }
+    report.stoppedForUser = options.mode === 'unload-experiment' && !aborted;
+    if (report.stoppedForUser) {
+        report.notes.push(`C5D_Bridge is now loaded from the read-only ${paths.target} with the unsaved module ${READONLY_MODULE}. `
+            + 'Ask the user to open the VBA editor, select C5D_Bridge and try to save it (Save button / File > Save C5D_Bridge) and to note what happens '
+            + '(error message, Save As dialog, or saved). Then run: node scripts/probe-bridge.js --unload-cleanup');
+    }
+    if (options.mode === 'unload-cleanup' && report.bridge.targetAtEnd.readOnly === false) report.notes.push(`${paths.target} is not read-only.`);
+    report.summary = { ...sequenceSummary(report, entries), verdict: judgeUnload(first.snapshot.loaded, entries) };
+    if (aborted) process.exitCode = 1;
+}
+
+/**
+ * Runs steps one CATIA call (--no-retry) at a time, with a module snapshot and a CATIA-alive check after each. A timeout, a vanished
+ * CNEXT.exe or an unreachable CATIA aborts the rest; a COM exception does not (requires skips dependent steps).
+ * local(step, entries) runs a local step and returns { run, entry } (step/call are added here). Fills report.runs; returns { entries, aborted }.
+ */
+async function runSequence(report, steps, library, pids, local) {
     report.runs = [];
     const entries = [];
     let aborted = null;
@@ -626,15 +752,13 @@ async function runUnload(report, options) {
             continue;
         }
         let run, entry;
-        if (step.local === 'set-readonly') {
-            const unload2 = entries.find(e => e.step === 'unload-2');
-            if (!unload2?.match) report.notes.push('unload-2 did not remove C5D_Bridge; it may still be loaded, so readonly-version may answer from the loaded project instead of auto-loading the read-only file.');
-            const ro = setReadOnly(paths.target);
-            run = { step: step.name, call, local: true, ...ro, match: ro.ok };
-            entry = { step: step.name, ok: ro.ok, match: ro.ok, code: ro.code, message: ro.message, lockProbe: ro.lockProbe, readOnlyAfter: ro.after?.readOnly ?? null };
+        if (step.local) {
+            ({ run, entry } = local(step, entries));
+            run = { step: step.name, call, ...run };
+            entry = { step: step.name, ...entry };
         } else {
-            // one ExecuteScript call per step: a ByRef retry after an exception would auto-load C5D_Bridge again behind the unload
-            run = await runCallStep(report.exe, step, paths.target, { noRetry: true });
+            // one ExecuteScript call per step: a ByRef retry after an exception would auto-load C5D_Bridge again behind an unload
+            run = await runCallStep(report.exe, step, library, { noRetry: true });
             const r = run.result;
             entry = { step: step.name, ok: r?.ok === true, match: run.match, result: r?.result ?? null, hresult: r?.hresult ?? null, message: r?.message ?? null, timedOut: run.timedOut };
         }
@@ -656,32 +780,132 @@ async function runUnload(report, options) {
         }
         if (run.argumentsIntact === false) report.notes.push(`Step ${step.name}: the arguments eval-probe.exe passed differ from the intended ones (command-line encoding problem).`);
     }
-    report.bridge.targetAtEnd = fileState(paths.target);
-    const startHash = report.bridge.target.sha256, endHash = report.bridge.targetAtEnd.sha256;
-    if (startHash && endHash && startHash !== endHash) report.notes.push(`${paths.target} changed during the run (CATIA saved the project?).`);
-    if (report.bridge.target.sha256 && report.bridge.source.sha256 && report.bridge.target.sha256 !== report.bridge.source.sha256) {
-        report.notes.push(`${paths.target} differs from ${paths.source} at the start (saved from the VBA editor?).`);
-    }
-    report.stoppedForUser = options.mode === 'unload-experiment' && !aborted;
-    if (report.stoppedForUser) {
-        report.notes.push(`C5D_Bridge is now loaded from the read-only ${paths.target} with the unsaved module ${READONLY_MODULE}. `
-            + 'Ask the user to open the VBA editor, select C5D_Bridge and try to save it (Save button / File > Save C5D_Bridge) and to note what happens '
-            + '(error message, Save As dialog, or saved). Then run: node scripts/probe-bridge.js --unload-cleanup');
-    }
-    if (options.mode === 'unload-cleanup' && report.bridge.targetAtEnd.readOnly === false) report.notes.push(`${paths.target} is not read-only.`);
+    return { entries, aborted };
+}
+/** dlls / modulesAdded / steps part of report.summary after runSequence. */
+function sequenceSummary(report, entries) {
     const snapshots = Object.values(report.snapshots);
-    report.summary = {
+    return {
         dlls: Object.fromEntries(KEY_DLLS.map(dll => [dll, Object.fromEntries(snapshots.map(s => [s.label, s.dlls[dll].loaded]))])),
         modulesAdded: snapshots.length > 1 ? addedModules(snapshots[0], snapshots[snapshots.length - 1]) : undefined,
         steps: report.runs.map(run => ({ step: run.step, call: run.call, skipped: run.skipped ?? null, timedOut: run.timedOut ?? false,
             exitCode: run.exitCode ?? null, ok: run.local ? run.ok : run.result?.ok ?? null, match: run.skipped ? null : run.match,
             result: run.result?.result ?? null, hresult: run.result?.hresult ?? null, message: run.local ? run.message : run.result?.message ?? null,
             elapsedMs: run.local ? run.durationMs : run.result?.elapsedMs ?? null, processMs: run.durationMs ?? null,
-            catiaAlive: run.catiaAlive ?? null, vbscriptLoaded: entries.find(e => e.step === run.step)?.loadedAfter ?? null })),
-        verdict: judgeUnload(first.snapshot.loaded, entries)
+            catiaAlive: run.catiaAlive ?? null, vbscriptLoaded: entries.find(e => e.step === run.step)?.loadedAfter ?? null }))
     };
+}
+
+/** Verdict of --readonly-fresh. entries as in judgeUnload. */
+function judgeReadonlyFresh(beforeLoaded, entries) {
+    const get = name => entries.find(entry => entry.step === name);
+    const parts = [];
+    const version = get('version'), install = get('install'), projects = get('projects'), call = get('call');
+    if (version) parts.push(version.match ? 'version: read-only .catvba auto-loaded and answers' : `version: C5D_Version ${describeOutcome(version)}`);
+    if (install) parts.push(install.match ? 'install: ok' : `install: C5D_Install ${describeOutcome(install)}`);
+    if (projects && !projects.skipped) parts.push(projects.ok ? `projects: ${projects.result}` : `projects: C5D_ProbeProjects ${describeOutcome(projects)}`);
+    if (call) parts.push(call.match ? `call: ${READONLY_MODULE}.C5D_Probe works` : `call: C5D_Probe ${describeOutcome(call)}`);
+    const crashed = entries.find(e => e.crashed);
+    if (crashed) parts.push(`CATIA crashed after step ${crashed.step}`);
+    const timedOut = entries.find(e => e.timedOut);
+    if (timedOut) parts.push(`timed out at step ${timedOut.step} (CATIA may be stopped at a dialog)`);
+    parts.push(describeVbscript(beforeLoaded, entries));
+    return parts.join(', ');
+}
+
+/** The source bridge and its hash-named target path (throws when the source is missing or unreadable). */
+function hashedPaths(env = process.env, root = ROOT) {
+    const { source } = bridgePaths(env, root);
+    if (!fs.existsSync(source)) throw new Error(`${source} does not exist (save the VBA project ${BRIDGE_PROJECT} there first)`);
+    return { source, target: hashedBridgePath(sha256(source), env) };
+}
+
+/**
+ * --readonly-fresh: hash-named read-only copy (attribute set and verified before any CATIA call), CNEXT.exe pid and vbscript.dll,
+ * then READONLY_FRESH_STEPS, then the file facts again. Stops for the user (VBA editor save test) when no step aborted.
+ */
+async function runReadonlyFresh(report) {
+    const paths = hashedPaths();
+    report.cnext = cnextProcesses();
+    if (!report.cnext.error && !report.cnext.processes.length) throw new Error('CNEXT.exe is not running');
+    const prepared = prepareHashedBridge(paths.source, paths.target);
+    report.bridge = { action: prepared.action, ok: prepared.ok, locked: prepared.locked, code: prepared.code, message: prepared.message,
+        source: prepared.source, before: prepared.before, readOnly: prepared.readOnly, target: prepared.after, lock: lockProbe(paths.target),
+        targetAtEnd: null, lockAtEnd: null };
+    report.library = paths.target;
+    if (prepared.locked) {
+        throw new Error(`${paths.target} exists, differs from the source and cannot be replaced (${prepared.code}); CATIA may have it loaded. `
+            + 'Close CATIA and re-run.');
+    }
+    if (!prepared.ok) throw new Error(`Preparing ${paths.target} failed: ${prepared.message}`);
+    if (report.bridge.lock.inUse) report.notes.push(`${paths.target} is already open in another process before the first step (CATIA has it loaded?).`);
+    report.exe = buildProbe(ROOT);
+    const first = trySnapshot(report, 'before');
+    if (first.error) throw new Error(`module snapshot failed: ${first.error}`);
+    checkCnext(report, first.snapshot);
+    const pids = first.snapshot.cnextPids;
+    report.cnextPids = pids;
+    report.vbscriptBefore = first.snapshot.loaded;
+    if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step (CATIA was not freshly started, or something ran a script).');
+    const { entries, aborted } = await runSequence(report, READONLY_FRESH_STEPS, paths.target, pids);
+    report.bridge.targetAtEnd = fileState(paths.target);
+    report.bridge.lockAtEnd = lockProbe(paths.target);
+    const startHash = report.bridge.target.sha256, endHash = report.bridge.targetAtEnd.sha256;
+    if (startHash && endHash && startHash !== endHash) report.notes.push(`${paths.target} changed during the run (CATIA saved the project?).`);
+    if (report.bridge.targetAtEnd.readOnly !== true) report.notes.push(`${paths.target} is NOT read-only at the end.`);
+    report.stoppedForUser = !aborted;
+    if (report.stoppedForUser) {
+        report.notes.push(`C5D_Bridge should now be loaded from the read-only ${paths.target} with the unsaved module ${READONLY_MODULE}. `
+            + 'Ask the user to open the VBA editor (Alt+F11), select C5D_Bridge in the project explorer, and report whether the Save button '
+            + '(and File > Save C5D_Bridge) is grayed out, and what happens when saving (error message, Save As dialog, or saved without a message). '
+            + 'Then run: node scripts/probe-bridge.js --readonly-fresh-check');
+    }
+    report.summary = { ...sequenceSummary(report, entries), verdict: judgeReadonlyFresh(first.snapshot.loaded, entries) };
     if (aborted) process.exitCode = 1;
 }
+
+/** Newest temp/probe-bridge-readonly-fresh-<time>.json (not a -check report) as { path, report }, or null. */
+function latestReadonlyFreshReport(directory = TEMP) {
+    let names;
+    try { names = fs.readdirSync(directory); } catch { return null; }
+    const latest = names.filter(name => /^probe-bridge-readonly-fresh-\d{8}-\d{6}(-\d+)?\.json$/.test(name))
+        .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).pop();
+    if (!latest) return null;
+    const file = path.join(directory, latest);
+    try { return { path: file, report: JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch (error) { return { path: file, error: errorText(error) }; }
+}
+/**
+ * --readonly-fresh-check (no CATIA call): the hash-named copy's time, size, read-only attribute, lock and hash (vs the source),
+ * compared with the end of the latest --readonly-fresh report. deps: { env, root, cnext, reportsDir } for tests.
+ */
+function runReadonlyFreshCheck(report, deps = {}) {
+    const { env = process.env, root = ROOT, cnext = cnextProcesses, reportsDir = TEMP } = deps;
+    const paths = hashedPaths(env, root);
+    const target = fileState(paths.target);
+    report.library = paths.target;
+    report.bridge = { source: fileState(paths.source), target, lock: lockProbe(paths.target), sameAsSource: null, previous: null };
+    report.bridge.sameAsSource = target.sha256 ? target.sha256 === report.bridge.source.sha256 : null;
+    report.cnext = cnext();
+    if (!target.exists) report.notes.push(`${paths.target} does not exist; run node scripts/probe-bridge.js --readonly-fresh first.`);
+    else if (!target.sha256) report.notes.push(`${paths.target} could not be read (${target.error}).`);
+    else if (!report.bridge.sameAsSource) report.notes.push(`${paths.target} DIFFERS from the source (saved from the VBA editor?).`);
+    if (target.exists && target.readOnly !== true) report.notes.push(`${paths.target} is NOT read-only.`);
+    const latest = latestReadonlyFreshReport(reportsDir);
+    const atEnd = latest?.report?.bridge?.targetAtEnd;
+    if (latest) {
+        report.bridge.previous = { report: latest.path, error: latest.error ?? null, targetAtEnd: atEnd ?? null,
+            changed: atEnd && atEnd.path === paths.target ? atEnd.modifiedAt !== target.modifiedAt || atEnd.size !== target.size || atEnd.sha256 !== target.sha256 : null };
+    }
+    const changed = report.bridge.previous?.changed;
+    report.summary = {
+        verdict: !target.exists ? 'check: target missing'
+            : `check: ${report.bridge.sameAsSource === true ? 'same as source' : report.bridge.sameAsSource === false ? 'DIFFERS from source' : 'hash unreadable'}, `
+                + `read-only ${yn(target.readOnly)}, ${describeLock(report.bridge.lock)}`
+                + `${changed === true ? ', CHANGED since the --readonly-fresh run' : changed === false ? ', unchanged since the --readonly-fresh run' : ''}`
+    };
+}
+const describeLock = lock => !lock ? 'lock not probed' : lock.skipped ? `lock probe skipped (${lock.skipped})`
+    : lock.inUse === true ? 'open in another process' : lock.inUse === false ? 'not open elsewhere' : `lock probe failed (${lock.code})`;
 
 /** temp/<prefix>-<time>.json; never overwrites an earlier report. */
 function uniqueReportPath(directory, prefix = 'probe-bridge') {
@@ -767,7 +991,13 @@ function formatUnloadSummary(report) {
     if (b) {
         lines.push(`bridge source: ${b.source.path} ${fileLine(b.source)}`);
         lines.push(`bridge target: ${b.target.path} start: ${fileLine(b.target)}${b.target.sha256 && b.target.sha256 === b.source.sha256 ? ' (= source)' : ' (DIFFERS from source)'}`);
+        if (b.action) {
+            lines.push(`  prepared: ${b.action}${b.locked ? ` LOCKED (${b.code})` : ''}, read-only before CATIA: ${yn(b.target.readOnly)}, `
+                + `${describeLock(b.lock)}${b.message ? `, ${b.message}` : ''}`);
+            lines.push(`  ${factsLine(b.target)}`);
+        }
         if (b.targetAtEnd) lines.push(`  at end: ${fileLine(b.targetAtEnd)}${b.targetAtEnd.sha256 === b.target.sha256 ? ' (unchanged)' : ' (CHANGED)'}`);
+        if (b.targetAtEnd && b.action) lines.push(`  ${factsLine(b.targetAtEnd)}, ${describeLock(b.lockAtEnd)}`);
     }
     if (report.error) lines.push(`error: ${report.error}`);
     if (report.cnext) {
@@ -797,35 +1027,75 @@ function formatUnloadSummary(report) {
     }
     if (report.summary?.verdict) lines.push('', `verdict: ${report.summary.verdict}`);
     for (const note of report.notes) lines.push(`note: ${note}`);
-    if (report.stoppedForUser) {
+    if (report.stoppedForUser && report.mode === 'readonly-fresh') {
+        lines.push('', 'NEXT: ask the user to open the VBA editor, select C5D_Bridge, report whether the Save button is grayed out',
+            '      and what happens on save, then run: node scripts/probe-bridge.js --readonly-fresh-check');
+    } else if (report.stoppedForUser) {
         lines.push('', 'NEXT: ask the user to try saving C5D_Bridge in the VBA editor (Save button / File > Save C5D_Bridge),',
             '      record what happens, then run: node scripts/probe-bridge.js --unload-cleanup');
     }
     return lines.join('\n');
 }
+/** "modified=<iso> size=<n> readOnly=<yes/no>" of a fileState. */
+const factsLine = state => `modified=${state?.modifiedAt ?? '-'} size=${state?.size ?? '-'} readOnly=${yn(state?.readOnly)}`;
 
-const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup' };
+/** Summary of --readonly-fresh-check. */
+function formatReadonlyCheck(report) {
+    const lines = [`mode: ${report.mode}`, `report: ${report.reportPath}`];
+    const b = report.bridge;
+    if (b) {
+        const hash = state => !state.exists ? '(missing)' : state.sha256 ? state.sha256.slice(0, 16) : `(unreadable: ${state.error})`;
+        lines.push(`bridge source: ${b.source.path} sha256=${hash(b.source)}`);
+        lines.push(`bridge target: ${b.target.path} sha256=${hash(b.target)}${b.sameAsSource === true ? ' (= source)' : b.sameAsSource === false ? ' (DIFFERS from source)' : ''}`);
+        lines.push(`  ${factsLine(b.target)}, ${describeLock(b.lock)}`);
+        const p = b.previous;
+        if (p?.targetAtEnd) lines.push(`  at end of ${p.report}: ${factsLine(p.targetAtEnd)}${p.changed ? ' (CHANGED since)' : p.changed === false ? ' (unchanged since)' : ''}`);
+        else if (p) lines.push(`  previous report ${p.report}: ${p.error ?? 'no targetAtEnd'}`);
+    }
+    if (report.error) lines.push(`error: ${report.error}`);
+    if (report.cnext) {
+        if (report.cnext.error) lines.push(`CNEXT.exe start time: ERROR ${report.cnext.error}`);
+        for (const p of report.cnext.processes) lines.push(`CNEXT.exe pid ${p.pid}: ${describeStart(p.startedAt)}`);
+    }
+    if (report.summary?.verdict) lines.push('', `verdict: ${report.summary.verdict}`);
+    for (const note of report.notes) lines.push(`note: ${note}`);
+    return lines.join('\n');
+}
+
+const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup',
+    'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check' };
+/** Runner, summary formatter and report prefix of a parsed mode (not 'help'). */
+function dispatch(options) {
+    switch (options.mode) {
+        case 'check-only': return { run: runCheckOnly, format: formatSummary, prefix: 'probe-bridge' };
+        case 'unload-experiment': case 'unload-cleanup': return { run: runUnload, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
+        case 'readonly-fresh': return { run: runReadonlyFresh, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
+        case 'readonly-fresh-check': return { run: runReadonlyFreshCheck, format: formatReadonlyCheck, prefix: REPORT_PREFIXES[options.mode] };
+        case 'run': return { run: runBridge, format: formatSummary, prefix: 'probe-bridge' };
+        default: throw new Error(`no runner for mode ${options.mode}`);
+    }
+}
 async function main() {
     let options;
     try { options = parseArgs(process.argv.slice(2)); } catch (error) { console.error(error.message); process.exitCode = 2; return; }
     if (options.mode === 'help') { console.log(USAGE); return; }
+    const { run, format, prefix } = dispatch(options);
     fs.mkdirSync(TEMP, { recursive: true });
-    const reportPath = uniqueReportPath(TEMP, REPORT_PREFIXES[options.mode]);
+    const reportPath = uniqueReportPath(TEMP, prefix);
     const report = { mode: options.mode, steps: options.steps, startedAt: new Date().toISOString(), reportPath, project: BRIDGE_PROJECT,
         notes: [], snapshots: {} };
-    const unload = options.mode in REPORT_PREFIXES;
     try {
-        if (options.mode === 'check-only') runCheckOnly(report);
-        else if (unload) await runUnload(report, options);
-        else await runBridge(report, options);
+        await (options.mode === 'check-only' || options.mode === 'readonly-fresh-check' ? run(report) : run(report, options));
     } catch (error) {
         report.error = String(error); process.exitCode = 1;
     }
     report.finishedAt = new Date().toISOString();
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-    console.log(unload ? formatUnloadSummary(report) : formatSummary(report));
+    console.log(format(report));
 }
 if (require.main === module) main();
 module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codepoints, bridgePaths, fileState, copyBridge, setReadOnly, judgeBridge,
     judgeUnload, describeStart, formatUnloadSummary, STEPS, STEP_NAMES, UNLOAD_STEPS, CLEANUP_STEPS, PROBE_SOURCE, UNLOAD_SOURCE, READONLY_SOURCE, ECHO_ARGUMENT,
-    BRIDGE_MODULE, PROBE_MODULE, UNLOAD_MODULE, READONLY_MODULE, UNLOAD_RESULT };
+    BRIDGE_MODULE, PROBE_MODULE, UNLOAD_MODULE, READONLY_MODULE, UNLOAD_RESULT,
+    hashedBridgeName, hashedBridgePath, lockProbe, prepareHashedBridge, judgeReadonlyFresh, runReadonlyFresh, runReadonlyFreshCheck, formatReadonlyCheck,
+    dispatch, READONLY_FRESH_STEPS, READONLY_FRESH_SOURCE, READONLY_FRESH_RESULT };

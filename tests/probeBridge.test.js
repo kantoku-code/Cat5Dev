@@ -6,7 +6,8 @@ const { execFileSync } = require('node:child_process');
 const { fixture } = require('./helpers');
 const { parseArgs, encodeToken, callArgs, matchStep, matchCall, codepoints, bridgePaths, fileState, copyBridge, setReadOnly, judgeBridge, judgeUnload,
     describeStart, formatUnloadSummary, STEPS, STEP_NAMES, UNLOAD_STEPS, CLEANUP_STEPS, PROBE_SOURCE, UNLOAD_SOURCE, READONLY_SOURCE, ECHO_ARGUMENT, BRIDGE_MODULE,
-    PROBE_MODULE, UNLOAD_MODULE, READONLY_MODULE, UNLOAD_RESULT } = require('../scripts/probe-bridge');
+    PROBE_MODULE, UNLOAD_MODULE, READONLY_MODULE, UNLOAD_RESULT, hashedBridgeName, hashedBridgePath, lockProbe, prepareHashedBridge, judgeReadonlyFresh,
+    runReadonlyFresh, runReadonlyFreshCheck, formatReadonlyCheck, dispatch, READONLY_FRESH_STEPS, READONLY_FRESH_SOURCE } = require('../scripts/probe-bridge');
 const csc = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
 const step = name => STEPS.find(s => s.name === name);
 
@@ -280,12 +281,12 @@ test('unload summary shows each step with CATIA alive and vbscript.dll', () => {
     assert.match(text, /at end: sha256=aaaaaaaaaaaaaaaa readOnly=yes \(unchanged\)/);
     assert.match(text, /verdict: v\nnote: n1\n\nNEXT: .*--unload-cleanup/s);
 });
-test('vbacall arguments of the unload steps survive the command line', { skip: !fs.existsSync(csc) }, t => {
+test('vbacall arguments of the unload / readonly-fresh steps survive the command line', { skip: !fs.existsSync(csc) }, t => {
     const exe = path.join(fixture(t), 'eval-probe.exe');
     execFileSync(csc, ['/nologo', '/warnaserror+', '/target:exe', '/platform:anycpu', `/out:${exe}`,
         path.join(__dirname, '..', 'tools', 'catia-run', 'EvalProbe.cs')], { windowsHide: true, stdio: 'pipe' });
     const library = 'C:\\Users\\u\\AppData\\Local\\Cat5Dev\\bridge\\C5D_Bridge.catvba';
-    for (const s of [...UNLOAD_STEPS, ...CLEANUP_STEPS].filter(s => !s.local)) {
+    for (const s of [...UNLOAD_STEPS, ...CLEANUP_STEPS, ...READONLY_FRESH_STEPS].filter(s => !s.local)) {
         const args = callArgs(s, library, { noRetry: true });
         assert.deepEqual(args.slice(0, 4), ['--no-retry', '--label', s.name, 'vbacall']);
         const line = JSON.parse(execFileSync(exe, ['--dry-run', ...args], { windowsHide: true, encoding: 'utf8', timeout: 10000 }).trim());
@@ -294,4 +295,158 @@ test('vbacall arguments of the unload steps survive the command line', { skip: !
     }
     const retry = JSON.parse(execFileSync(exe, ['--dry-run', ...callArgs(UNLOAD_STEPS[0], library)], { windowsHide: true, encoding: 'utf8', timeout: 10000 }).trim());
     assert.equal(retry.retryByRef, true, 'without --no-retry the ByRef retry stays');
+});
+
+test('bridge probe parses --readonly-fresh / --readonly-fresh-check and dispatches without CATIA', () => {
+    assert.deepEqual(parseArgs(['--readonly-fresh']), { mode: 'readonly-fresh', steps: ['version', 'install', 'projects', 'call'] });
+    assert.deepEqual(parseArgs(['--readonly-fresh-check']), { mode: 'readonly-fresh-check', steps: [] });
+    assert.throws(() => parseArgs(['--readonly-fresh', 'version']), /takes no steps/);
+    assert.throws(() => parseArgs(['--readonly-fresh-check', 'call']), /Unknown/);
+    assert.throws(() => parseArgs(['--readonly-fresh', '--readonly-fresh-check']), /cannot be combined/);
+    assert.throws(() => parseArgs(['--readonly-fresh', '--unload-experiment']), /cannot be combined/);
+    const d = mode => dispatch({ mode });
+    assert.deepEqual([d('readonly-fresh').run, d('readonly-fresh').format, d('readonly-fresh').prefix],
+        [runReadonlyFresh, formatUnloadSummary, 'probe-bridge-readonly-fresh']);
+    assert.deepEqual([d('readonly-fresh-check').run, d('readonly-fresh-check').format, d('readonly-fresh-check').prefix],
+        [runReadonlyFreshCheck, formatReadonlyCheck, 'probe-bridge-readonly-fresh-check']);
+    assert.equal(d('unload-cleanup').prefix, 'probe-bridge-unload-cleanup');
+    assert.equal(d('run').prefix, 'probe-bridge');
+    assert.equal(d('check-only').prefix, 'probe-bridge');
+    assert.throws(() => d('help'), /no runner/);
+});
+test('readonly-fresh uses a hash-named copy, not the plain C5D_Bridge.catvba', () => {
+    const sha = '0123abcd' + 'e'.repeat(56);
+    assert.equal(hashedBridgeName(sha), 'C5D_Bridge-0123abcd.catvba');
+    const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+    assert.equal(hashedBridgePath(sha, env), path.join('C:\\Users\\u\\AppData\\Local', 'Cat5Dev', 'bridge', 'C5D_Bridge-0123abcd.catvba'));
+    assert.notEqual(hashedBridgePath(sha, env), bridgePaths(env, 'C:\\repo').target);
+    assert.throws(() => hashedBridgeName('0123abcd'), /not a sha256/);
+    assert.throws(() => hashedBridgeName(sha.toUpperCase()), /not a sha256/);
+    assert.throws(() => hashedBridgePath(sha, {}), /LOCALAPPDATA/);
+});
+test('readonly-fresh steps: version, install C5D_ProbeReadonly, projects, call (no requires)', () => {
+    assert.deepEqual(READONLY_FRESH_STEPS.map(s => [s.name, `${s.module}.${s.func}`, s.requires ?? []]), [
+        ['version', 'C5D_Bridge_Push.C5D_Version', []],
+        ['install', 'C5D_Bridge_Push.C5D_Install', []],
+        ['projects', 'C5D_ProbeReadonly.C5D_ProbeProjects', []],
+        ['call', 'C5D_ProbeReadonly.C5D_Probe', []]
+    ]);
+    const get = name => READONLY_FRESH_STEPS.find(s => s.name === name);
+    assert.deepEqual(get('install').args, [READONLY_MODULE, READONLY_FRESH_SOURCE]);
+    assert.equal(READONLY_MODULE, 'C5D_ProbeReadonly');
+    assert.equal(matchCall(get('version'), { ok: true, result: 'c5d-bridge:1' }), true);
+    assert.equal(matchCall(get('call'), { ok: true, result: 'readonly-fresh:ok' }), true);
+    assert.equal(matchCall(get('call'), { ok: false, result: null, hresult: '0x80020006' }), false);
+    assert.equal(matchCall(get('projects'), { ok: true, result: 'count=2;err=0' }), true);
+    assert.equal(matchCall(get('projects'), { ok: true, result: 'count=-1;err=429' }), false);
+    const source = READONLY_FRESH_SOURCE;
+    assert.ok(/^[\x20-\x7e\r\n]*$/.test(source));
+    assert.ok(!/[^\r]\n/.test(source));
+    assert.ok(source.startsWith('Option Explicit\r\nPublic Function C5D_Probe() As Variant\r\n    C5D_Probe = "readonly-fresh:ok"\r\nEnd Function\r\n'));
+    assert.ok(source.endsWith(PROBE_SOURCE.slice(PROBE_SOURCE.indexOf('Public Function C5D_ProbeProjects'))), 'C5D_ProbeProjects as in C5D_ProbeModule');
+    assert.equal(source.split('Option Explicit').length, 2);
+    assert.ok(!/\bMsgBox\b|\bInputBox\b|^\s*Stop\s*$|^\s*End\s*$|\.Remove\b/im.test(source));
+});
+test('prepareHashedBridge copies, reuses or replaces and sets read-only before CATIA; a locked target is reported', t => {
+    const dir = fixture(t);
+    const source = path.join(dir, 'src.catvba'), target = path.join(dir, 'bridge', 'C5D_Bridge-00000000.catvba');
+    t.after(() => { try { fs.chmodSync(target, 0o666); } catch { /* removed */ } });
+    assert.throws(() => prepareHashedBridge(source, target), /does not exist/);
+    fs.writeFileSync(source, 'new');
+    const copied = prepareHashedBridge(source, target);
+    assert.deepEqual([copied.ok, copied.action, copied.before.exists, copied.after.readOnly, copied.after.sha256 === copied.source.sha256],
+        [true, 'copied', false, true, true]);
+    assert.deepEqual(copied.readOnly.lockProbe, { writable: true, code: null, message: null });
+    const reused = prepareHashedBridge(source, target, () => assert.fail('no copy when the hash matches'));
+    assert.deepEqual([reused.ok, reused.action, reused.after.readOnly], [true, 'reused', true]);
+    fs.chmodSync(target, 0o666);
+    assert.equal(prepareHashedBridge(source, target, () => assert.fail('no copy')).after.readOnly, true, 'reused copy is made read-only');
+    fs.chmodSync(target, 0o666);
+    fs.writeFileSync(target, 'saved by the VBA editor');
+    fs.chmodSync(target, 0o444);
+    const replaced = prepareHashedBridge(source, target);
+    assert.deepEqual([replaced.ok, replaced.action, replaced.before.readOnly, replaced.after.readOnly], [true, 'replaced', true, true]);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'new');
+    fs.chmodSync(target, 0o666);
+    fs.writeFileSync(target, 'other');
+    fs.chmodSync(target, 0o444);
+    const locked = prepareHashedBridge(source, target, () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); });
+    assert.deepEqual([locked.ok, locked.locked, locked.code, locked.action, locked.after.readOnly], [false, true, 'EBUSY', 'replaced', true]);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'other');
+    assert.throws(() => prepareHashedBridge(source, target, () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }), /no space/);
+    fs.chmodSync(target, 0o666);
+    fs.rmSync(target);
+    const notReadOnly = prepareHashedBridge(source, target, fs.copyFileSync, () => { /* attribute not set */ });
+    assert.equal(notReadOnly.ok, false);
+    assert.match(notReadOnly.message, /read-only attribute not set/);
+});
+test('lockProbe detects a file opened by another handle without writing', { skip: process.platform !== 'win32' }, t => {
+    const file = path.join(fixture(t), 'x.catvba');
+    assert.deepEqual(lockProbe(file), { skipped: 'missing' });
+    assert.deepEqual(lockProbe(file, undefined, undefined, 'linux'), { skipped: 'not Windows' });
+    fs.writeFileSync(file, 'abc');
+    fs.chmodSync(file, 0o444);
+    t.after(() => { try { fs.chmodSync(file, 0o666); } catch { /* removed */ } });
+    assert.deepEqual(lockProbe(file), { inUse: false, code: null, message: null }, 'works on a read-only file');
+    const fd = fs.openSync(file, 'r');
+    try { assert.deepEqual([lockProbe(file).inUse, lockProbe(file).code], [true, 'EBUSY']); } finally { fs.closeSync(fd); }
+    assert.equal(lockProbe(file).inUse, false);
+    assert.equal(lockProbe(file, () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }).inUse, null);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'abc');
+});
+test('readonly-fresh verdicts', () => {
+    const ok = (step, result) => ({ step, ok: true, match: true, result, loadedAfter: false });
+    const all = [ok('version', 'c5d-bridge:1'), ok('install', 'ok'), ok('projects', 'count=1;err=0'), ok('call', 'readonly-fresh:ok')];
+    assert.equal(judgeReadonlyFresh(false, all), 'version: read-only .catvba auto-loaded and answers, install: ok, projects: count=1;err=0, '
+        + 'call: C5D_ProbeReadonly.C5D_Probe works, vbscript.dll not loaded');
+    const failed = [{ step: 'version', ok: false, match: false, result: null, hresult: '0x80020009' }, { ...ok('install', 'error:vbe'), match: false },
+        { ...ok('projects', 'count=-1;err=429'), match: false }, { step: 'call', ok: false, match: false, result: null, hresult: '0x80020006', loadedAfter: true }];
+    assert.equal(judgeReadonlyFresh(false, failed), 'version: C5D_Version failed (0x80020009), install: C5D_Install returned "error:vbe", '
+        + 'projects: count=-1;err=429, call: C5D_Probe failed (0x80020006), vbscript.dll loaded (first seen after step call)');
+    const dialog = [all[0], { step: 'install', timedOut: true, match: false }, { step: 'projects', skipped: 'aborted after install timed out' },
+        { step: 'call', skipped: 'aborted after install timed out' }];
+    assert.match(judgeReadonlyFresh(true, dialog), /install: C5D_Install timed out.*call: C5D_Probe not run.*timed out at step install.*vbscript\.dll undetermined/);
+});
+test('--readonly-fresh-check records the hash-named copy without CATIA and compares it with the last run', t => {
+    const dir = fixture(t);
+    const root = path.join(dir, 'repo'), env = { LOCALAPPDATA: path.join(dir, 'local') }, reportsDir = path.join(dir, 'temp');
+    const cnext = () => ({ processes: [{ pid: 42, startedAt: null, path: null }], error: null });
+    const newReport = () => ({ mode: 'readonly-fresh-check', reportPath: 'r.json', notes: [], snapshots: {} });
+    assert.throws(() => runReadonlyFreshCheck(newReport(), { env, root, cnext, reportsDir }), /does not exist/);
+    const source = path.join(root, 'resources', 'bridge', 'C5D_Bridge.catvba');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 9]));
+    const missing = newReport();
+    runReadonlyFreshCheck(missing, { env, root, cnext, reportsDir });
+    assert.equal(missing.bridge.target.exists, false);
+    assert.match(missing.notes.join('\n'), /--readonly-fresh first/);
+    assert.equal(missing.summary.verdict, 'check: target missing');
+    const prepared = prepareHashedBridge(source, hashedBridgePath(fileState(source).sha256, env));
+    const target = prepared.after.path;
+    t.after(() => { try { fs.chmodSync(target, 0o666); } catch { /* removed */ } });
+    assert.match(path.basename(target), /^C5D_Bridge-[0-9a-f]{8}\.catvba$/);
+    fs.mkdirSync(reportsDir);
+    fs.writeFileSync(path.join(reportsDir, 'probe-bridge-readonly-fresh-20261121-100000.json'), JSON.stringify({ bridge: { targetAtEnd: { path: 'old' } } }));
+    fs.writeFileSync(path.join(reportsDir, 'probe-bridge-readonly-fresh-20261121-110000.json'), JSON.stringify({ bridge: { targetAtEnd: prepared.after } }));
+    fs.writeFileSync(path.join(reportsDir, 'probe-bridge-readonly-fresh-check-20261121-120000.json'), '{}');
+    const same = newReport();
+    runReadonlyFreshCheck(same, { env, root, cnext, reportsDir });
+    assert.deepEqual([same.library, same.bridge.sameAsSource, same.bridge.target.readOnly, same.bridge.previous.changed], [target, true, true, false]);
+    if (process.platform === 'win32') assert.equal(same.bridge.lock.inUse, false);
+    assert.equal(path.basename(same.bridge.previous.report), 'probe-bridge-readonly-fresh-20261121-110000.json');
+    assert.deepEqual(same.cnext.processes.map(p => p.pid), [42]);
+    assert.deepEqual(same.notes, []);
+    assert.match(same.summary.verdict, /^check: same as source, read-only yes, .*unchanged since the --readonly-fresh run$/);
+    fs.chmodSync(target, 0o666);
+    fs.writeFileSync(target, 'saved');
+    const saved = newReport();
+    runReadonlyFreshCheck(saved, { env, root, cnext, reportsDir });
+    assert.deepEqual([saved.bridge.sameAsSource, saved.bridge.target.readOnly, saved.bridge.previous.changed], [false, false, true]);
+    assert.match(saved.notes.join('\n'), /DIFFERS from the source.*\n.*is NOT read-only/);
+    assert.match(saved.summary.verdict, /DIFFERS from source, read-only no, .*CHANGED since the --readonly-fresh run/);
+    const text = formatReadonlyCheck(saved);
+    assert.match(text, /bridge target: .*C5D_Bridge-[0-9a-f]{8}\.catvba sha256=[0-9a-f]{16} \(DIFFERS from source\)/);
+    assert.match(text, /\n {2}modified=\S+ size=5 readOnly=no, /);
+    assert.match(text, /at end of .*-110000\.json: modified=\S+ size=5 readOnly=yes \(CHANGED since\)/);
+    assert.match(text, /CNEXT\.exe pid 42: start time unknown/);
 });
