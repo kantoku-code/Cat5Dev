@@ -1,6 +1,7 @@
 // eval-probe.exe（開発者用・非出荷）: CATIA.SystemService.Evaluate で VBA コード文字列を CATIA 内実行できるかを試す。
 // Build: node scripts/probe-evaluate.js が temp/eval-probe.exe にビルドする（.NET Framework 4.x の csc.exe、C# 5 の構文に留める）。
 // Usage: eval-probe.exe [--byref] [--project <name>] [--dry-run] <step> [<step> ...]
+//        eval-probe.exe [--byref] [--dry-run] [--label <name>] [<step> ...] vbacall <library> <module> <function> [args...]
 //        eval-probe.exe --print-code <step>   （CATIA に接続せず、そのステップのコードを出力するだけ。テスト用）
 //   vbaproj-* ステップは直後の引数を .catvba のパス（ExecuteScript の iLibraryName）として取る:
 //        eval-probe.exe vbaproj-ping <libraryPath>
@@ -15,6 +16,11 @@
 //     vbaproj-sub       C5D_Noop（Sub、引数なし・戻り値なし）
 //     vbaproj-projects  C5D_Projects -> 期待 "count=N|name1|...;err=N"
 //     vbaproj-filename  = vbaproj-filename-basename（ファイル名のみ）+ -empty（空文字）+ -project（プロジェクト名）で C5D_Ping
+//   汎用: vbacall <library> <module> <function> [args...]   （scripts/probe-bridge.js から呼ぶ）
+//     ExecuteScript(library, 2, module, function, [args...]) を 1 回呼ぶ。args は文字列 0 個以上（ByVal で例外なら ByRef で再試行）。
+//     vbacall 以降の引数は全て vbacall のもの（-- で始まっても VBA への引数）なので、オプションは vbacall より前に書く。
+//     各トークンは "b64:<UTF-8 の base64>" でも渡せる（非 ASCII・改行・引用符をコマンドラインで化けさせないため）。
+//     期待値は持たない（match = null）。判定は呼び出し側が行う。--label <name> で出力 JSON の step 名を変えられる（既定 vbacall）。
 //   --byref: iParameters を VT_BYREF で渡す（params / jscript-params は指定がなくても ByVal 失敗時に ByRef で再試行する）
 //   jscript*: 言語 4（JScript）。ES3 構文のみ・全処理を try/catch で囲み、例外は結果文字列に含めて返す。書き込み系 API は呼ばない。
 // Output: ステップごとに 1 行 JSON（UTF-8）
@@ -435,6 +441,25 @@ function CATMain() {
         }
     }
 
+    const string Base64Prefix = "b64:";
+    static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
+    /// <summary>"b64:..." なら UTF-8 の base64 として復号、それ以外はそのまま。復号できなければ null。</summary>
+    static string DecodeToken(string token)
+    {
+        if (!token.StartsWith(Base64Prefix, StringComparison.Ordinal)) { return token; }
+        try { return StrictUtf8.GetString(Convert.FromBase64String(token.Substring(Base64Prefix.Length))); }
+        catch (FormatException) { return null; }
+        catch (ArgumentException) { return null; }
+    }
+
+    /// <summary>vbacall: ExecuteScript(library, 2, module, function, args)。期待値なし、ByVal で例外なら ByRef で再試行。</summary>
+    static Step VbaCall(string label, string library, string module, string function, object[] parameters)
+    {
+        return new Step { Name = label ?? "vbacall", Language = -1, Method = ExecuteScriptMethod, Library = library, ProgramName = module,
+            FunctionName = function, Parameters = parameters, RetryByRef = true };
+    }
+
     static Step[] Concat(params Step[][] groups)
     {
         List<Step> all = new List<Step>();
@@ -458,7 +483,8 @@ function CATMain() {
             return Ok;
         }
         bool byRef = false, dryRun = false;
-        string project = "toQI";
+        string project = "toQI", label = null;
+        Step vbaCall = null;
         // (step name, library or null) in argument order; expanded after --project is known
         List<KeyValuePair<string, string>> requested = new List<KeyValuePair<string, string>>();
         for (int i = 0; i < args.Length; i++)
@@ -466,6 +492,32 @@ function CATMain() {
             string arg = args[i];
             if (arg == "--byref") { byRef = true; continue; }
             if (arg == "--dry-run") { dryRun = true; continue; }
+            if (arg == "--label")
+            {
+                if (i + 1 >= args.Length) { Console.Error.WriteLine("--label requires a name"); return BadArguments; }
+                label = args[++i];
+                continue;
+            }
+            if (arg == "vbacall")
+            {
+                // vbacall <library> <module> <function> [args...]: 残りの引数は全て vbacall のもの
+                if (i + 3 >= args.Length)
+                {
+                    Console.Error.WriteLine("usage: eval-probe [--label <name>] vbacall <library> <module> <function> [args...]");
+                    return BadArguments;
+                }
+                List<string> values = new List<string>();
+                for (int j = i + 1; j < args.Length; j++)
+                {
+                    string value = DecodeToken(args[j]);
+                    if (value == null) { Console.Error.WriteLine("invalid b64: token at argument " + (j + 1).ToString(CultureInfo.InvariantCulture)); return BadArguments; }
+                    values.Add(value);
+                }
+                object[] parameters = new object[values.Count - 3];
+                for (int j = 3; j < values.Count; j++) { parameters[j - 3] = values[j]; }
+                vbaCall = VbaCall(label, values[0], values[1], values[2], parameters);
+                break;
+            }
             if (arg == "--project")
             {
                 if (i + 1 >= args.Length) { Console.Error.WriteLine("--project requires a project name"); return BadArguments; }
@@ -493,10 +545,12 @@ function CATMain() {
                 Console.Error.WriteLine("unknown step: " + item.Key);
                 Console.Error.WriteLine("usage: eval-probe [--byref] [--project <name>] [--dry-run] <check|basic|sub|typed|params|apc|apc2|apc2-getobject|apc2-catia|apc2-application|jscript|jscript-params|jscript-fso|jscript-apc|jscript-read> ...");
                 Console.Error.WriteLine("       eval-probe <vbaproj-ping|vbaproj-sub|vbaproj-projects|vbaproj-filename|vbaproj-filename-basename|vbaproj-filename-empty|vbaproj-filename-project> <libraryPath> ...");
+                Console.Error.WriteLine("       eval-probe [--label <name>] vbacall <library> <module> <function> [args...]   (tokens may be b64:<UTF-8 base64>)");
                 return BadArguments;
             }
             steps.AddRange(expanded);
         }
+        if (vbaCall != null) { steps.Add(vbaCall); }
         if (steps.Count == 0)
         {
             Console.Error.WriteLine("usage: eval-probe [--byref] [--project <name>] [--dry-run] <step> [<step> ...]");
@@ -659,6 +713,15 @@ function CATMain() {
             b.Append(",\"libraryType\":").Append(LibraryTypeVbaProject.ToString(CultureInfo.InvariantCulture));
             b.Append(",\"program\":").Append(Str(step.ProgramName));
             b.Append(",\"function\":").Append(Str(step.FunctionName));
+            // 実際に渡した iParameters（文字列はそのまま、他は Describe）。node→exe の受け渡しで化けていないかの確認用
+            b.Append(",\"arguments\":[");
+            for (int i = 0; i < step.Parameters.Length; i++)
+            {
+                if (i > 0) { b.Append(','); }
+                object value = step.Parameters[i];
+                b.Append(Str(value as string ?? Describe(value)));
+            }
+            b.Append(']');
         }
         return b.ToString();
     }
