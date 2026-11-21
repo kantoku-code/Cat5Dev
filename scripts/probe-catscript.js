@@ -1,8 +1,14 @@
 // B0 probe (developer tool, not shipped): does CATScript need vbscript.dll, and which syntax does it accept?
-// Usage: npm run compile && npm run compile:bridge && node scripts/probe-catscript.js
+// Usage: npm run compile && npm run compile:bridge && node scripts/probe-catscript.js [mode]
 // Read-only for CATIA: only reads VBProjects; never adds/changes modules or projects.
-// Order: tasklist -> probe.CATScript (+ per-section runs if it fails) -> generated list script as .CATScript
-//        -> tasklist -> probe.catvbs (control) -> tasklist. Result: temp/probe-catscript-result.json and stdout.
+// Modes (staged isolation; the .catvbs control loads vbscript.dll for sure, so it only runs in the default mode):
+//   --check-only      run nothing; record which script DLLs CNEXT.exe has loaded now
+//   --no-apc          probe.CATScript without the apc/vbe sections; no generated list, no .catvbs
+//   --apc             probe.CATScript with apc/vbe + generated list as .CATScript; no .catvbs (alias: --full-catscript)
+//   (none)            legacy: probe.CATScript + generated list + probe.catvbs control
+// Modules are read with 64-bit PowerShell (Process.Modules); `tasklist /M <dll>` is a secondary check
+// (the full `tasklist /M` text listing was seen to miss modules). Each run writes
+// temp/probe-catscript-<mode>-<yyyyMMdd-HHmmss>.json and prints a summary to stdout.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -263,15 +269,69 @@ function decode(buffer) {
     } catch { /* fall through */ }
     return buffer.toString('latin1');
 }
-function tasklist(moduleFilter) {
-    const args = ['/FI', 'IMAGENAME eq CNEXT.exe', ...(moduleFilter ? ['/M', 'vbscript.dll'] : []), '/FO', 'CSV', '/NH'];
+/** DLLs judged in every snapshot (lower case). vbscript.dll drives the verdict. */
+const KEY_DLLS = ['vbscript.dll', 'jscript.dll', 'scrrun.dll', 'vbe7.dll', 'apc71.dll'];
+/** Other modules recorded with their paths for reference (CATScript engine, VBA/APC runtime, WSH ...). */
+const RELATED = /script|vbs|vba|vbe|apc|msvbvm|scrrun|wsh/i;
+/** `tasklist /FI "IMAGENAME eq CNEXT.exe" [/M <dll>]`; pids of the matching CNEXT.exe rows. */
+function tasklist(moduleName) {
+    const args = ['/FI', 'IMAGENAME eq CNEXT.exe', ...(moduleName ? ['/M', moduleName] : []), '/FO', 'CSV', '/NH'];
     const raw = decode(execFileSync('tasklist', args, { windowsHide: true })).trim();
     const pids = raw.split(/\r?\n/).filter(line => /^"CNEXT\.exe"/i.test(line)).map(line => Number(line.split('","')[1]));
     return { command: 'tasklist ' + args.map(a => a.includes(' ') ? `"${a}"` : a).join(' '), raw, pids };
 }
-function vbscriptState(label) {
-    const all = tasklist(false), loaded = tasklist(true);
-    return { label, at: new Date().toISOString(), cnextPids: all.pids, vbscriptLoadedPids: loaded.pids, loaded: loaded.pids.length > 0, command: loaded.command, raw: loaded.raw };
+/** 64-bit Windows PowerShell even from a 32-bit node (Sysnative is visible only to WOW64 processes). */
+function powershellPath() {
+    const root = process.env.SystemRoot || 'C:\\Windows';
+    const sysnative = path.join(root, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    return fs.existsSync(sysnative) ? sysnative : path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+const asArray = value => value == null ? [] : Array.isArray(value) ? value : [value];
+/** (Get-Process -Name <name>).Modules for every matching process: { exe, is64, processes: [{ pid, path, error, modules: [{ name, path }] }], error }. */
+function listModules(processName) {
+    const exe = powershellPath();
+    const script = [
+        "$ErrorActionPreference = 'Stop'",
+        '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false',
+        `$processes = @(Get-Process -Name '${processName.replace(/'/g, "''")}' -ErrorAction SilentlyContinue)`,
+        '$items = @()',
+        'foreach ($p in $processes) {',
+        '    $item = @{ pid = $p.Id; path = $null; error = $null; modules = @() }',
+        '    try { $item.path = $p.Path } catch { }',
+        '    try { $item.modules = @($p.Modules | ForEach-Object { @{ name = $_.ModuleName; path = $_.FileName } }) } catch { $item.error = $_.Exception.Message }',
+        '    $items += $item',
+        '}',
+        'ConvertTo-Json -InputObject @{ is64 = [Environment]::Is64BitProcess; processes = $items } -Depth 6 -Compress'
+    ].join('\n');
+    try {
+        const stdout = execFileSync(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+            { windowsHide: true, timeout: 60000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+        const parsed = JSON.parse(stdout.toString('utf8').replace(/^\uFEFF/, '').trim());
+        const processes = asArray(parsed.processes).map(p => ({ pid: p.pid, path: p.path ?? null, error: p.error ?? null, modules: asArray(p.modules) }));
+        return { exe, is64: parsed.is64 === true, processes, error: parsed.is64 === true ? null : 'PowerShell is not 64-bit; modules of 64-bit CNEXT.exe may be incomplete' };
+    } catch (error) {
+        return { exe, is64: null, processes: [], error: String(error.stderr ? decode(error.stderr).trim() || error : error) };
+    }
+}
+/** Which KEY_DLLS CNEXT.exe has loaded: Process.Modules first, `tasklist /M <dll>` as a second source (either one => loaded). */
+function moduleSnapshot(label) {
+    const all = tasklist();
+    const ps = listModules('CNEXT');
+    const processes = ps.processes.map(p => ({
+        pid: p.pid, path: p.path, error: p.error, moduleCount: p.modules.length,
+        related: p.modules.filter(m => RELATED.test(m.name)).map(m => ({ name: m.name, path: m.path })),
+        moduleNames: p.modules.map(m => m.name)
+    }));
+    const readable = processes.filter(p => !p.error && p.moduleCount > 0);
+    const dlls = {};
+    for (const dll of KEY_DLLS) {
+        const listed = tasklist(dll);
+        const byModules = readable.length ? readable.some(p => p.moduleNames.some(name => name.toLowerCase() === dll)) : null;
+        const byTasklist = listed.pids.length > 0;
+        dlls[dll] = { loaded: byModules === true || byTasklist, byModules, byTasklist, tasklistPids: listed.pids, tasklistCommand: listed.command };
+    }
+    const cnextPids = [...new Set([...all.pids, ...processes.map(p => p.pid)])];
+    return { label, at: new Date().toISOString(), cnextPids, powershell: { exe: ps.exe, is64: ps.is64, error: ps.error }, processes, dlls, loaded: dlls['vbscript.dll'].loaded };
 }
 async function runScript(bridge, directory, scriptName, source, timeoutMs = 60000) {
     const { bridgeExecutor } = require('../out/catiaExecution');
@@ -290,62 +350,192 @@ async function runScript(bridge, directory, scriptName, source, timeoutMs = 6000
     if (fs.existsSync(streamFile)) run.streamFile = fs.readFileSync(streamFile).toString('hex');
     return run;
 }
+const MODE_FLAGS = { '--check-only': 'check-only', '--no-apc': 'no-apc', '--apc': 'apc', '--full-catscript': 'apc' };
+const USAGE = 'Usage: node scripts/probe-catscript.js [--check-only | --no-apc | --apc | --full-catscript]\n'
+    + '  (no option: legacy run = probe.CATScript + generated list + probe.catvbs control)';
+const NO_APC_SECTIONS = Object.keys(SECTIONS).filter(name => !['apc', 'vbe'].includes(name));
+/** Steps that fail on purpose (name -> expected Err.Number); not reported as failures. */
+const EXPECTED_ERRORS = { 'err.createobject': 429 };
+function parseMode(args) {
+    if (args.some(arg => arg === '--help' || arg === '-h')) return 'help';
+    const unknown = args.filter(arg => !Object.hasOwn(MODE_FLAGS, arg));
+    if (unknown.length) throw new Error(`Unknown option: ${unknown.join(' ')}\n${USAGE}`);
+    const modes = [...new Set(args.map(arg => MODE_FLAGS[arg]))];
+    if (modes.length > 1) throw new Error(`Choose only one mode: ${args.join(' ')}\n${USAGE}`);
+    return modes[0] ?? 'all';
+}
+/** Verdict about vbscript.dll from the per-snapshot load state (label -> boolean). */
+function judge(mode, loaded) {
+    if (mode === 'check-only') {
+        return loaded.current ? 'vbscript.dll is already loaded in CNEXT.exe (no script was run)'
+            : 'vbscript.dll is not loaded in CNEXT.exe (no script was run)';
+    }
+    if (loaded.before) return 'undetermined: vbscript.dll was already loaded before the run (restart CATIA and re-run)';
+    if (mode === 'no-apc') {
+        return loaded.afterCatScript ? 'CATScript engine (without APC/VBE) loaded vbscript.dll'
+            : 'CATScript engine did not load vbscript.dll';
+    }
+    if (mode === 'apc') {
+        return loaded.afterProbe ? 'CATScript with APC/VBE access loaded vbscript.dll'
+            : loaded.afterGeneratedList ? 'generated list CATScript loaded vbscript.dll (the APC/VBE probe did not)'
+                : 'CATScript with APC/VBE access (incl. generated list) did not load vbscript.dll';
+    }
+    return loaded.afterCatScript ? 'CATScript loads vbscript.dll (B2)'
+        : loaded.afterCatvbs ? 'CATScript does not load vbscript.dll; catvbs does (B1 viable)'
+            : 'inconclusive: control catvbs did not load vbscript.dll';
+}
+function summarizeRun(name, run) {
+    const failedSteps = (run.steps || []).filter(step => step.err !== 0 && EXPECTED_ERRORS[step.name] !== step.err).map(step => `${step.name}(${step.err})`);
+    const summary = { name, script: path.basename(run.script), exitCode: run.exitCode, error: run.error, resultFound: run.resultFound, failedSteps };
+    if (run.listResult) summary.listFailures = run.listResult.failures.map(f => `${f.phase}(${f.code}) ${f.target}: ${f.message}`);
+    if (run.listResultError) summary.listResultError = run.listResultError;
+    return summary;
+}
+/** probe.CATScript with the given sections; when it writes no result, each section is run alone. */
+async function runProbe(report, bridge, work, names) {
+    const directory = path.join(work, 'catscript-full');
+    const full = await runScript(bridge, directory, 'probe.CATScript', buildProbeScript(directory, names));
+    report.catscript.full = full;
+    if (!full.resultFound) {
+        report.notes.push('Full CATScript probe produced no result; each section was run alone to isolate the failing syntax.');
+        report.catscript.sections = {};
+        for (const name of names) {
+            const sectionDirectory = path.join(work, 'catscript-' + name);
+            report.catscript.sections[name] = await runScript(bridge, sectionDirectory, 'probe.CATScript', buildProbeScript(sectionDirectory, [name]));
+        }
+    }
+    return full;
+}
+/** The real generated script (read-only 'list') renamed to .CATScript. */
+async function runGeneratedList(report, bridge, work) {
+    const { buildCatiaScript } = require('../out/catiaScripts');
+    const { validateCatiaResult } = require('../out/catiaTypes');
+    const listDirectory = path.join(work, 'catscript-list');
+    fs.mkdirSync(listDirectory);
+    const request = { operationId: 'probe', stepId: 'list', kind: 'list', targetProject: '', encoding: 'shift_jis', directory: listDirectory };
+    const list = await runScript(bridge, listDirectory, 'operation.CATScript', buildCatiaScript(request));
+    try {
+        const result = validateCatiaResult(fs.readFileSync(path.join(listDirectory, 'result.json'), 'utf8'), request);
+        list.listResult = { expectedCount: result.expectedCount, succeededCount: result.succeededCount, failures: result.failures, projectCount: result.projects.length };
+    } catch (error) { list.listResultError = String(error); }
+    report.catscript.generatedList = list;
+    return list;
+}
+function timestamp(date = new Date()) {
+    const p = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
+}
+/** temp/probe-catscript-<mode>-<time>.json; never overwrites an earlier report. */
+function uniqueReportPath(directory, mode) {
+    const base = path.join(directory, `probe-catscript-${mode}-${timestamp()}`);
+    let candidate = base + '.json';
+    for (let i = 2; fs.existsSync(candidate); i++) candidate = `${base}-${i}.json`;
+    return candidate;
+}
+/** Module names (lower case) present in the last snapshot but not in the first one. */
+function addedModules(first, last) {
+    const names = snapshot => new Set(snapshot.processes.flatMap(p => p.moduleNames.map(name => name.toLowerCase())));
+    const before = names(first);
+    return [...names(last)].filter(name => !before.has(name)).sort();
+}
+function formatSummary(report) {
+    const yn = value => value === true ? 'yes' : value === false ? 'no' : '?';
+    const lines = [`mode: ${report.mode}`, `report: ${report.reportPath}`];
+    if (report.error) lines.push(`error: ${report.error}`);
+    const snapshots = Object.values(report.snapshots);
+    if (snapshots.length) {
+        const first = snapshots[0], last = snapshots[snapshots.length - 1];
+        const ps = first.powershell;
+        const readable = first.processes.filter(p => !p.error && p.moduleCount > 0);
+        lines.push(`CNEXT.exe pids: ${first.cnextPids.join(', ') || '(none)'}`);
+        lines.push(`Process.Modules: ${ps.error ? 'ERROR ' + ps.error
+            : readable.length ? `ok (64-bit=${yn(ps.is64)}; ${readable.map(p => `pid ${p.pid}: ${p.moduleCount} modules`).join(', ')})` : 'no readable process'}`);
+        for (const p of first.processes.filter(p => p.error)) lines.push(`  pid ${p.pid}: ${p.error}`);
+        const width = Math.max(...snapshots.map(s => s.label.length), 12) + 2;
+        lines.push('', 'dll'.padEnd(14) + snapshots.map(s => s.label.padEnd(width)).join(''));
+        for (const dll of KEY_DLLS) {
+            const cells = snapshots.map(s => {
+                const d = s.dlls[dll];
+                const detail = d.byModules === null ? ' (T only)' : d.byModules !== d.byTasklist ? ` (M:${yn(d.byModules)} T:${yn(d.byTasklist)})` : '';
+                return (yn(d.loaded) + detail).padEnd(width);
+            });
+            lines.push(dll.padEnd(14) + cells.join(''));
+        }
+        lines.push('  (M = Process.Modules, T = tasklist /M <dll>; loaded if either says yes)');
+        const related = [...new Set(last.processes.flatMap(p => p.related.map(m => m.name)))];
+        lines.push(`related modules at ${last.label}: ${related.join(', ') || '(none)'}`);
+        if (report.summary?.modulesAdded) lines.push(`modules added ${first.label} -> ${last.label}: ${report.summary.modulesAdded.join(', ') || '(none)'}`);
+    }
+    if (report.summary?.runs?.length) {
+        lines.push('', 'runs:');
+        for (const run of report.summary.runs) {
+            lines.push(`  ${run.name} (${run.script}): exitCode=${run.exitCode} result=${run.resultFound ? 'yes' : 'NO'} failedSteps=${run.failedSteps.join(', ') || 'none'}`);
+            if (run.error) lines.push(`    error: ${run.error.trim().replace(/\s*\r?\n\s*/g, ' / ')}`);
+            if (run.listFailures?.length) lines.push(`    list failures: ${run.listFailures.join(' / ')}`);
+            if (run.listResultError) lines.push(`    list result: ${run.listResultError}`);
+        }
+    }
+    if (report.summary?.verdict) lines.push('', `verdict: ${report.summary.verdict}`);
+    for (const note of report.notes) lines.push(`note: ${note}`);
+    return lines.join('\n');
+}
 async function main() {
+    let mode;
+    try { mode = parseMode(process.argv.slice(2)); } catch (error) { console.error(error.message); process.exitCode = 2; return; }
+    if (mode === 'help') { console.log(USAGE); return; }
     const root = path.resolve(__dirname, '..');
     const bridge = path.join(root, 'bin', 'catia-run.exe');
-    const reportPath = path.join(root, 'temp', 'probe-catscript-result.json');
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cat5dev-probe-'));
-    const report = { startedAt: new Date().toISOString(), bridge, workDirectory: work, notes: [], tasklist: {}, catscript: {}, catvbs: {} };
+    const reportPath = uniqueReportPath(path.join(root, 'temp'), mode);
+    const report = { mode, startedAt: new Date().toISOString(), reportPath, bridge, workDirectory: null, notes: [], snapshots: {}, catscript: {}, catvbs: {} };
+    const snap = label => (report.snapshots[label] = moduleSnapshot(label));
     try {
-        if (!fs.existsSync(bridge)) throw new Error(`Missing ${bridge}; run npm run compile:bridge`);
-        report.tasklist.before = vbscriptState('before');
-        if (!report.tasklist.before.cnextPids.length) throw new Error('CNEXT.exe is not running');
-        if (report.tasklist.before.loaded) {
-            report.notes.push('vbscript.dll was already loaded in CNEXT.exe before the probe; dependency cannot be judged (restart CATIA and re-run). Syntax results below are still valid.');
-        }
-        const full = await runScript(bridge, path.join(work, 'catscript-full'), 'probe.CATScript', buildProbeScript(path.join(work, 'catscript-full')));
-        report.catscript.full = full;
-        if (!full.resultFound) {
-            report.notes.push('Full CATScript probe produced no result; each section was run alone to isolate the failing syntax.');
-            report.catscript.sections = {};
-            for (const name of Object.keys(SECTIONS)) {
-                const directory = path.join(work, 'catscript-' + name);
-                report.catscript.sections[name] = await runScript(bridge, directory, 'probe.CATScript', buildProbeScript(directory, [name]));
+        if (mode !== 'check-only' && !fs.existsSync(bridge)) throw new Error(`Missing ${bridge}; run npm run compile:bridge`);
+        const first = snap(mode === 'check-only' ? 'current' : 'before');
+        if (!first.cnextPids.length) throw new Error('CNEXT.exe is not running');
+        if (first.cnextPids.length > 1) report.notes.push(`More than one CNEXT.exe is running (${first.cnextPids.join(', ')}); a DLL counts as loaded if any of them has it.`);
+        if (first.powershell.error) report.notes.push(`Process.Modules could not be read (${first.powershell.error}); judged by tasklist /M only, which may miss modules.`);
+        if (mode !== 'check-only') {
+            const work = report.workDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'cat5dev-probe-'));
+            if (first.loaded) report.notes.push('vbscript.dll was already loaded in CNEXT.exe before the probe; dependency cannot be judged (restart CATIA and re-run). Syntax results below are still valid.');
+            if (mode === 'no-apc') {
+                await runProbe(report, bridge, work, NO_APC_SECTIONS);
+                snap('afterCatScript');
+            } else if (mode === 'apc') {
+                await runProbe(report, bridge, work, Object.keys(SECTIONS));
+                snap('afterProbe');
+                await runGeneratedList(report, bridge, work);
+                snap('afterGeneratedList');
+            } else {
+                await runProbe(report, bridge, work, Object.keys(SECTIONS));
+                await runGeneratedList(report, bridge, work);
+                snap('afterCatScript');
+                report.catvbs.full = await runScript(bridge, path.join(work, 'catvbs-full'), 'probe.catvbs', buildProbeScript(path.join(work, 'catvbs-full')));
+                snap('afterCatvbs');
             }
         }
-        // The real generated script (read-only 'list') renamed to .CATScript.
-        const { buildCatiaScript } = require('../out/catiaScripts');
-        const { validateCatiaResult } = require('../out/catiaTypes');
-        const listDirectory = path.join(work, 'catscript-list');
-        fs.mkdirSync(listDirectory);
-        const request = { operationId: 'probe', stepId: 'list', kind: 'list', targetProject: '', encoding: 'shift_jis', directory: listDirectory };
-        const list = await runScript(bridge, listDirectory, 'operation.CATScript', buildCatiaScript(request));
-        try {
-            const result = validateCatiaResult(fs.readFileSync(path.join(listDirectory, 'result.json'), 'utf8'), request);
-            list.listResult = { expectedCount: result.expectedCount, succeededCount: result.succeededCount, failures: result.failures, projectCount: result.projects.length };
-        } catch (error) { list.listResultError = String(error); }
-        report.catscript.generatedList = list;
-        report.tasklist.afterCatScript = vbscriptState('afterCatScript');
-        report.catvbs.full = await runScript(bridge, path.join(work, 'catvbs-full'), 'probe.catvbs', buildProbeScript(path.join(work, 'catvbs-full')));
-        report.tasklist.afterCatvbs = vbscriptState('afterCatvbs');
-        const { before, afterCatScript, afterCatvbs } = report.tasklist;
+        const snapshots = Object.values(report.snapshots);
+        const runs = [
+            ...(report.catscript.full ? [summarizeRun('catscript.full', report.catscript.full)] : []),
+            ...Object.entries(report.catscript.sections || {}).map(([name, run]) => summarizeRun('catscript.section.' + name, run)),
+            ...(report.catscript.generatedList ? [summarizeRun('catscript.generatedList', report.catscript.generatedList)] : []),
+            ...(report.catvbs.full ? [summarizeRun('catvbs.full', report.catvbs.full)] : [])
+        ];
+        let verdict = judge(mode, Object.fromEntries(snapshots.map(s => [s.label, s.loaded])));
+        if (report.catscript.full && !report.catscript.full.resultFound) verdict += ' (warning: probe.CATScript wrote no result; check exitCode/error)';
         report.summary = {
-            vbscriptPreloaded: before.loaded,
-            catscriptProbeCompleted: full.resultFound,
-            catscriptGeneratedListOk: Boolean(list.listResult && !list.listResult.failures.length),
-            vbscriptLoadedAfterCatScript: afterCatScript.loaded,
-            vbscriptLoadedAfterCatvbs: afterCatvbs.loaded,
-            verdict: before.loaded ? 'undetermined: vbscript.dll already loaded before probe'
-                : afterCatScript.loaded ? 'CATScript loads vbscript.dll (B2)'
-                    : afterCatvbs.loaded ? 'CATScript does not load vbscript.dll; catvbs does (B1 viable)'
-                        : 'inconclusive: control catvbs did not load vbscript.dll'
+            mode,
+            dlls: Object.fromEntries(KEY_DLLS.map(dll => [dll, Object.fromEntries(snapshots.map(s => [s.label, s.dlls[dll].loaded]))])),
+            modulesAdded: snapshots.length > 1 ? addedModules(snapshots[0], snapshots[snapshots.length - 1]) : undefined,
+            runs,
+            verdict
         };
     } catch (error) {
         report.error = String(error); process.exitCode = 1;
     }
+    report.finishedAt = new Date().toISOString();
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-    console.log(JSON.stringify(report, null, 2));
+    console.log(formatSummary(report));
 }
 if (require.main === module) main();
-module.exports = { buildProbeScript, SECTIONS };
+module.exports = { buildProbeScript, SECTIONS, NO_APC_SECTIONS, parseMode, judge, listModules };

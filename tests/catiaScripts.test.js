@@ -175,3 +175,31 @@ test('B0 probe scripts compile and CATIA-independent sections run under VBScript
     assert.equal(steps['builtin.chrw.negative'].detail, '-24691'); assert.equal(steps['builtin.selectcase'].detail, 'backslash');
     assert.equal(steps['objfunc.object'].detail, 'True'); assert.equal(steps['func.ifnot'].detail, 'True');
 });
+test('B0 probe modes select sections and verdicts', () => {
+    const { buildProbeScript, NO_APC_SECTIONS, parseMode, judge } = require('../scripts/probe-catscript');
+    assert.equal(parseMode([]), 'all');
+    assert.equal(parseMode(['--check-only']), 'check-only');
+    assert.equal(parseMode(['--no-apc']), 'no-apc');
+    assert.equal(parseMode(['--apc']), 'apc');
+    assert.equal(parseMode(['--full-catscript']), 'apc');
+    assert.equal(parseMode(['--apc', '--full-catscript']), 'apc');
+    assert.throws(() => parseMode(['--no-apc', '--apc']), /only one mode/);
+    assert.throws(() => parseMode(['--catvbs']), /Unknown option/);
+    const noApc = buildProbeScript('C:\\probe', NO_APC_SECTIONS);
+    assert.doesNotMatch(noApc, /ProbeApc|ProbeVbe|MSAPC|\.VBE/);
+    assert.match(noApc, /ProbeFso[\s\S]*ProbeStream/);
+    assert.match(judge('check-only', { current: false }), /not loaded/);
+    assert.match(judge('no-apc', { before: true, afterCatScript: true }), /^undetermined/);
+    assert.equal(judge('no-apc', { before: false, afterCatScript: false }), 'CATScript engine did not load vbscript.dll');
+    assert.match(judge('apc', { before: false, afterProbe: false, afterGeneratedList: true }), /^generated list/);
+    assert.match(judge('all', { before: false, afterCatScript: false, afterCatvbs: true }), /B1 viable/);
+});
+test('B0 probe reads process modules with 64-bit PowerShell', { skip: process.platform !== 'win32' }, () => {
+    const { listModules } = require('../scripts/probe-catscript');
+    const result = listModules('node');
+    assert.equal(result.error, null);
+    assert.equal(result.is64, true);
+    const self = result.processes.find(p => p.pid === process.pid);
+    assert.ok(self, 'current node process listed');
+    assert.ok(self.modules.some(m => m.name.toLowerCase() === 'ntdll.dll' && /ntdll\.dll$/i.test(m.path)));
+});
