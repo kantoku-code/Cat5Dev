@@ -156,16 +156,36 @@ test('reference templates are generated from the runtime implementation', () => 
     const request = { operationId: '{{OPERATION_ID}}', stepId: '{{STEP_ID}}', kind: 'push', targetProject: '{{TARGET_PROJECT}}', encoding: '{{ENCODING}}', directory: '{{TEMP_DIR}}', modules: [{ name: '{{MODULE_NAME}}', type: 1, file: 'module.txt' }], deletions: [] };
     assert.equal(fs.readFileSync(path.join(__dirname, '../scripts/c5d_push.catvbs.bas_utf'), 'utf8'), buildCatiaScript(request));
 });
+// The B0 probe .vbs (developer tool) is sometimes quarantined by Windows Defender as Trojan:Script/ObfusScript.A!ml
+// (a machine-learning false positive): the file vanishes or becomes unreadable, or AMSI blocks cscript.
+function blockedByAntivirus(file, error) {
+    if (['EACCES', 'EPERM', 'EBUSY'].includes(error?.code)) return true;
+    try { fs.readFileSync(file); } catch { return true; }
+    const output = [error?.stdout, error?.stderr].filter(Boolean).map(buffer => {
+        try { return new TextDecoder('shift_jis').decode(buffer); } catch { return String(buffer); }
+    }).join('\n');
+    return /malicious|antivirus|悪意のある|ウイルス対策/i.test(output);
+}
+/** Writes and runs a probe .vbs; false (test skipped) when the antivirus removed or blocked it. */
+function runProbeVbs(t, file, source) {
+    try {
+        fs.writeFileSync(file, source);
+        execFileSync(cscript, ['//nologo', file], { windowsHide: true, timeout: 10000 });
+        return true;
+    } catch (error) {
+        if (!blockedByAntivirus(file, error)) throw error;
+        t.skip(`probe .vbs was removed or blocked by the antivirus (likely a Defender false positive): ${error.code ?? error.message}`);
+        return false;
+    }
+}
 test('B0 probe scripts compile and CATIA-independent sections run under VBScript', { skip: !fs.existsSync(cscript) }, t => {
     const { buildProbeScript, SECTIONS } = require('../scripts/probe-catscript');
     const directory = fixture(t), file = path.join(directory, 'probe.vbs');
     // Compile only: top level has no calls, so APC/VBE sections are never executed.
     for (const names of [undefined, ...Object.keys(SECTIONS).map(name => [name])]) {
-        fs.writeFileSync(file, buildProbeScript(directory, names));
-        execFileSync(cscript, ['//nologo', file], { windowsHide: true, timeout: 10000 });
+        if (!runProbeVbs(t, file, buildProbeScript(directory, names))) return;
     }
-    fs.writeFileSync(file, buildProbeScript(directory, ['stream', 'objfunc', 'byref', 'builtins', 'err']) + 'CATMain\r\n');
-    execFileSync(cscript, ['//nologo', file], { windowsHide: true, timeout: 10000 });
+    if (!runProbeVbs(t, file, buildProbeScript(directory, ['stream', 'objfunc', 'byref', 'builtins', 'err']) + 'CATMain\r\n')) return;
     const steps = Object.fromEntries(fs.readFileSync(path.join(directory, 'probe-result.txt'), 'utf8').replace(/^﻿/, '').trim().split('\r\n')
         .map(line => line.split('\t')).map(([name, err, detail]) => [name, { err: Number(err), detail }]));
     for (const [name, step] of Object.entries(steps)) if (name !== 'err.createobject') assert.equal(step.err, 0, name);

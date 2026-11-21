@@ -538,4 +538,4 @@ async function main() {
     console.log(formatSummary(report));
 }
 if (require.main === module) main();
-module.exports = { buildProbeScript, SECTIONS, NO_APC_SECTIONS, parseMode, judge, listModules };
+module.exports = { buildProbeScript, SECTIONS, NO_APC_SECTIONS, parseMode, judge, listModules, moduleSnapshot, KEY_DLLS, timestamp, addedModules };
