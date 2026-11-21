@@ -59,6 +59,25 @@
 //   Reports: temp/probe-bridge-remove-<time>.json / temp/probe-bridge-remove-risky-<time>.json (summary.verdict, summary.infos).
 //   NOTE: the after-unload-probe of --unload-experiment called C5D_ProbeModule, which that mode never installs, so its "gone" was
 //   no evidence of an unload; the remove steps check their own module C5D_ProbeRemove (installed and answered by step alive).
+//
+// Reload experiment (after an outside Close, the same path string gives 0x80004005 "macro program unknown": how can Push load the
+// bridge again?). Continues in the SAME CATIA the remove experiment left (A closed, copy B loaded); does not restart anything:
+//        node scripts/probe-bridge.js --reload-experiment
+//   Local preparation (no CATIA call): facts + lock of A and B (never modified), read-only copies
+//   C5D_Bridge-probe-<yyyyMMddHHmmss>-{c1,c2,c3,z}.catvba (new names every run, so a re-run never meets a "known" path), a hard link
+//   C5D_Bridge-<8 hex>-hl-<time>.catvba of A, the 8.3 name of A (Scripting.FileSystemObject in PowerShell).
+//   Each project gets its own module C5D_Rl_<tag> (reloadSource: C5D_RlAlive_/C5D_RlInfo_/C5D_RlVbe_/C5D_RlFind_<tag>; unique public
+//   names). Info (apc.Projects with DisplayName, VBProject.FileName, C5D_* modules) and Close go through B: C5D_RlFind_b(<path>) returns
+//   the C5D_Bridge project of that path and eval-probe.exe calls its Close(false) after ExecuteScript returned (vbacall-obj + --obj-arg).
+//   Steps (buildReloadSteps): b-alive b-install info-apc info-vbe a-call locks-start;
+//     rounds c1..c3: <c>-load (auto-load, ms) <c>-install <c>-alive <c>-info <c>-close (Close ms) <c>-gone <c>-recall (same path after
+//       Close) <c>-lock (local: lock right after Close);
+//     info-vbe-mid; path variants of A (pathVariants: lower upper dot dotdot slash short hl ext): <v>-load <v>-install <v>-alive <v>-info
+//       <v>-close <v>-gone (a loaded variant is closed before the next one);
+//     info-vbe-end b-close b-recall, then z (0 -> 1 -> 0 C5D_Bridge): z-load z-install z-info z-vbe z-close z-recall; locks-end.
+//   Info steps never require anything; install/alive/close require their load. Only a timeout, an unreachable CATIA or a vanished
+//   CNEXT.exe stops the run. At the end the probe copies and the hard link are deleted when not locked (else listed in notes).
+//   Report: temp/probe-bridge-reload-<time>.json (summary.verdictLines: one line per round / variant / lock state; summary.reload as data).
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -1014,14 +1033,17 @@ const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + '    (read-only hash-named copy A + read-only copy B; run on a freshly started CATIA; leaves CATIA changed, restart it afterwards)\n'
     + `  --remove-experiment-risky: ${REMOVE_RISKY_STEPS.map(s => s.name).join(' ')}\n`
     + '    (CATIA MAY CRASH: Close from its own code and SetTimer callbacks; only on a freshly started CATIA with nothing unsaved)\n'
+    + '       node scripts/probe-bridge.js --reload-experiment\n'
+    + '  --reload-experiment: right after --remove-experiment in the SAME CATIA (A closed, B loaded; do not restart): how to load the bridge\n'
+    + '    again after a Close (path strings of A, a hard link, a new file name per round x3, then B closed and a last copy z: 0 -> 1 -> 0)\n'
     + '  Never runs a .catvbs/.CATScript. --check-only only reads CNEXT.exe modules and the bridge files.';
 
 const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup',
     '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check',
-    '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky' };
+    '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky', '--reload-experiment': 'reload-experiment' };
 /**
  * { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'remove-experiment'
- *   | 'remove-experiment-risky' | 'help', steps }. Throws on bad arguments.
+ *   | 'remove-experiment-risky' | 'reload-experiment' | 'help', steps }. Throws on bad arguments.
  */
 function parseArgs(args) {
     if (args.some(arg => arg === '--help' || arg === '-h')) return { mode: 'help', steps: [] };
@@ -1040,6 +1062,7 @@ function parseArgs(args) {
     if (option === '--readonly-fresh') return { mode: 'readonly-fresh', steps: READONLY_FRESH_STEPS.map(s => s.name) };
     if (option === '--remove-experiment') return { mode: 'remove-experiment', steps: REMOVE_STEPS.map(s => s.name) };
     if (option === '--remove-experiment-risky') return { mode: 'remove-experiment-risky', steps: REMOVE_RISKY_STEPS.map(s => s.name) };
+    if (option === '--reload-experiment') return { mode: 'reload-experiment', steps: reloadStepNames() };
     if (option) return { mode: MODE_OPTIONS[option], steps: [] };
     return { mode: 'run', steps: steps.size ? STEP_NAMES.filter(name => steps.has(name)) : [...STEP_NAMES] };
 }
@@ -1049,10 +1072,14 @@ const encodeToken = text => 'b64:' + Buffer.from(String(text), 'utf8').toString(
 /**
  * eval-probe.exe arguments of a step: [--no-retry] --label <name> vbacall <library> <module> <function> [args...].
  * noRetry: exactly one ExecuteScript call (no ByRef retry after an exception), for calls with side effects such as unloading.
- * A step with actions (objStep) uses vbacall-obj <library> <module> <function> [actions...] instead (always one call, no VBA args).
+ * A step with actions (objStep) uses [--obj-arg <arg> ...] vbacall-obj <library> <module> <function> [actions...] instead (always one
+ * call; step.args become --obj-arg tokens, i.e. ByVal string arguments of the VBA function).
  */
 function callArgs(step, library, options = {}) {
-    if (step.actions) return ['--label', step.name, 'vbacall-obj', ...[library, step.module, step.func, ...step.actions].map(encodeToken)];
+    if (step.actions) {
+        return [...(step.args ?? []).flatMap(arg => ['--obj-arg', encodeToken(arg)]), '--label', step.name, 'vbacall-obj',
+            ...[library, step.module, step.func, ...step.actions].map(encodeToken)];
+    }
     return [...(options.noRetry ? ['--no-retry'] : []), '--label', step.name, 'vbacall', ...[library, step.module, step.func, ...step.args].map(encodeToken)];
 }
 /** Whether a step's VBA return value is the expected one. */
@@ -1487,11 +1514,12 @@ async function runUnload(report, options) {
 }
 
 /**
- * Why a step is not run (null = run it): an earlier abort; requires (a listed step did not match); unless (a listed step matched,
+ * Why a step is not run (null = run it): an earlier abort; disabled (a reason set when the steps were built, e.g. no 8.3 name); requires (a listed step did not match); unless (a listed step matched,
  * e.g. an earlier attempt already removed the project); after (a listed step was skipped or is not in this run).
  */
 function skipReason(step, entries, aborted) {
     if (aborted) return aborted;
+    if (step.disabled) return step.disabled;
     const find = name => entries.find(e => e.step === name);
     const failed = (step.requires ?? []).filter(dep => !find(dep)?.match);
     if (failed.length) return `requires ${failed.join(', ')}`;
@@ -1881,6 +1909,693 @@ async function runRemove(report, options) {
     if (aborted) process.exitCode = 1;
 }
 
+// ---- --reload-experiment: after C5D_Bridge was closed from outside (IApcProject.Close(False) from C#, found by --remove-experiment),
+// how can Push load the bridge again? ExecuteScript with the same path string then fails with 0x80004005 "macro program unknown"
+// (CATIA keeps the path as a known library). Tried here: other strings for the same file (case, 8.3, /, \\?\, .\, ..\, hard link)
+// and a new file name per Push (the production idea), each loaded, marked, called, closed from outside and checked.
+// Every project-specific module is C5D_Rl_<tag> with public functions C5D_Rl<Kind>_<tag> (unique names, so two of them in one project
+// never make an ambiguous name). Info and Close go through copy B (loaded by the remove experiment) until B itself is closed.
+const RL_PREFIX = 'C5D_Rl_';
+const RL_TAG = /^[a-z][a-z0-9]{0,7}$/;
+const rlModule = tag => `${RL_PREFIX}${tag}`;
+const rlFunc = (kind, tag) => `C5D_Rl${kind}_${tag}`;
+const rlAliveValue = tag => `rl-alive:${tag}`;
+const RL_APC_PATTERN = /^apc=[^;|]*;count=\d+;err=0(\||$)/;
+const RL_VBE_PATTERN = /^vbe=[^;|]*;count=\d+;err=0(\||$)/;
+/** Actions of a close step: index 2 is the Close (timed by eval-probe.exe), DisplayName shows which project was found. */
+const RL_CLOSE_ACTIONS = ['get:$.Name', 'get:$.DisplayName', 'call:$.Close(false)', 'get:$.Name'];
+const RL_CLOSE_ACTION = 2;
+/** Repeat rounds (a new file name each time) and the final 0 -> 1 -> 0 copy. */
+const RL_ROUNDS = ['c1', 'c2', 'c3'];
+const RL_FINAL = 'z';
+/** VBA: v = <expr>, then ";<label>=<value>" (or "=!<err>") appended to s. */
+const rlProp = (label, expr) => ['    Err.Clear', '    v = "?"', `    v = ${expr}`, '    e = Err.Number', `    s = s & ";${label}=" & RlFmt(v, e)`];
+
+/**
+ * VBA written into C5D_Rl_<tag> (ASCII only, CRLF, On Error Resume Next, no MsgBox, no Declare, never closes or removes anything:
+ * Close is done by eval-probe.exe on the object C5D_RlFind_<tag> returns, after ExecuteScript has returned).
+ *   C5D_RlAlive_<tag>()     "rl-alive:<tag>"
+ *   C5D_RlInfo_<tag>()      "apc=<TypeName>;count=N;err=E|name=..;display=..;mode=..;dirty=..;vbType=..;vbFile=..;mods=<C5D_* modules>;self=..|..."
+ *   C5D_RlVbe_<tag>()       "vbe=<TypeName>;count=N;err=E|name=..;type=..;mode=..;file=..;saved=..;mods=..;self=..|..."
+ *   C5D_RlFind_<tag>(key)   the IApcProject named C5D_Bridge whose DisplayName or VBProject.FileName is key: pass 1 exact, pass 2 ignoring
+ *                           case, pass 3 same file name (ignoring case). Exactly one hit per pass, else "error:find:ambiguous:..|notfound:.."
+ * self = the project has the module C5D_Rl_<tag>.
+ */
+function reloadSource(tag) {
+    if (!RL_TAG.test(tag)) throw new Error(`bad reload tag: ${tag}`);
+    const fn = kind => rlFunc(kind, tag);
+    const listHeader = (name, guardObj, guardText) => [
+        '    If ' + guardObj + ' Is Nothing Then',
+        `        ${name} = "${guardText}" & CStr(Err.Number)`,
+        '        Exit Function',
+        '    End If'
+    ];
+    return [
+        'Option Explicit',
+        `Private Const RL_MARKER As String = "${rlModule(tag)}"`,
+        `Private Const RL_PROJECT As String = "${BRIDGE_PROJECT}"`,
+        `Public Function ${fn('Alive')}() As Variant`,
+        `    ${fn('Alive')} = "${rlAliveValue(tag)}"`,
+        'End Function',
+        'Private Function RlClean(ByVal t As String) As String',
+        '    t = Replace(t, "|", "/")',
+        '    t = Replace(t, ";", ",")',
+        '    t = Replace(t, vbCr, " ")',
+        '    t = Replace(t, vbLf, " ")',
+        '    RlClean = t',
+        'End Function',
+        'Private Function RlFmt(ByVal v As Variant, ByVal e As Long) As String',
+        '    On Error Resume Next',
+        '    Dim t As String',
+        '    If e <> 0 Then',
+        '        RlFmt = "!" & CStr(e)',
+        '        Exit Function',
+        '    End If',
+        '    t = "?"',
+        '    t = CStr(v)',
+        '    RlFmt = RlClean(t)',
+        'End Function',
+        'Private Function RlApc() As Object',
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Set apc = Nothing',
+        '    Set apc = CreateObject("MSAPC.Apc.7.1")',
+        '    If apc Is Nothing Then',
+        '        Err.Clear',
+        '        Set apc = CreateObject("MSAPC.Apc")',
+        '    End If',
+        '    Set RlApc = apc',
+        'End Function',
+        "' file name part of a path (after the last \\ or /)",
+        'Private Function RlBase(ByVal p As String) As String',
+        '    Dim i As Long',
+        '    Dim c As String',
+        '    For i = Len(p) To 1 Step -1',
+        '        c = Mid(p, i, 1)',
+        '        If c = "\\" Or c = "/" Then Exit For',
+        '    Next',
+        '    RlBase = Mid(p, i + 1)',
+        'End Function',
+        "' names of the components whose name starts with C5D_, comma separated",
+        'Private Function RlMods(ByVal vbp As Object) As String',
+        '    On Error Resume Next',
+        '    Dim comps As Object',
+        '    Dim c As Object',
+        '    Dim nm As String',
+        '    Dim s As String',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Set comps = Nothing',
+        '    Set comps = vbp.VBComponents',
+        '    n = 0',
+        '    n = comps.Count',
+        '    For i = 1 To n',
+        '        Set c = Nothing',
+        '        Set c = comps.Item(i)',
+        '        nm = ""',
+        '        nm = CStr(c.Name)',
+        '        If Left(nm, 4) = "C5D_" Then s = s & "," & nm',
+        '    Next',
+        '    Err.Clear',
+        '    RlMods = Mid(s, 2)',
+        'End Function',
+        'Private Function RlTail(ByVal vbp As Object) As String',
+        '    On Error Resume Next',
+        '    Dim mods As String',
+        '    mods = ""',
+        '    mods = RlMods(vbp)',
+        '    RlTail = ";mods=" & RlClean(mods) & ";self=" & CStr(InStr(1, "," & mods & ",", "," & RL_MARKER & ",", vbBinaryCompare) > 0)',
+        '    Err.Clear',
+        'End Function',
+        'Private Function RlProj(ByVal ap As Object) As String',
+        '    On Error Resume Next',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        '    Dim vbp As Object',
+        '    s = ""',
+        ...rlProp('name', 'ap.Name'),
+        ...rlProp('display', 'ap.DisplayName'),
+        ...rlProp('mode', 'ap.Mode'),
+        ...rlProp('dirty', 'ap.Dirty'),
+        '    Set vbp = Nothing',
+        '    Set vbp = ap.VBProject',
+        ...rlProp('vbType', 'vbp.Type'),
+        ...rlProp('vbFile', 'vbp.FileName'),
+        '    s = s & RlTail(vbp)',
+        '    Err.Clear',
+        '    RlProj = Mid(s, 2)',
+        'End Function',
+        'Private Function RlVbp(ByVal vbp As Object) As String',
+        '    On Error Resume Next',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        '    s = ""',
+        ...rlProp('name', 'vbp.Name'),
+        ...rlProp('type', 'vbp.Type'),
+        ...rlProp('mode', 'vbp.Mode'),
+        ...rlProp('file', 'vbp.FileName'),
+        ...rlProp('saved', 'vbp.Saved'),
+        '    s = s & RlTail(vbp)',
+        '    Err.Clear',
+        '    RlVbp = Mid(s, 2)',
+        'End Function',
+        `Public Function ${fn('Info')}() As Variant`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim aps As Object',
+        '    Dim ap As Object',
+        '    Dim s As String',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Set apc = RlApc()',
+        ...listHeader(fn('Info'), 'apc', 'apc=Nothing;err='),
+        '    s = "apc=" & TypeName(apc)',
+        '    Err.Clear',
+        '    Set aps = Nothing',
+        '    Set aps = apc.Projects',
+        '    n = -1',
+        '    n = aps.Count',
+        '    s = s & ";count=" & CStr(n) & ";err=" & CStr(Err.Number)',
+        '    For i = 1 To n',
+        '        Set ap = Nothing',
+        '        Err.Clear',
+        '        Set ap = aps.Item(i)',
+        '        If ap Is Nothing Then',
+        '            s = s & "|#" & CStr(i) & ":err=" & CStr(Err.Number)',
+        '        Else',
+        '            s = s & "|" & RlProj(ap)',
+        '        End If',
+        '    Next',
+        `    ${fn('Info')} = s`,
+        'End Function',
+        `Public Function ${fn('Vbe')}() As Variant`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim ide As Object',
+        '    Dim vbps As Object',
+        '    Dim vbp As Object',
+        '    Dim s As String',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Set apc = RlApc()',
+        ...listHeader(fn('Vbe'), 'apc', 'vbe=Nothing;apcErr='),
+        '    Set ide = Nothing',
+        '    Set ide = apc.VBE',
+        ...listHeader(fn('Vbe'), 'ide', 'vbe=Nothing;err='),
+        '    s = "vbe=" & TypeName(ide)',
+        '    Err.Clear',
+        '    Set vbps = Nothing',
+        '    Set vbps = ide.VBProjects',
+        '    n = -1',
+        '    n = vbps.Count',
+        '    s = s & ";count=" & CStr(n) & ";err=" & CStr(Err.Number)',
+        '    For i = 1 To n',
+        '        Set vbp = Nothing',
+        '        Err.Clear',
+        '        Set vbp = vbps.Item(i)',
+        '        If vbp Is Nothing Then',
+        '            s = s & "|#" & CStr(i) & ":err=" & CStr(Err.Number)',
+        '        Else',
+        '            s = s & "|" & RlVbp(vbp)',
+        '        End If',
+        '    Next',
+        `    ${fn('Vbe')} = s`,
+        'End Function',
+        'Private Function RlFind(ByVal apc As Object, ByVal key As String, ByRef why As String) As Object',
+        '    On Error Resume Next',
+        '    Dim aps As Object',
+        '    Dim ap As Object',
+        '    Dim hit As Object',
+        '    Dim nm As String',
+        '    Dim dn As String',
+        '    Dim fl As String',
+        '    Dim kb As String',
+        '    Dim ok As Boolean',
+        '    Dim pass As Long',
+        '    Dim hits As Long',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Set RlFind = Nothing',
+        '    Set aps = Nothing',
+        '    Set aps = apc.Projects',
+        '    n = -1',
+        '    n = aps.Count',
+        '    kb = RlBase(key)',
+        '    For pass = 1 To 3',
+        '        hits = 0',
+        '        Set hit = Nothing',
+        '        For i = 1 To n',
+        '            Set ap = Nothing',
+        '            Set ap = aps.Item(i)',
+        '            nm = ""',
+        '            nm = CStr(ap.Name)',
+        '            dn = ""',
+        '            dn = CStr(ap.DisplayName)',
+        '            fl = ""',
+        '            fl = CStr(ap.VBProject.FileName)',
+        '            ok = False',
+        '            If nm = RL_PROJECT Then',
+        '                If pass = 1 Then',
+        '                    ok = (dn = key) Or (fl = key)',
+        '                ElseIf pass = 2 Then',
+        '                    ok = (StrComp(dn, key, vbTextCompare) = 0) Or (StrComp(fl, key, vbTextCompare) = 0)',
+        '                Else',
+        '                    ok = (StrComp(RlBase(dn), kb, vbTextCompare) = 0) Or (StrComp(RlBase(fl), kb, vbTextCompare) = 0)',
+        '                End If',
+        '            End If',
+        '            If ok Then',
+        '                hits = hits + 1',
+        '                Set hit = ap',
+        '            End If',
+        '        Next',
+        '        If hits = 1 Then',
+        '            why = "pass" & CStr(pass)',
+        '            Set RlFind = hit',
+        '            Exit Function',
+        '        End If',
+        '        If hits > 1 Then',
+        '            why = "ambiguous:pass" & CStr(pass) & ":" & CStr(hits)',
+        '            Exit Function',
+        '        End If',
+        '    Next',
+        '    why = "notfound:count=" & CStr(n)',
+        'End Function',
+        `Public Function ${fn('Find')}(ByVal key As Variant) As Variant`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim ap As Object',
+        '    Dim why As String',
+        '    Set apc = RlApc()',
+        ...listHeader(fn('Find'), 'apc', 'error:apc:'),
+        '    why = ""',
+        '    Set ap = RlFind(apc, CStr(key), why)',
+        '    If ap Is Nothing Then',
+        `        ${fn('Find')} = "error:find:" & why`,
+        '        Exit Function',
+        '    End If',
+        `    Set ${fn('Find')} = ap`,
+        'End Function',
+        ''
+    ].join('\r\n');
+}
+
+const rlVersion = (name, library, extra = {}) => ({ ...versionStep(name), library, ...extra });
+const rlInstall = (name, tag, library, extra = {}) => ({ name, library, module: BRIDGE_MODULE, func: 'C5D_Install', args: [rlModule(tag), reloadSource(tag)], expected: 'ok', ...extra });
+const rlAlive = (name, tag, library, extra = {}) => ({ name, library, module: rlModule(tag), func: rlFunc('Alive', tag), args: [], expected: rlAliveValue(tag), ...extra });
+/** Info through the project that has C5D_Rl_<via> (kind apc = apc.Projects, vbe = VBE.VBProjects). Never requires anything. */
+const rlInfo = (name, via, library, kind = 'apc', extra = {}) => ({ name, library, module: rlModule(via), func: rlFunc(kind === 'apc' ? 'Info' : 'Vbe', via), args: [],
+    pattern: kind === 'apc' ? RL_APC_PATTERN : RL_VBE_PATTERN, info: kind, ...extra });
+/** C5D_RlFind_<via>(target) returns the project of target; eval-probe.exe closes it after ExecuteScript returned. */
+const rlClose = (name, via, library, target, extra = {}) => ({ name, library, module: rlModule(via), func: rlFunc('Find', via), args: [target],
+    actions: RL_CLOSE_ACTIONS, mustSucceed: [RL_CLOSE_ACTION], resultType: 'ComObject', closeOf: target, ...extra });
+/** C5D_Version through a closed library: matches unless it answers (expected: 0x80004005 "macro program unknown"). */
+const rlRecall = (name, library, extra = {}) => ({ name, library, module: BRIDGE_MODULE, func: 'C5D_Version', args: [], expectFailure: BRIDGE_VERSION, ...extra });
+const rlLocks = (name, files) => ({ name, local: 'locks', files });
+
+/**
+ * Steps of --reload-experiment. p: { a, b, z, copies: [{ tag, path }], variants: [{ tag, library, disabled }] }.
+ * Info steps never require anything (each step may fail on its own; only a timeout / crash / unreachable CATIA stops the run);
+ * calls that only make sense after a load require that load. disabled: reason set at build time (no 8.3 name, no hard link).
+ * Order: state through B, the repeat rounds (the production idea, before the exotic path strings), the path variants of A,
+ * then B is closed and a last copy z shows 0 -> 1 -> 0 C5D_Bridge.
+ */
+function buildReloadSteps(p) {
+    const steps = [
+        { name: 'b-alive', library: p.b, module: B_MODULE, func: 'C5D_BAlive', args: [], expected: B_ALIVE },
+        rlInstall('b-install', 'b', p.b),
+        rlInfo('info-apc', 'b', p.b),
+        rlInfo('info-vbe', 'b', p.b, 'vbe'),
+        rlRecall('a-call', p.a),
+        rlLocks('locks-start', ['a', 'b'])
+    ];
+    for (const { tag, path: file } of p.copies) {
+        const loaded = { requires: [`${tag}-load`] };
+        steps.push(
+            rlVersion(`${tag}-load`, file, { round: tag }),
+            rlInstall(`${tag}-install`, tag, file, loaded),
+            rlAlive(`${tag}-alive`, tag, file, loaded),
+            rlInfo(`${tag}-info`, 'b', p.b),
+            rlClose(`${tag}-close`, 'b', p.b, file, loaded),
+            rlInfo(`${tag}-gone`, 'b', p.b),
+            rlRecall(`${tag}-recall`, file),
+            rlLocks(`${tag}-lock`, [tag]));
+    }
+    steps.push(rlInfo('info-vbe-mid', 'b', p.b, 'vbe'));
+    for (const v of p.variants) {
+        const loaded = { requires: [`${v.tag}-load`] };
+        steps.push(
+            rlVersion(`${v.tag}-load`, v.library, { variant: v.tag, ...(v.disabled ? { disabled: v.disabled } : {}) }),
+            rlInstall(`${v.tag}-install`, v.tag, v.library, loaded),
+            rlAlive(`${v.tag}-alive`, v.tag, v.library, loaded),
+            rlInfo(`${v.tag}-info`, 'b', p.b, 'apc', { after: [`${v.tag}-load`] }),
+            rlClose(`${v.tag}-close`, 'b', p.b, v.library, loaded),
+            rlInfo(`${v.tag}-gone`, 'b', p.b, 'apc', { after: [`${v.tag}-close`] }));
+    }
+    const z = p.z;
+    steps.push(
+        rlInfo('info-vbe-end', 'b', p.b, 'vbe'),
+        rlClose('b-close', 'b', p.b, p.b),
+        rlRecall('b-recall', p.b),
+        rlVersion('z-load', z),
+        rlInstall('z-install', RL_FINAL, z, { requires: ['z-load'] }),
+        rlInfo('z-info', RL_FINAL, z),
+        rlInfo('z-vbe', RL_FINAL, z, 'vbe'),
+        rlClose('z-close', RL_FINAL, z, z, { requires: ['z-load'] }),
+        rlRecall('z-recall', z),
+        rlLocks('locks-end', ['a', 'b', ...p.copies.map(c => c.tag), RL_FINAL, 'hl']));
+    return steps;
+}
+/** Step names of --reload-experiment (independent of the paths). */
+function reloadStepNames() {
+    const x = 'C:\\x\\C5D_Bridge-x.catvba';
+    return buildReloadSteps({ a: x, b: x, z: x, copies: RL_ROUNDS.map(tag => ({ tag, path: x })), variants: pathVariants(x, { short: { path: x }, hardlink: { ok: true, path: x } }) })
+        .map(s => s.name);
+}
+
+/**
+ * Other strings for the same file A, in run order (\\?\ last: the most likely to be refused). short: { path, error } of the 8.3
+ * name; hardlink: { ok, path, error }. A variant is disabled (with the reason) when it cannot be made or equals A / an earlier one.
+ */
+function pathVariants(a, { short, hardlink } = {}) {
+    const dir = path.win32.dirname(a), base = path.win32.basename(a);
+    const list = [
+        { tag: 'lower', label: '(i) lower case', library: a.toLowerCase() },
+        { tag: 'upper', label: '(ii) upper case', library: a.toUpperCase() },
+        { tag: 'dot', label: '(vi) .\\ before the file name', library: `${dir}\\.\\${base}` },
+        { tag: 'dotdot', label: '..\\<folder> before the file name', library: `${dir}\\..\\${path.win32.basename(dir)}\\${base}` },
+        { tag: 'slash', label: '(iv) / separators', library: a.replace(/\\/g, '/') },
+        { tag: 'short', label: '(iii) 8.3 short path', library: short?.path ?? null,
+            disabled: !short ? 'no short path computed' : short.error ? `no short path (${short.error})`
+                : !String(short.path ?? '').includes('~') ? 'no 8.3 short name (8.3 name generation off on this volume?)' : undefined },
+        { tag: 'hl', label: '(vii) hard link', library: hardlink?.path ?? null,
+            disabled: !hardlink ? 'no hard link made' : !hardlink.ok ? `hard link not created (${hardlink.error})` : undefined },
+        { tag: 'ext', label: '(v) \\\\?\\ prefix', library: `\\\\?\\${a}` }
+    ];
+    const seen = new Map([[a, 'A itself']]);
+    for (const v of list) {
+        if (!v.disabled && seen.has(v.library)) v.disabled = `same string as ${seen.get(v.library)}`;
+        if (!v.disabled) seen.set(v.library, v.tag);
+        if (!v.disabled) delete v.disabled;
+    }
+    return list;
+}
+
+/** 8.3 short path of an existing file through Scripting.FileSystemObject in PowerShell (never in CATIA): { path, error }. */
+function shortPathOf(file, run = execFileSync) {
+    const script = [
+        "$ErrorActionPreference = 'Stop'",
+        '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false',
+        '(New-Object -ComObject Scripting.FileSystemObject).GetFile($env:C5D_SHORT_PATH_OF).ShortPath'
+    ].join('\n');
+    try {
+        const out = run(powershellPath(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+            { windowsHide: true, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, C5D_SHORT_PATH_OF: file } });
+        const text = out.toString('utf8').replace(/^\uFEFF/, '').trim();
+        return text ? { path: text, error: null } : { path: null, error: 'empty output' };
+    } catch (error) {
+        return { path: null, error: String(error.stderr ? error.stderr.toString().trim() || error : error).split(/\r?\n/)[0] };
+    }
+}
+/** Hard link of a at link (same volume; the read-only attribute is shared): { ok, path, error, sameFile, links }. */
+function makeHardlink(a, link, ops = {}) {
+    const { linkSync = fs.linkSync, statSync = fs.statSync } = ops;
+    const result = { ok: false, path: link, error: null, sameFile: null, links: null };
+    try {
+        linkSync(a, link);
+        const sa = statSync(a, { bigint: true }), sl = statSync(link, { bigint: true });
+        result.sameFile = sa.ino === sl.ino && sa.dev === sl.dev;
+        result.links = Number(sl.nlink);
+        result.ok = result.sameFile !== false;
+        if (!result.ok) result.error = 'the link is not the same file';
+    } catch (error) { result.error = errorText(error); }
+    return result;
+}
+/**
+ * Deletes the probe files that are not locked (read-only cleared first). items: [{ key, path, linkOf }] (linkOf: the file a hard link
+ * shares its attributes with; its read-only attribute is set again afterwards). Returns [{ key, path, action, error, lock, linkOfReadOnly }].
+ */
+function cleanupProbeFiles(items, ops = {}) {
+    const { chmod = fs.chmodSync, unlink = fs.unlinkSync, open, close, platform } = ops;
+    return items.map(({ key, path: file, linkOf }) => {
+        const out = { key, path: file, action: null, error: null, lock: null };
+        if (!fs.existsSync(file)) { out.action = 'missing'; return out; }
+        out.lock = lockProbe(file, open, close, platform);
+        if (out.lock.inUse !== false) { out.action = out.lock.inUse ? 'kept (locked)' : `kept (lock unknown: ${out.lock.code ?? out.lock.skipped})`; return out; }
+        try {
+            chmod(file, 0o666);
+            unlink(file);
+            out.action = 'deleted';
+        } catch (error) {
+            out.action = 'failed';
+            out.error = errorText(error);
+            try { if (fs.existsSync(file)) chmod(file, 0o444); } catch { /* reported by the file state */ }
+        }
+        if (linkOf) {
+            try { chmod(linkOf, 0o444); } catch (error) { out.error = [out.error, `read-only of ${linkOf} not restored: ${errorText(error)}`].filter(Boolean).join('; '); }
+            out.linkOfReadOnly = fileState(linkOf).readOnly;
+        }
+        return out;
+    });
+}
+
+// -- judging --
+const baseName = p => String(p ?? '').split(/[\\/]/).pop();
+const sameText = (x, y) => String(x).toLowerCase() === String(y).toLowerCase();
+/** C5D_Bridge projects of a parsed C5D_RlInfo / C5D_RlVbe text: [{ display, file, mods, self }]. */
+function rlBridges(info) {
+    return (info?.projects ?? []).filter(p => p.name === BRIDGE_PROJECT)
+        .map(p => ({ display: p.display ?? '', file: p.vbFile ?? p.file ?? '', mods: String(p.mods ?? '').split(',').filter(Boolean), self: p.self === 'True' }));
+}
+const rlPathOf = bridge => bridge.display || bridge.file;
+/** The C5D_Bridge projects whose path has the file name of file (ignoring case). */
+const bridgesOfFile = (info, file) => rlBridges(info).filter(b => sameText(baseName(rlPathOf(b)), baseName(file)) || sameText(baseName(b.file), baseName(file)));
+/** ExecuteScript failure text without the "ExecuteScript(...)" line eval-probe.exe adds. */
+const shortMessage = message => String(message ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('ExecuteScript(')).join(' / ');
+function rlOutcome(e) {
+    if (!e) return 'not in this run';
+    if (e.skipped) return `not run (${e.skipped})`;
+    if (e.timedOut) return 'timed out (CATIA may be stopped at a dialog)';
+    if (!e.ok) return `failed (${[e.hresult ?? 'no result', shortMessage(e.message)].filter(Boolean).join(' ')})`;
+    return `returned ${JSON.stringify(e.result ?? null)}`;
+}
+/** "N projects, C5D_Bridge xM [<file> {<probe modules>}; ...]" of an info step. */
+function describeRlInfo(entry) {
+    if (!entry || entry.skipped || !entry.ok) return rlOutcome(entry);
+    const info = parseInfo(entry.result);
+    if (!info || info.count === null) return `unexpected ${JSON.stringify(entry.result)}`;
+    const bridges = rlBridges(info).map(b => {
+        const mods = b.mods.filter(m => m !== BRIDGE_MODULE);
+        return `${baseName(rlPathOf(b)) || '?'}${mods.length ? ` {${mods.join(',')}}` : ''}`;
+    });
+    return `${info.count} projects, ${BRIDGE_PROJECT} x${bridges.length}${bridges.length ? ` [${bridges.join('; ')}]` : ''}`;
+}
+const parsedOk = e => (e && !e.skipped && e.ok ? parseInfo(e.result) : null);
+const bridgeCount = e => { const info = parsedOk(e); return info && info.count !== null ? rlBridges(info).length : null; };
+/** The last apc info entry (ok) before the step called name. */
+function apcInfoBefore(name, entries, steps) {
+    const index = entries.findIndex(e => e.step === name);
+    for (let i = index - 1; i >= 0; i--) {
+        const step = steps.find(s => s.name === entries[i].step);
+        if (step?.info === 'apc' && parsedOk(entries[i])?.count != null) return entries[i];
+    }
+    return null;
+}
+/** { ok, ms, found, error } of a close step (ms = the Close call itself, timed by eval-probe.exe). */
+function closeFacts(e) {
+    if (!e || e.skipped) return { ok: null, ms: null, found: null, error: e ? e.skipped : 'not in this run' };
+    const action = (e.actions ?? []).find(a => a.action === RL_CLOSE_ACTION);
+    const found = (e.actions ?? []).find(a => a.op === 'get:$.DisplayName');
+    if (!action) return { ok: false, ms: null, found: null, error: e.resultType && e.resultType !== 'ComObject' ? `no project (${JSON.stringify(e.result)})` : rlOutcome(e) };
+    return { ok: action.ok === true, ms: action.elapsedMs ?? null, found: found?.ok ? found.result : null,
+        error: action.ok ? null : `${action.hresult} ${String(action.message ?? '').split(/\r?\n/)[0]}`.trim() };
+}
+const lockWord = l => !l ? 'not probed' : l.skipped ? l.skipped : l.inUse === true ? 'LOCKED' : l.inUse === false ? 'free' : `probe failed (${l.code})`;
+const recallWord = e => !e || e.skipped ? rlOutcome(e) : e.timedOut ? rlOutcome(e) : e.match
+    ? `fails as expected (${[e.hresult, shortMessage(e.message)].filter(Boolean).join(' ')})` : `ANSWERS ${JSON.stringify(e.result)} (loaded again)`;
+
+/** Facts of one repeat round c<n> (or z). */
+function judgeRound(tag, file, get, entries, steps) {
+    const load = get(`${tag}-load`), info = get(`${tag}-info`), gone = get(`${tag}-gone`);
+    const infoParsed = parsedOk(info), goneParsed = parsedOk(gone);
+    const holders = rlBridges(infoParsed).filter(b => b.mods.includes(rlModule(tag)));
+    return {
+        round: tag, file,
+        load: { ok: load?.skipped ? null : load?.match ?? null, ms: load?.elapsedMs ?? null, outcome: rlOutcome(load) },
+        install: get(`${tag}-install`)?.skipped ? null : get(`${tag}-install`)?.match ?? null,
+        alive: get(`${tag}-alive`)?.skipped ? null : get(`${tag}-alive`)?.match ?? null,
+        loaded: infoParsed ? bridgesOfFile(infoParsed, file).length > 0 : null,
+        moduleIn: infoParsed ? holders.map(b => baseName(rlPathOf(b))) : null,
+        counts: [bridgeCount(apcInfoBefore(`${tag}-load`, entries, steps)), bridgeCount(info), bridgeCount(gone)],
+        close: closeFacts(get(`${tag}-close`)),
+        gone: goneParsed && goneParsed.count !== null ? bridgesOfFile(goneParsed, file).length === 0 : null,
+        recall: get(`${tag}-recall`) ? recallWord(get(`${tag}-recall`)) : null,
+        lockAfterClose: get(`${tag}-lock`)?.locks?.[tag] ?? null
+    };
+}
+function roundLine(r) {
+    const counts = r.counts.map(n => n === null ? '?' : n).join(' -> ');
+    const close = r.close.ok === null ? `close ${r.close.error}` : r.close.ok ? `close ok ${r.close.ms}ms${r.close.found ? ` (found ${baseName(r.close.found)})` : ''}`
+        : `close FAILED ${r.close.error}`;
+    return `round ${r.round} ${r.file}: load ${r.load.ok ? `ok ${r.load.ms}ms` : r.load.outcome}, install ${yn(r.install)}, alive via own path ${yn(r.alive)}, `
+        + `module went into ${r.moduleIn === null ? '?' : r.moduleIn.length ? r.moduleIn.join(' + ') : 'no C5D_Bridge'}, C5D_Bridge ${counts}, ${close}, `
+        + `gone ${yn(r.gone)}, same path after close ${r.recall ?? '-'}, lock right after close ${lockWord(r.lockAfterClose)}`;
+}
+/** Facts of one path variant of A. */
+function judgeVariant(v, get, entries, steps) {
+    const load = get(`${v.tag}-load`), info = get(`${v.tag}-info`);
+    const before = parsedOk(apcInfoBefore(`${v.tag}-load`, entries, steps));
+    const now = parsedOk(info);
+    const known = new Set(rlBridges(before).map(rlPathOf));
+    const added = now && before ? rlBridges(now).filter(b => !known.has(rlPathOf(b))).map(rlPathOf) : null;
+    const holders = rlBridges(now).filter(b => b.mods.includes(rlModule(v.tag))).map(rlPathOf);
+    const gone = parsedOk(get(`${v.tag}-gone`));
+    // gone: the project(s) that appeared with this variant are no longer listed (the display may differ from the string passed,
+    // e.g. an 8.3 name shown long); without such a project, by the file name of the variant
+    const left = !gone || gone.count === null ? null : added?.length ? rlBridges(gone).filter(b => added.includes(rlPathOf(b)))
+        : bridgesOfFile(gone, v.library);
+    return {
+        variant: v.tag, label: v.label, library: v.library, disabled: v.disabled ?? null,
+        load: { ok: load?.skipped ? null : load?.match ?? null, ms: load?.elapsedMs ?? null, outcome: rlOutcome(load) },
+        newProjects: added, moduleIn: now ? holders : null,
+        alive: get(`${v.tag}-alive`)?.skipped ? null : get(`${v.tag}-alive`)?.match ?? null,
+        close: closeFacts(get(`${v.tag}-close`)),
+        gone: left === null ? null : left.length === 0
+    };
+}
+function variantLine(v) {
+    const head = `variant ${v.variant} ${v.label} ${JSON.stringify(v.library)}: `;
+    if (v.disabled) return head + `skipped (${v.disabled})`;
+    if (!v.load.ok) {
+        const extra = v.newProjects?.length ? ` but a new C5D_Bridge appeared: ${v.newProjects.join(', ')}` : '';
+        return head + `NOT loaded: ${v.load.outcome}${extra}`;
+    }
+    const where = v.newProjects === null ? 'no info' : v.newProjects.length ? `new project ${v.newProjects.map(p => JSON.stringify(p)).join(', ')}`
+        : 'NO new project (answered by an already loaded one?)';
+    const close = v.close.ok === null ? `close ${v.close.error}` : v.close.ok ? `close ok ${v.close.ms}ms` : `close FAILED ${v.close.error}`;
+    return head + `LOADED ${v.load.ms}ms (${where}), module went into ${v.moduleIn?.length ? v.moduleIn.join(' + ') : 'no C5D_Bridge'}, alive ${yn(v.alive)}, ${close}, gone ${yn(v.gone)}`;
+}
+
+/**
+ * Verdict of --reload-experiment: { lines, reload } (lines: one fact per line; reload: the same as data).
+ * ctx: { files: { key: path }, copies: [{ tag, path }], variants, cleanup }.
+ */
+function judgeReload(beforeLoaded, entries, steps, ctx) {
+    const get = name => entries.find(e => e.step === name);
+    const lines = [];
+    const bAlive = get('b-alive');
+    lines.push(`start: B ${bAlive?.match ? 'is the B of the remove run (C5D_ProbeB answers)' : `C5D_ProbeB ${rlOutcome(bAlive)} (B freshly loaded? CATIA restarted?)`}, `
+        + `b-install ${get('b-install')?.match ? 'ok' : rlOutcome(get('b-install'))}`);
+    lines.push(`info-apc: ${describeRlInfo(get('info-apc'))}`);
+    lines.push(`info-vbe: ${describeRlInfo(get('info-vbe'))}`);
+    lines.push(`A path ${baseName(ctx.files.a)}: ${recallWord(get('a-call'))}`);
+    const locks = name => get(name)?.locks ?? {};
+    lines.push(`locks at start: ${Object.entries(locks('locks-start')).map(([k, l]) => `${k} ${lockWord(l)}`).join(', ') || 'not probed'}`);
+    const rounds = ctx.copies.map(c => judgeRound(c.tag, baseName(c.path), get, entries, steps));
+    for (const r of rounds) lines.push(roundLine(r));
+    lines.push(`info-vbe-mid: ${describeRlInfo(get('info-vbe-mid'))}`);
+    const variants = ctx.variants.map(v => judgeVariant(v, get, entries, steps));
+    for (const v of variants) lines.push(variantLine(v));
+    lines.push(`info-vbe-end: ${describeRlInfo(get('info-vbe-end'))}`);
+    const bClose = closeFacts(get('b-close'));
+    lines.push(`b-close: ${bClose.ok === null ? bClose.error : bClose.ok ? `ok ${bClose.ms}ms` : `FAILED ${bClose.error}`}; B path after close ${recallWord(get('b-recall'))}`);
+    const z = judgeRound(RL_FINAL, baseName(ctx.files[RL_FINAL]), get, entries, steps);
+    const zInfo = parsedOk(get('z-info'));
+    const bStill = zInfo ? bridgesOfFile(zInfo, ctx.files.b).length > 0 : null;
+    lines.push(`final ${z.file} (0 -> 1 -> 0): load ${z.load.ok ? `ok ${z.load.ms}ms` : z.load.outcome}, install ${yn(z.install)}, z-info ${describeRlInfo(get('z-info'))}`
+        + ` (B still listed: ${yn(bStill)}), close ${z.close.ok === null ? z.close.error : z.close.ok ? `ok ${z.close.ms}ms` : `FAILED ${z.close.error}`}, `
+        + `same path after close ${z.recall ?? '-'}`);
+    lines.push(`z-vbe: ${describeRlInfo(get('z-vbe'))}`);
+    lines.push(`locks at end: ${Object.entries(locks('locks-end')).map(([k, l]) => `${k} ${lockWord(l)}`).join(', ') || 'not probed'}`);
+    if (ctx.cleanup) lines.push(`cleanup: ${ctx.cleanup.map(c => `${c.key} ${c.action}${c.error ? ` (${c.error})` : ''}`).join(', ') || 'nothing'}`);
+    const crashed = entries.find(e => e.crashed);
+    if (crashed) lines.push(`CATIA crashed after step ${crashed.step}`);
+    const timedOut = entries.find(e => e.timedOut);
+    if (timedOut) lines.push(`timed out at step ${timedOut.step} (CATIA may be stopped at a dialog)`);
+    lines.push(describeVbscript(beforeLoaded, entries));
+    return { lines, reload: { rounds, variants, bClose: { ...bClose, recall: recallWord(get('b-recall')) }, final: { ...z, bStillListed: bStill },
+        locks: { start: locks('locks-start'), end: locks('locks-end') }, cleanup: ctx.cleanup ?? null } };
+}
+
+/**
+ * --reload-experiment (CATIA as the remove experiment left it: A closed, B loaded; NOT restarted). Local preparation before any CATIA
+ * call: facts and locks of A and B (never modified), read-only copies c1..c3 and z with per-run names, a hard link of A, the 8.3 name
+ * of A. Then buildReloadSteps one --no-retry call at a time; at the end the probe copies / hard link are deleted when not locked.
+ */
+async function runReload(report) {
+    const paths = hashedPaths();
+    const a = paths.target;
+    const folder = path.dirname(a);
+    const b = path.join(folder, COPY_B_FILE);
+    report.cnext = cnextProcesses();
+    if (!report.cnext.error && !report.cnext.processes.length) throw new Error('CNEXT.exe is not running');
+    if (!fs.existsSync(a)) throw new Error(`${a} does not exist; this mode continues after --remove-experiment (A closed, B loaded)`);
+    if (!fs.existsSync(b)) throw new Error(`${b} does not exist; this mode continues after --remove-experiment (A closed, B loaded)`);
+    const runTag = timestamp().replace('-', '');
+    const files = { a, b };
+    report.files = { a: { role: 'A (closed by --remove-experiment; never modified)', state: fileState(a), lock: lockProbe(a) },
+        b: { role: 'B (loaded by --remove-experiment; never modified)', state: fileState(b), lock: lockProbe(b) } };
+    if (report.files.a.state.sha256 !== sha256(paths.source)) report.notes.push(`${a} differs from ${paths.source}.`);
+    const copies = [];
+    for (const tag of [...RL_ROUNDS, RL_FINAL]) {
+        const file = path.join(folder, `${BRIDGE_PROJECT}-probe-${runTag}-${tag}.catvba`);
+        const prepared = prepareHashedBridge(paths.source, file);
+        report.files[tag] = { role: tag === RL_FINAL ? 'final copy (after B is closed)' : `repeat round ${tag}`, prepared: { action: prepared.action, ok: prepared.ok, message: prepared.message },
+            state: prepared.after, lock: lockProbe(file) };
+        if (!prepared.ok) throw new Error(`Preparing ${file} failed: ${prepared.message ?? prepared.code}`);
+        files[tag] = file;
+        if (tag !== RL_FINAL) copies.push({ tag, path: file });
+    }
+    const hardlink = makeHardlink(a, path.join(folder, `${path.basename(a, '.catvba')}-hl-${runTag}.catvba`));
+    report.files.hl = { role: 'hard link of A', hardlink, state: hardlink.ok ? fileState(hardlink.path) : null, lock: hardlink.ok ? lockProbe(hardlink.path) : null };
+    if (hardlink.ok) files.hl = hardlink.path;
+    if (fileState(a).readOnly !== true) report.notes.push(`${a} is NOT read-only after making the hard link.`);
+    const short = shortPathOf(a);
+    report.shortPath = short;
+    const variants = pathVariants(a, { short, hardlink }).map(v => ({ ...v, exists: v.library ? fs.existsSync(v.library) : null }));
+    report.variants = variants;
+    report.library = '(per step, see each run)';
+    report.libraryPerStep = true;
+    report.exe = buildProbe(ROOT);
+    const first = trySnapshot(report, 'before');
+    if (first.error) throw new Error(`module snapshot failed: ${first.error}`);
+    checkCnext(report, first.snapshot);
+    const pids = first.snapshot.cnextPids;
+    report.cnextPids = pids;
+    report.vbscriptBefore = first.snapshot.loaded;
+    if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step.');
+    const steps = buildReloadSteps({ a, b, z: files[RL_FINAL], copies, variants });
+    const { entries, aborted } = await runSequence(report, steps, step => step.library, pids, async step => {
+        if (step.local !== 'locks') throw new Error(`unknown local step ${step.local}`);
+        const started = Date.now();
+        const locks = Object.fromEntries(step.files.filter(key => files[key]).map(key => [key, lockProbe(files[key])]));
+        return { run: { local: true, kind: 'locks', ok: true, match: true, locks, durationMs: Date.now() - started }, entry: { ok: true, match: true, locks } };
+    });
+    for (const entry of entries) {
+        const run = report.runs.find(r => r.step === entry.step);
+        if (run?.result) Object.assign(entry, { elapsedMs: run.result.elapsedMs ?? null, processMs: run.durationMs ?? null });
+        if (run?.actions) Object.assign(entry, { resultType: run.result?.resultType ?? null, typeInfo: run.result?.typeInfo ?? null });
+    }
+    for (const [key, file] of Object.entries(files)) Object.assign(report.files[key], { stateAtEnd: fileState(file), lockAtEnd: lockProbe(file) });
+    for (const key of ['a', 'b']) {
+        const f = report.files[key];
+        if (f.state.sha256 && f.stateAtEnd.sha256 && f.state.sha256 !== f.stateAtEnd.sha256) report.notes.push(`${files[key]} changed during the run.`);
+        if (f.stateAtEnd.readOnly !== true) report.notes.push(`${files[key]} is NOT read-only at the end.`);
+    }
+    report.cleanup = cleanupProbeFiles([...[...RL_ROUNDS, RL_FINAL].map(key => ({ key, path: files[key] })),
+        ...(files.hl ? [{ key: 'hl', path: files.hl, linkOf: a }] : [])]);
+    const kept = report.cleanup.filter(c => c.action !== 'deleted' && c.action !== 'missing');
+    if (kept.length) report.notes.push(`Probe files left in ${folder} (${kept.map(c => `${path.basename(c.path)}: ${c.action}`).join(', ')}); delete them after CATIA is restarted.`);
+    if (fileState(a).readOnly !== true) report.notes.push(`${a} is NOT read-only after the cleanup.`);
+    report.notes.push('CATIA was changed by this run (C5D_Bridge copies loaded and closed, B closed). Restart CATIA before a probe run that needs a fresh CATIA.');
+    const { lines, reload } = judgeReload(first.snapshot.loaded, entries, steps, { files, copies, variants, cleanup: report.cleanup });
+    report.summary = { ...sequenceSummary(report, entries),
+        infos: Object.fromEntries(steps.filter(s => s.info).map(s => [s.name, parseInfo(entries.find(e => e.step === s.name)?.result)])),
+        reload, verdictLines: lines, verdict: lines.join('\n') };
+    if (aborted) process.exitCode = 1;
+}
+
 /** temp/<prefix>-<time>.json; never overwrites an earlier report. */
 function uniqueReportPath(directory, prefix = 'probe-bridge') {
     const base = path.join(directory, `${prefix}-${timestamp()}`);
@@ -1997,6 +2712,8 @@ function formatUnloadSummary(report) {
             else if (run.kind === 'read-timer-log') {
                 lines.push(`  ${run.step}: ${run.log === null ? 'log MISSING' : `${run.log.split(/\r?\n/).filter(Boolean).length} lines`}  ${tail}`);
                 for (const line of (run.log ?? '').split(/\r?\n/).filter(Boolean)) lines.push(`    | ${line}`);
+            } else if (run.kind === 'locks') {
+                lines.push(`  ${run.step}: ${Object.entries(run.locks ?? {}).map(([key, l]) => `${key} ${lockWord(l)}`).join(', ') || '(no files)'}  ${tail}`);
             } else if (run.local) {
                 const lock = !run.lockProbe ? '-' : run.lockProbe.skipped ? run.lockProbe.skipped
                     : run.lockProbe.writable ? 'writable (not locked)' : `LOCKED (${run.lockProbe.code}: ${run.lockProbe.message})`;
@@ -2007,6 +2724,7 @@ function formatUnloadSummary(report) {
             else {
                 lines.push(`  ${run.step}: ok=${yn(r.ok)} match=${yn(run.match)} result=${JSON.stringify(r.result)} elapsed=${r.elapsedMs}ms (process ${run.durationMs}ms)  ${tail}`);
                 lines.push(`    ${run.call}  hresult=${r.hresult}${r.message ? ' message=' + r.message : ''}${run.argumentsIntact === false ? '  ARGUMENTS NOT INTACT' : ''}`);
+                if (report.libraryPerStep) lines.push(`    library ${run.library}`);
                 if (run.actions) {
                     lines.push(`    returned ${r.resultType}${r.typeInfo ? ' ' + r.typeInfo : ''}${r.isDispatch !== undefined && r.isDispatch !== null ? ` isDispatch=${yn(r.isDispatch)}` : ''}`
                         + `${r.arrayLength !== undefined ? ` array[${r.arrayLength}] ${(r.elements ?? []).join(', ')}` : ''}`);
@@ -2018,7 +2736,8 @@ function formatUnloadSummary(report) {
             }
         }
     }
-    if (report.summary?.verdict) lines.push('', `verdict: ${report.summary.verdict}`);
+    if (report.summary?.verdictLines) lines.push('', 'verdict:', ...report.summary.verdictLines.map(line => `  ${line}`));
+    else if (report.summary?.verdict) lines.push('', `verdict: ${report.summary.verdict}`);
     for (const note of report.notes) lines.push(`note: ${note}`);
     if (report.stoppedForUser && report.mode === 'readonly-fresh') {
         lines.push('', 'NEXT: ask the user to open the VBA editor, select C5D_Bridge, report whether the Save button is grayed out',
@@ -2031,6 +2750,25 @@ function formatUnloadSummary(report) {
 }
 /** "modified=<iso> size=<n> readOnly=<yes/no>" of a fileState. */
 const factsLine = state => `modified=${state?.modifiedAt ?? '-'} size=${state?.size ?? '-'} readOnly=${yn(state?.readOnly)}`;
+
+/** Summary of --reload-experiment: the probe files and path variants, then the steps and verdict as in formatUnloadSummary. */
+function formatReloadSummary(report) {
+    const lines = [];
+    for (const [key, f] of Object.entries(report.files ?? {})) {
+        lines.push(`file ${key} (${f.role}): ${f.state?.path ?? f.hardlink?.path ?? '-'}`);
+        if (f.hardlink && !f.hardlink.ok) lines.push(`  hard link NOT created: ${f.hardlink.error}`);
+        if (f.state) lines.push(`  start: ${factsLine(f.state)}, ${lockWord(f.lock)}${f.prepared ? `, prepared ${f.prepared.action}` : ''}`);
+        if (f.stateAtEnd) lines.push(`  end:   ${f.stateAtEnd.exists ? factsLine(f.stateAtEnd) : 'missing'}, ${lockWord(f.lockAtEnd)}`);
+    }
+    if (report.shortPath) lines.push(`8.3 short path of A: ${report.shortPath.path ?? `none (${report.shortPath.error})`}`);
+    for (const v of report.variants ?? []) {
+        lines.push(`variant ${v.tag} ${v.label}: ${JSON.stringify(v.library)}${v.disabled ? ` SKIPPED (${v.disabled})` : ''}${v.exists === false ? ' (node: does not exist)' : ''}`);
+    }
+    for (const c of report.cleanup ?? []) lines.push(`cleanup ${c.key}: ${c.action}${c.error ? ` (${c.error})` : ''} ${c.path}`);
+    const text = formatUnloadSummary(report).split('\n');
+    // mode / report lines first, then the file facts
+    return [...text.slice(0, 2), ...lines, ...text.slice(2)].join('\n');
+}
 
 /** Summary of --readonly-fresh-check. */
 function formatReadonlyCheck(report) {
@@ -2057,7 +2795,7 @@ function formatReadonlyCheck(report) {
 
 const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup',
     'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check',
-    'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky' };
+    'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky', 'reload-experiment': 'probe-bridge-reload' };
 /** Runner, summary formatter and report prefix of a parsed mode (not 'help'). */
 function dispatch(options) {
     switch (options.mode) {
@@ -2066,6 +2804,7 @@ function dispatch(options) {
         case 'readonly-fresh': return { run: runReadonlyFresh, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'readonly-fresh-check': return { run: runReadonlyFreshCheck, format: formatReadonlyCheck, prefix: REPORT_PREFIXES[options.mode] };
         case 'remove-experiment': case 'remove-experiment-risky': return { run: runRemove, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
+        case 'reload-experiment': return { run: runReload, format: formatReloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'run': return { run: runBridge, format: formatSummary, prefix: 'probe-bridge' };
         default: throw new Error(`no runner for mode ${options.mode}`);
     }
@@ -2095,4 +2834,6 @@ module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codep
     hashedBridgeName, hashedBridgePath, lockProbe, prepareHashedBridge, judgeReadonlyFresh, runReadonlyFresh, runReadonlyFreshCheck, formatReadonlyCheck,
     dispatch, READONLY_FRESH_STEPS, READONLY_FRESH_SOURCE, READONLY_FRESH_RESULT,
     REMOVE_STEPS, REMOVE_RISKY_STEPS, REMOVE_SOURCE, B_SOURCE, TIMER_SOURCE, REMOVE_MODULE, B_MODULE, TIMER_MODULE, COPY_B_FILE, TIMER_LOG_FILE,
-    TIMER_LOG_TOKEN, materializeSteps, skipReason, parseInfo, describeInfo, judgeRemove, runRemove, runSequence };
+    TIMER_LOG_TOKEN, materializeSteps, skipReason, parseInfo, describeInfo, judgeRemove, runRemove, runSequence,
+    reloadSource, buildReloadSteps, reloadStepNames, pathVariants, shortPathOf, makeHardlink, cleanupProbeFiles, rlBridges, describeRlInfo,
+    judgeReload, runReload, formatReloadSummary, RL_ROUNDS, RL_FINAL, RL_CLOSE_ACTIONS, rlModule, rlFunc };

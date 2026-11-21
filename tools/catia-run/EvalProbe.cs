@@ -22,8 +22,10 @@
 //     各トークンは "b64:<UTF-8 の base64>" でも渡せる（非 ASCII・改行・引用符をコマンドラインで化けさせないため）。
 //     期待値は持たない（match = null）。判定は呼び出し側が行う。--label <name> で出力 JSON の step 名を変えられる（既定 vbacall）。
 //   --no-retry: vbacall の ByRef 再試行をしない（ExecuteScript をちょうど 1 回だけ呼ぶ。アンロード等の副作用がある関数用）
-//   オブジェクト戻り値: vbacall-obj <library> <module> <function> [<action> ...]   （scripts/probe-bridge.js --remove-experiment から呼ぶ）
-//     引数なしの VBA 関数を ExecuteScript で 1 回だけ呼び（ByRef 再試行なし）、戻り値（VT_DISPATCH なら COM プロキシ）を保持したまま、
+//   オブジェクト戻り値: [--obj-arg <value> ...] vbacall-obj <library> <module> <function> [<action> ...]
+//     （scripts/probe-bridge.js --remove-experiment / --reload-experiment から呼ぶ）
+//     VBA 関数を ExecuteScript で 1 回だけ呼び（ByRef 再試行なし。VBA への引数は vbacall-obj より前の --obj-arg で、出現順に ByVal の文字列で渡す。
+//     無ければ引数なし）、戻り値（VT_DISPATCH なら COM プロキシ）を保持したまま、
 //     ExecuteScript が戻った後（VBA の実行が終わった後）に、この exe から IDispatch のレイトバインドで action を順に実行する。
 //     action（各 1 トークン、b64: 可）:
 //       get:<expr>             式の値を読む（例 get:$.Name / get:$.VBProject.Type / get:$.Projects.Item('C5D_Bridge').Mode）
@@ -507,6 +509,7 @@ function CATMain() {
         }
         bool byRef = false, dryRun = false, noRetry = false;
         string project = "toQI", label = null;
+        List<string> objArgs = new List<string>(); // --obj-arg: vbacall-obj の VBA 引数（出現順）
         Step vbaCall = null;
         // (step name, library or null) in argument order; expanded after --project is known
         List<KeyValuePair<string, string>> requested = new List<KeyValuePair<string, string>>();
@@ -516,6 +519,14 @@ function CATMain() {
             if (arg == "--byref") { byRef = true; continue; }
             if (arg == "--dry-run") { dryRun = true; continue; }
             if (arg == "--no-retry") { noRetry = true; continue; }
+            if (arg == "--obj-arg")
+            {
+                string value = i + 1 < args.Length ? DecodeToken(args[i + 1]) : null;
+                if (value == null) { Console.Error.WriteLine("--obj-arg requires a value (b64: tokens must be valid)"); return BadArguments; }
+                objArgs.Add(value);
+                i++;
+                continue;
+            }
             if (arg == "--label")
             {
                 if (i + 1 >= args.Length) { Console.Error.WriteLine("--label requires a name"); return BadArguments; }
@@ -547,7 +558,7 @@ function CATMain() {
                 // vbacall-obj <library> <module> <function> [<action> ...]: 残りの引数は全て vbacall-obj のもの
                 if (i + 3 >= args.Length)
                 {
-                    Console.Error.WriteLine("usage: eval-probe [--label <name>] vbacall-obj <library> <module> <function> [<action> ...]");
+                    Console.Error.WriteLine("usage: eval-probe [--label <name>] [--obj-arg <value> ...] vbacall-obj <library> <module> <function> [<action> ...]");
                     return BadArguments;
                 }
                 List<string> values = new List<string>();
@@ -567,7 +578,7 @@ function CATMain() {
                     if (action == null) { Console.Error.WriteLine("invalid action " + (j - 2).ToString(CultureInfo.InvariantCulture) + " '" + values[j] + "': " + error); return BadArguments; }
                     actions.Add(action);
                 }
-                vbaCall = VbaCall(label ?? "vbacall-obj", values[0], values[1], values[2], new object[0]);
+                vbaCall = VbaCall(label ?? "vbacall-obj", values[0], values[1], values[2], objArgs.ToArray());
                 vbaCall.RetryByRef = false;
                 vbaCall.Actions = actions;
                 vbaCall.ActionTexts = texts;
@@ -601,10 +612,15 @@ function CATMain() {
                 Console.Error.WriteLine("usage: eval-probe [--byref] [--project <name>] [--dry-run] <check|basic|sub|typed|params|apc|apc2|apc2-getobject|apc2-catia|apc2-application|jscript|jscript-params|jscript-fso|jscript-apc|jscript-read> ...");
                 Console.Error.WriteLine("       eval-probe <vbaproj-ping|vbaproj-sub|vbaproj-projects|vbaproj-filename|vbaproj-filename-basename|vbaproj-filename-empty|vbaproj-filename-project> <libraryPath> ...");
                 Console.Error.WriteLine("       eval-probe [--label <name>] vbacall <library> <module> <function> [args...]   (tokens may be b64:<UTF-8 base64>)");
-                Console.Error.WriteLine("       eval-probe [--label <name>] vbacall-obj <library> <module> <function> [get:<expr>|type:<expr>|call:<expr>|let:<expr>=<arg>|sleep:<ms> ...]");
+                Console.Error.WriteLine("       eval-probe [--label <name>] [--obj-arg <value> ...] vbacall-obj <library> <module> <function> [get:<expr>|type:<expr>|call:<expr>|let:<expr>=<arg>|sleep:<ms> ...]");
                 return BadArguments;
             }
             steps.AddRange(expanded);
+        }
+        if (objArgs.Count > 0 && (vbaCall == null || vbaCall.Actions == null))
+        {
+            Console.Error.WriteLine("--obj-arg is only for vbacall-obj");
+            return BadArguments;
         }
         if (vbaCall != null)
         {
@@ -731,7 +747,7 @@ function CATMain() {
         bool ok = false;
         int hresult = 0;
         string message = null;
-        object[] parameters = new object[] { step.Library, LibraryTypeVbaProject, step.ProgramName, step.FunctionName, new object[0] };
+        object[] parameters = new object[] { step.Library, LibraryTypeVbaProject, step.ProgramName, step.FunctionName, (object[])step.Parameters.Clone() };
         try
         {
             result = service.GetType().InvokeMember(step.Method, BindingFlags.InvokeMethod, null, service, parameters);
