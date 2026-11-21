@@ -1,7 +1,7 @@
 // eval-probe.exe（開発者用・非出荷）: CATIA.SystemService.Evaluate で VBA コード文字列を CATIA 内実行できるかを試す。
 // Build: node scripts/probe-evaluate.js が temp/eval-probe.exe にビルドする（.NET Framework 4.x の csc.exe、C# 5 の構文に留める）。
 // Usage: eval-probe.exe [--byref] [--project <name>] [--dry-run] <step> [<step> ...]
-//        eval-probe.exe [--byref] [--dry-run] [--label <name>] [<step> ...] vbacall <library> <module> <function> [args...]
+//        eval-probe.exe [--byref] [--dry-run] [--label <name>] [--no-retry] [<step> ...] vbacall <library> <module> <function> [args...]
 //        eval-probe.exe --print-code <step>   （CATIA に接続せず、そのステップのコードを出力するだけ。テスト用）
 //   vbaproj-* ステップは直後の引数を .catvba のパス（ExecuteScript の iLibraryName）として取る:
 //        eval-probe.exe vbaproj-ping <libraryPath>
@@ -21,6 +21,7 @@
 //     vbacall 以降の引数は全て vbacall のもの（-- で始まっても VBA への引数）なので、オプションは vbacall より前に書く。
 //     各トークンは "b64:<UTF-8 の base64>" でも渡せる（非 ASCII・改行・引用符をコマンドラインで化けさせないため）。
 //     期待値は持たない（match = null）。判定は呼び出し側が行う。--label <name> で出力 JSON の step 名を変えられる（既定 vbacall）。
+//   --no-retry: vbacall の ByRef 再試行をしない（ExecuteScript をちょうど 1 回だけ呼ぶ。アンロード等の副作用がある関数用）
 //   --byref: iParameters を VT_BYREF で渡す（params / jscript-params は指定がなくても ByVal 失敗時に ByRef で再試行する）
 //   jscript*: 言語 4（JScript）。ES3 構文のみ・全処理を try/catch で囲み、例外は結果文字列に含めて返す。書き込み系 API は呼ばない。
 // Output: ステップごとに 1 行 JSON（UTF-8）
@@ -482,7 +483,7 @@ function CATMain() {
             Out.Write(printed[0].Code);
             return Ok;
         }
-        bool byRef = false, dryRun = false;
+        bool byRef = false, dryRun = false, noRetry = false;
         string project = "toQI", label = null;
         Step vbaCall = null;
         // (step name, library or null) in argument order; expanded after --project is known
@@ -492,6 +493,7 @@ function CATMain() {
             string arg = args[i];
             if (arg == "--byref") { byRef = true; continue; }
             if (arg == "--dry-run") { dryRun = true; continue; }
+            if (arg == "--no-retry") { noRetry = true; continue; }
             if (arg == "--label")
             {
                 if (i + 1 >= args.Length) { Console.Error.WriteLine("--label requires a name"); return BadArguments; }
@@ -550,7 +552,11 @@ function CATMain() {
             }
             steps.AddRange(expanded);
         }
-        if (vbaCall != null) { steps.Add(vbaCall); }
+        if (vbaCall != null)
+        {
+            if (noRetry) { vbaCall.RetryByRef = false; }
+            steps.Add(vbaCall);
+        }
         if (steps.Count == 0)
         {
             Console.Error.WriteLine("usage: eval-probe [--byref] [--project <name>] [--dry-run] <step> [<step> ...]");
