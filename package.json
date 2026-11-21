@@ -195,7 +195,8 @@
     "scripts": {
         "compile:go": "cd tools/vbafmt && go build -ldflags=\"-s -w\" -o ../../bin/vbafmt.exe . && cd ../vba-ls && go build -ldflags=\"-s -w\" -o ../../bin/vba-ls.exe .",
         "compile:bridge": "node scripts/build-bridge.js",
-        "vscode:prepublish": "npm run compile:go && npm run compile:bridge && npm run compile",
+        "check:bridge": "node scripts/build-bridge-catvba.js --inspect resources/bridge/C5D_Bridge.catvba",
+        "vscode:prepublish": "npm run check:bridge && npm run compile:go && npm run compile:bridge && npm run compile",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "test:unit": "npm run compile && node --test tests/*.test.js",
