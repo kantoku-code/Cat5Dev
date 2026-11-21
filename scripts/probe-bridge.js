@@ -78,6 +78,32 @@
 //   Info steps never require anything; install/alive/close require their load. Only a timeout, an unreachable CATIA or a vanished
 //   CNEXT.exe stops the run. At the end the probe copies and the hard link are deleted when not locked (else listed in notes).
 //   Report: temp/probe-bridge-reload-<time>.json (summary.verdictLines: one line per round / variant / lock state; summary.reload as data).
+//   NOTE: every <x>-close of that run failed with 0x80020005 DISP_E_TYPEMISMATCH before VBA ran: eval-probe.exe passed the --obj-arg
+//   values as string[] (VT_ARRAY|VT_BSTR) instead of object[] (VT_ARRAY|VT_VARIANT). Fixed in EvalProbe.cs (VariantArray).
+//   Also C5D_Install always wrote into B (the first C5D_Bridge), so "alive via own path" failed for every copy.
+//
+// Self-close experiment (with several projects named C5D_Bridge loaded: can a copy identify ITSELF, be closed from outside, and does
+// the production idea "a new hard link of the master per Push, auto-load, work, close itself from outside" repeat cleanly?).
+// Continues in the SAME CATIA the reload experiment left (B first, the other copies loaded); does not restart anything:
+//        node scripts/probe-bridge.js --self-close-experiment
+//   Modules: C5D_SxB (SXB_SOURCE, written into B by C5D_Install through B's path): C5D_SxPut(key, source) writes the standard module
+//   C5D_Sx into the C5D_Bridge whose DisplayName (exact, then ignoring case) or VBProject.FileName (ignoring case) is key - exactly one
+//   hit or an error text; only projects named C5D_Bridge, only the module C5D_Sx. C5D_SxBList / C5D_SxList: every IApcProject and
+//   VBProject (name, DisplayName, FileName, module count, C5D_* modules, Saved). C5D_Sx (SX_SOURCE): C5D_SxSelf returns
+//   apc.ExecutingProject (the IApcProject running the code; taken while running, from C# it is Empty afterwards), C5D_SxWho its text.
+//   Steps (the copies t1..tN come from the start list, so phases 2-4 are built after phase 1):
+//     1 sc-b-alive sc-b-install (C5D_SxB) sc-start-list sc-b-put (C5D_Sx into B) sc-b-who
+//     2 per copy t<n> (every C5D_Bridge except B): <t>-put (through B) <t>-who (own path: ExecutingProject = itself?) <t>-close
+//       (own path: C5D_SxSelf; eval-probe.exe guards Name = C5D_Bridge, DisplayName = the path, VBProject.FileName = the FileName of the
+//       start list, and only then Close(false)) <t>-gone (list through B) <t>-recall (same path: expected 0x80004005)
+//     3 b-list (only B left?) b-close (same guarded self-close, only when b-list shows B alone) b-recall
+//     4 rounds p1 p2 p3 and the final check pz, each: <r>-link (local: new hard link C5D_Bridge-<8 hex>-p<time>-<n>.catvba of A, ms)
+//       <r>-load (auto-load, ms) <r>-install (C5D_Install C5D_Sx: the only C5D_Bridge = itself, ms) <r>-who <r>-list (C5D_Bridge x1 =
+//       this link, user projects + 1) <r>-close (guarded, ms) <r>-recall <r>-lock; a round starts only after the previous close.
+//     locks-end (A, B, links, the copies' files). Then the hard links are deleted when not locked (A read-only again).
+//   Info steps never require anything; a close requires its who (self-identified). Only a timeout, an unreachable CATIA or a
+//   vanished CNEXT.exe stops the run. User projects are only read (start list vs last list compared).
+//   Report: temp/probe-bridge-selfclose-<time>.json (summary.verdictLines: one fact per line; summary.selfClose / summary.lists as data).
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -1036,14 +1062,21 @@ const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + '       node scripts/probe-bridge.js --reload-experiment\n'
     + '  --reload-experiment: right after --remove-experiment in the SAME CATIA (A closed, B loaded; do not restart): how to load the bridge\n'
     + '    again after a Close (path strings of A, a hard link, a new file name per round x3, then B closed and a last copy z: 0 -> 1 -> 0)\n'
+    + '       node scripts/probe-bridge.js --self-close-experiment\n'
+    + '  --self-close-experiment: right after --reload-experiment in the SAME CATIA (B first, the other copies loaded; do not restart):\n'
+    + '    C5D_SxB into B, C5D_Sx into each copy by its path, self-identification by apc.ExecutingProject through the own path,\n'
+    + '    guarded Close from outside (Name/DisplayName/FileName must match) of every copy, then B; then the production idea x3 (+1 final\n'
+    + '    check): a new hard link of A per round, auto-load, C5D_Install, self-identify, close from outside. User projects are never written.\n'
     + '  Never runs a .catvbs/.CATScript. --check-only only reads CNEXT.exe modules and the bridge files.';
 
 const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup',
     '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check',
-    '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky', '--reload-experiment': 'reload-experiment' };
+    '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky', '--reload-experiment': 'reload-experiment',
+    '--self-close-experiment': 'self-close-experiment' };
 /**
  * { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'remove-experiment'
- *   | 'remove-experiment-risky' | 'reload-experiment' | 'help', steps }. Throws on bad arguments.
+ *   | 'remove-experiment-risky' | 'reload-experiment' | 'self-close-experiment' | 'help', steps }. Throws on bad arguments.
+ * (--self-close-experiment: steps = [], its step names depend on the copies found in CATIA and are recorded in the report.)
  */
 function parseArgs(args) {
     if (args.some(arg => arg === '--help' || arg === '-h')) return { mode: 'help', steps: [] };
@@ -1085,6 +1118,7 @@ function callArgs(step, library, options = {}) {
 /** Whether a step's VBA return value is the expected one. */
 function matchStep(step, result) {
     if (typeof result !== 'string') return false;
+    if (step.check) return step.check(result) === true;
     return step.pattern ? step.pattern.test(result) : result === step.expected;
 }
 /**
@@ -1535,11 +1569,13 @@ function skipReason(step, entries, aborted) {
  * CNEXT.exe or an unreachable CATIA aborts the rest; a COM exception does not (requires / unless / after skip dependent steps).
  * library: the .catvba path, or a function(step) returning it. local(step, entries) runs a local step (may be async) and returns
  * { run, entry } (step/call are added here). Fills report.runs; returns { entries, aborted }.
+ * prior: { entries, aborted } of an earlier runSequence of the same report to continue (report.runs is kept, requires / after may
+ * name its steps; used when later steps are built from the results of earlier ones).
  */
-async function runSequence(report, steps, library, pids, local) {
-    report.runs = [];
-    const entries = [];
-    let aborted = null;
+async function runSequence(report, steps, library, pids, local, prior = null) {
+    if (!prior) report.runs = [];
+    const entries = prior ? prior.entries : [];
+    let aborted = prior?.aborted ?? null;
     for (const step of steps) {
         const call = step.local ? `(local) ${step.local}` : `${step.module}.${step.func}`;
         const skipped = skipReason(step, entries, aborted);
@@ -2596,6 +2632,791 @@ async function runReload(report) {
     if (aborted) process.exitCode = 1;
 }
 
+// ---- --self-close-experiment: C5D_Install always writes into the FIRST project named C5D_Bridge, so with several copies loaded a
+// copy cannot mark itself. Here (1) a writer in B (C5D_SxB.C5D_SxPut) puts the module C5D_Sx into the copy with a given path,
+// (2) C5D_Sx asks apc.ExecutingProject who is running (C5D_SxWho: text, C5D_SxSelf: the IApcProject itself), (3) eval-probe.exe
+// closes the returned project only after guard actions confirmed its Name / DisplayName / VBProject.FileName, (4) the production
+// idea is repeated: a new hard link of the master A per Push, auto-load through that path, C5D_Install (the only C5D_Bridge = itself),
+// self-identify, close from outside.
+const SX_MODULE = 'C5D_Sx';
+const SXB_MODULE = 'C5D_SxB';
+const SX_ROUNDS = ['p1', 'p2', 'p3'];
+const SX_FINAL = 'pz';
+/** Never more than this many copies are touched (a list with more C5D_Bridge projects is not what this mode expects). */
+const SX_MAX_TARGETS = 20;
+const SX_PUT_PATTERN = /^ok;/;
+const SX_LIST_PATTERN = /^list=[^;|]*;.*;count=\d+;vbeCount=\d+;err=0(\||$)/;
+/** VBA: v = <expr>, then ";<label>=<value>" (or "=!<err>") appended to s (fmt = the module's own formatting function). */
+const sxProp = (fmt, label, expr) => ['    Err.Clear', '    v = "?"', `    v = ${expr}`, '    e = Err.Number', `    s = s & ";${label}=" & ${fmt}(v, e)`];
+/** Private helpers and the list function of one module (p = prefix of the private names: Sx in C5D_Sx, SxB in C5D_SxB). */
+function sxCommonLines(p) {
+    const prop = (label, expr) => sxProp(`${p}Fmt`, label, expr);
+    return [
+        `Private Function ${p}Clean(ByVal t As String) As String`,
+        '    t = Replace(t, "|", "/")',
+        '    t = Replace(t, ";", ",")',
+        '    t = Replace(t, vbCr, " ")',
+        '    t = Replace(t, vbLf, " ")',
+        `    ${p}Clean = t`,
+        'End Function',
+        `Private Function ${p}Fmt(ByVal v As Variant, ByVal e As Long) As String`,
+        '    On Error Resume Next',
+        '    Dim t As String',
+        '    If e <> 0 Then',
+        `        ${p}Fmt = "!" & CStr(e)`,
+        '        Exit Function',
+        '    End If',
+        '    t = "?"',
+        '    t = CStr(v)',
+        `    ${p}Fmt = ${p}Clean(t)`,
+        'End Function',
+        `Private Function ${p}Apc() As Object`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Set apc = Nothing',
+        '    Set apc = CreateObject("MSAPC.Apc.7.1")',
+        '    If apc Is Nothing Then',
+        '        Err.Clear',
+        '        Set apc = CreateObject("MSAPC.Apc")',
+        '    End If',
+        `    Set ${p}Apc = apc`,
+        'End Function',
+        "' \";comps=<VBComponents.Count>;c5d=<names of the components starting with C5D_>\"",
+        `Private Function ${p}Comps(ByVal vbp As Object) As String`,
+        '    On Error Resume Next',
+        '    Dim comps As Object',
+        '    Dim c As Object',
+        '    Dim nm As String',
+        '    Dim s As String',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Set comps = Nothing',
+        '    Set comps = vbp.VBComponents',
+        '    n = -1',
+        '    n = comps.Count',
+        '    For i = 1 To n',
+        '        Set c = Nothing',
+        '        Set c = comps.Item(i)',
+        '        nm = ""',
+        '        nm = CStr(c.Name)',
+        '        If Left(nm, 4) = "C5D_" Then s = s & "," & nm',
+        '    Next',
+        '    Err.Clear',
+        `    ${p}Comps = ";comps=" & CStr(n) & ";c5d=" & ${p}Clean(Mid(s, 2))`,
+        'End Function',
+        `Private Function ${p}ApcProj(ByVal ap As Object, ByVal ex As Object) As String`,
+        '    On Error Resume Next',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        '    Dim vbp As Object',
+        '    Dim same As Boolean',
+        '    s = ""',
+        ...prop('name', 'ap.Name'),
+        ...prop('display', 'ap.DisplayName'),
+        ...prop('mode', 'ap.Mode'),
+        '    Set vbp = Nothing',
+        '    Set vbp = ap.VBProject',
+        ...prop('file', 'vbp.FileName'),
+        `    s = s & ${p}Comps(vbp)`,
+        '    same = False',
+        '    same = (ap Is ex)',
+        '    s = s & ";exec=" & CStr(same)',
+        '    Err.Clear',
+        `    ${p}ApcProj = s`,
+        'End Function',
+        `Private Function ${p}Vbp(ByVal vbp As Object) As String`,
+        '    On Error Resume Next',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        '    s = ""',
+        ...prop('name', 'vbp.Name'),
+        ...prop('type', 'vbp.Type'),
+        ...prop('mode', 'vbp.Mode'),
+        ...prop('file', 'vbp.FileName'),
+        ...prop('saved', 'vbp.Saved'),
+        `    s = s & ${p}Comps(vbp)`,
+        '    Err.Clear',
+        `    ${p}Vbp = s`,
+        'End Function',
+        "' \"list=<TypeName(apc)>;running=..;exec=<DisplayName of apc.ExecutingProject>;count=<apc.Projects.Count>;vbeCount=<VBProjects.Count>;err=E\"",
+        "' then \"|src=apc;i=..;name=..;display=..;mode=..;file=..;comps=..;c5d=..;exec=..\" per IApcProject and \"|src=vbe;i=..;name=..;type=..;...\" per VBProject",
+        `Private Function ${p}ListText() As String`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim aps As Object',
+        '    Dim ap As Object',
+        '    Dim ex As Object',
+        '    Dim ide As Object',
+        '    Dim vbps As Object',
+        '    Dim vbp As Object',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        '    Dim i As Long',
+        '    Dim n As Long',
+        '    Dim m As Long',
+        `    Set apc = ${p}Apc()`,
+        '    If apc Is Nothing Then',
+        `        ${p}ListText = "list=Nothing;err=" & CStr(Err.Number)`,
+        '        Exit Function',
+        '    End If',
+        '    s = "list=" & TypeName(apc)',
+        ...prop('running', 'apc.Running'),
+        '    Set ex = Nothing',
+        '    Set ex = apc.ExecutingProject',
+        ...prop('exec', 'ex.DisplayName'),
+        '    Err.Clear',
+        '    Set aps = Nothing',
+        '    Set aps = apc.Projects',
+        '    n = -1',
+        '    n = aps.Count',
+        '    Set ide = Nothing',
+        '    Set ide = apc.VBE',
+        '    Set vbps = Nothing',
+        '    Set vbps = ide.VBProjects',
+        '    m = -1',
+        '    m = vbps.Count',
+        '    s = s & ";count=" & CStr(n) & ";vbeCount=" & CStr(m) & ";err=" & CStr(Err.Number)',
+        '    For i = 1 To n',
+        '        Set ap = Nothing',
+        '        Err.Clear',
+        '        Set ap = aps.Item(i)',
+        '        If ap Is Nothing Then',
+        '            s = s & "|src=apc;i=" & CStr(i) & ";err=" & CStr(Err.Number)',
+        '        Else',
+        `            s = s & "|src=apc;i=" & CStr(i) & ${p}ApcProj(ap, ex)`,
+        '        End If',
+        '    Next',
+        '    For i = 1 To m',
+        '        Set vbp = Nothing',
+        '        Err.Clear',
+        '        Set vbp = vbps.Item(i)',
+        '        If vbp Is Nothing Then',
+        '            s = s & "|src=vbe;i=" & CStr(i) & ";err=" & CStr(Err.Number)',
+        '        Else',
+        `            s = s & "|src=vbe;i=" & CStr(i) & ${p}Vbp(vbp)`,
+        '        End If',
+        '    Next',
+        `    ${p}ListText = s`,
+        'End Function'
+    ];
+}
+
+/**
+ * VBA of C5D_Sx, put into every copy that is to be closed (ASCII, CRLF, On Error Resume Next, no MsgBox, never closes/removes/saves):
+ *   C5D_SxSelf()  apc.ExecutingProject (the IApcProject running this code, i.e. the copy ExecuteScript resolved the path to) as an
+ *                 object, or "error:apc:<n>" / "error:noexec:<n>". eval-probe.exe reads it after ExecuteScript returned (then Running
+ *                 is False and ExecutingProject is Empty, so it must be taken here, while running).
+ *   C5D_SxWho()   "who=ok;running=..;name=..;display=<DisplayName>;mode=..;vbName=..;file=<VBProject.FileName>;comps=..;c5d=.."
+ *   C5D_SxList()  the list of SxListText (all IApcProjects and VBProjects; read-only)
+ */
+const SX_SOURCE = [
+    'Option Explicit',
+    ...sxCommonLines('Sx'),
+    'Public Function C5D_SxSelf() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ex As Object',
+    '    Set apc = SxApc()',
+    '    If apc Is Nothing Then',
+    '        C5D_SxSelf = "error:apc:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Err.Clear',
+    '    Set ex = Nothing',
+    '    Set ex = apc.ExecutingProject',
+    '    If ex Is Nothing Then',
+    '        C5D_SxSelf = "error:noexec:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Set C5D_SxSelf = ex',
+    'End Function',
+    'Public Function C5D_SxWho() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ex As Object',
+    '    Dim vbp As Object',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    Set apc = SxApc()',
+    '    If apc Is Nothing Then',
+    '        C5D_SxWho = "error:apc:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    s = ""',
+    ...sxProp('SxFmt', 'running', 'apc.Running'),
+    '    Err.Clear',
+    '    Set ex = Nothing',
+    '    Set ex = apc.ExecutingProject',
+    '    If ex Is Nothing Then',
+    '        C5D_SxWho = "error:noexec:" & CStr(Err.Number) & s',
+    '        Exit Function',
+    '    End If',
+    ...sxProp('SxFmt', 'name', 'ex.Name'),
+    ...sxProp('SxFmt', 'display', 'ex.DisplayName'),
+    ...sxProp('SxFmt', 'mode', 'ex.Mode'),
+    '    Set vbp = Nothing',
+    '    Set vbp = ex.VBProject',
+    ...sxProp('SxFmt', 'vbName', 'vbp.Name'),
+    ...sxProp('SxFmt', 'file', 'vbp.FileName'),
+    '    s = s & SxComps(vbp)',
+    '    Err.Clear',
+    '    C5D_SxWho = "who=ok" & s',
+    'End Function',
+    'Public Function C5D_SxList() As Variant',
+    '    C5D_SxList = SxListText()',
+    'End Function',
+    ''
+].join('\r\n');
+
+/**
+ * VBA of C5D_SxB, written into B by C5D_Install (B is the first C5D_Bridge, so C5D_Install through B's path writes into B):
+ *   C5D_SxPut(key, source)  among the IApcProjects NAMED C5D_Bridge only (never a user project): pass 1 DisplayName = key exactly,
+ *     pass 2 DisplayName ignoring case, pass 3 VBProject.FileName ignoring case (dot/dotdot/slash variants share one FileName, so
+ *     FileName alone is ambiguous; DisplayName keeps the string ExecuteScript was given). Exactly one hit in a pass -> the standard
+ *     module C5D_Sx of that project gets source (added, or its lines replaced). Only C5D_Sx is ever written (never C5D_Bridge_Push).
+ *     -> "ok;pass=N;existed=<True|False>;lines=N;display=..;file=.." | "error:ambiguous:passN:<hits>" | "error:notfound:count=N" | "error:..."
+ *   C5D_SxBList()  the same list as C5D_SxList (read-only)
+ */
+const SXB_SOURCE = [
+    'Option Explicit',
+    `Private Const SX_PROJECT As String = "${BRIDGE_PROJECT}"`,
+    `Private Const SX_MODULE As String = "${SX_MODULE}"`,
+    ...sxCommonLines('SxB'),
+    'Public Function C5D_SxPut(ByVal key As Variant, ByVal source As Variant) As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim aps As Object',
+    '    Dim ap As Object',
+    '    Dim hit As Object',
+    '    Dim vbp As Object',
+    '    Dim comps As Object',
+    '    Dim comp As Object',
+    '    Dim cm As Object',
+    '    Dim k As String',
+    '    Dim nm As String',
+    '    Dim dn As String',
+    '    Dim fl As String',
+    '    Dim ok As Boolean',
+    '    Dim existed As Boolean',
+    '    Dim pass As Long',
+    '    Dim found As Long',
+    '    Dim hits As Long',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Dim cnt As Long',
+    '    Dim e As Long',
+    '    Set apc = SxBApc()',
+    '    If apc Is Nothing Then',
+    '        C5D_SxPut = "error:apc:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    k = ""',
+    '    k = CStr(key)',
+    '    If Len(k) = 0 Then',
+    '        C5D_SxPut = "error:key:empty"',
+    '        Exit Function',
+    '    End If',
+    '    Set aps = Nothing',
+    '    Set aps = apc.Projects',
+    '    n = -1',
+    '    n = aps.Count',
+    '    found = 0',
+    '    For pass = 1 To 3',
+    '        hits = 0',
+    '        Set hit = Nothing',
+    '        For i = 1 To n',
+    '            Set ap = Nothing',
+    '            Set ap = aps.Item(i)',
+    '            nm = ""',
+    '            nm = CStr(ap.Name)',
+    '            dn = ""',
+    '            dn = CStr(ap.DisplayName)',
+    '            fl = ""',
+    '            fl = CStr(ap.VBProject.FileName)',
+    '            ok = False',
+    '            If nm = SX_PROJECT Then',
+    '                If pass = 1 Then',
+    '                    ok = (StrComp(dn, k, vbBinaryCompare) = 0)',
+    '                ElseIf pass = 2 Then',
+    '                    ok = (StrComp(dn, k, vbTextCompare) = 0)',
+    '                Else',
+    '                    ok = (StrComp(fl, k, vbTextCompare) = 0)',
+    '                End If',
+    '            End If',
+    '            If ok Then',
+    '                hits = hits + 1',
+    '                Set hit = ap',
+    '            End If',
+    '        Next',
+    '        If hits > 1 Then',
+    '            C5D_SxPut = "error:ambiguous:pass" & CStr(pass) & ":" & CStr(hits)',
+    '            Exit Function',
+    '        End If',
+    '        If hits = 1 Then',
+    '            found = pass',
+    '            Exit For',
+    '        End If',
+    '    Next',
+    '    If found = 0 Then',
+    '        C5D_SxPut = "error:notfound:count=" & CStr(n)',
+    '        Exit Function',
+    '    End If',
+    '    Err.Clear',
+    '    Set vbp = Nothing',
+    '    Set vbp = hit.VBProject',
+    '    If vbp Is Nothing Then',
+    '        C5D_SxPut = "error:vbproject:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Set comps = Nothing',
+    '    Set comps = vbp.VBComponents',
+    '    If comps Is Nothing Then',
+    '        C5D_SxPut = "error:components:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Set comp = Nothing',
+    '    Set comp = comps.Item(SX_MODULE)',
+    '    Err.Clear',
+    '    existed = Not (comp Is Nothing)',
+    '    If Not existed Then',
+    '        Set comp = comps.Add(1)',
+    '        If comp Is Nothing Then',
+    '            C5D_SxPut = "error:add:" & CStr(Err.Number) & ":" & SxBClean(Err.Description)',
+    '            Exit Function',
+    '        End If',
+    '        Err.Clear',
+    '        comp.Name = SX_MODULE',
+    '        e = Err.Number',
+    '        If e <> 0 Then',
+    '            C5D_SxPut = "error:name:" & CStr(e) & ":" & SxBClean(Err.Description)',
+    '            Exit Function',
+    '        End If',
+    '    End If',
+    '    Set cm = Nothing',
+    '    Set cm = comp.CodeModule',
+    '    If cm Is Nothing Then',
+    '        C5D_SxPut = "error:codemodule:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    cnt = 0',
+    '    cnt = cm.CountOfLines',
+    '    Err.Clear',
+    '    If cnt > 0 Then cm.DeleteLines 1, cnt',
+    '    e = Err.Number',
+    '    If e <> 0 Then',
+    '        C5D_SxPut = "error:delete:" & CStr(e) & ":" & SxBClean(Err.Description)',
+    '        Exit Function',
+    '    End If',
+    '    cm.AddFromString CStr(source)',
+    '    e = Err.Number',
+    '    If e <> 0 Then',
+    '        C5D_SxPut = "error:addfromstring:" & CStr(e) & ":" & SxBClean(Err.Description)',
+    '        Exit Function',
+    '    End If',
+    '    cnt = -1',
+    '    cnt = cm.CountOfLines',
+    '    dn = ""',
+    '    dn = CStr(hit.DisplayName)',
+    '    fl = ""',
+    '    fl = CStr(vbp.FileName)',
+    '    Err.Clear',
+    '    C5D_SxPut = "ok;pass=" & CStr(found) & ";existed=" & CStr(existed) & ";lines=" & CStr(cnt) & ";display=" & SxBClean(dn) & ";file=" & SxBClean(fl)',
+    'End Function',
+    'Public Function C5D_SxBList() As Variant',
+    '    C5D_SxBList = SxBListText()',
+    'End Function',
+    ''
+].join('\r\n');
+
+/** "k=v;k=v" -> { k: v } (the first = splits; values never contain ; or |). */
+const sxFields = text => Object.fromEntries(String(text ?? '').split(';').filter(Boolean).map(kv => {
+    const i = kv.indexOf('=');
+    return i < 0 ? [kv, ''] : [kv.slice(0, i), kv.slice(i + 1)];
+}));
+/** C5D_SxList / C5D_SxBList text -> { header, count, vbeCount, apc: [{..}], vbe: [{..}] } or null (not a list). */
+function parseSxList(text) {
+    if (typeof text !== 'string' || !text.startsWith('list=')) return null;
+    const [head, ...rest] = text.split('|');
+    const header = sxFields(head);
+    const num = value => /^\d+$/.test(value ?? '') ? Number(value) : null;
+    const items = rest.map(sxFields);
+    return { header, count: num(header.count), vbeCount: num(header.vbeCount), err: header.err ?? null,
+        apc: items.filter(p => p.src === 'apc'), vbe: items.filter(p => p.src === 'vbe') };
+}
+/** C5D_SxWho text -> fields ({ who: 'ok', display, file, ... }), { error: <text> } for "error:..." or null. */
+function parseWho(text) {
+    if (typeof text !== 'string') return null;
+    if (text.startsWith('who=')) return sxFields(text);
+    return text.startsWith('error:') ? { error: text } : null;
+}
+/** The C5D_Bridge entries (apc part) of a parsed list. */
+const sxBridges = list => (list?.apc ?? []).filter(p => p.name === BRIDGE_PROJECT);
+/** The user projects (everything not named C5D_Bridge) of a parsed list: { apc: [{ name, file, comps }], vbe: [{ name, file, comps, saved }] }. */
+function sxUserProjects(list) {
+    if (!list) return null;
+    const user = p => p.name !== BRIDGE_PROJECT;
+    return { apc: list.apc.filter(user).map(p => ({ name: p.name, file: p.file, comps: p.comps })),
+        vbe: list.vbe.filter(user).map(p => ({ name: p.name, file: p.file, comps: p.comps, saved: p.saved })) };
+}
+/** Whether a C5D_SxWho result says the running project is the C5D_Bridge shown as library (DisplayName, ignoring case). */
+function whoIsSelf(result, library) {
+    const who = parseWho(result);
+    return Boolean(who && who.who === 'ok' && who.name === BRIDGE_PROJECT && sameText(who.display, library));
+}
+/** VBA-style quoted literal for a guard action ('' for '). */
+const sxLiteral = text => `'${String(text).replace(/'/g, "''")}'`;
+/**
+ * Actions of a self-close step: read Name / DisplayName / VBProject.FileName of the returned project, then three guards (Name, the
+ * library string, the expected FileName). Only if all three hold, Close(false) (index SX_CLOSE_ACTION) and a Name read that should
+ * fail (disconnected) afterwards.
+ */
+const sxCloseActions = (display, file) => ['get:$.Name', 'get:$.DisplayName', 'get:$.VBProject.FileName', `guard:$.Name=${sxLiteral(BRIDGE_PROJECT)}`,
+    `guard:$.DisplayName=${sxLiteral(display)}`, `guard:$.VBProject.FileName=${sxLiteral(file)}`, 'call:$.Close(false)', 'get:$.Name'];
+const SX_CLOSE_ACTION = 6;
+
+const sxCall = (name, library, module, func, args = [], extra = {}) => ({ name, library, module, func, args, ...extra });
+/** List through B (C5D_SxB) or through the copy itself (C5D_Sx). Info: never requires anything (check, if given, only sets match). */
+const sxListStep = (name, library, via, extra = {}) => sxCall(name, library, via === 'b' ? SXB_MODULE : SX_MODULE, via === 'b' ? 'C5D_SxBList' : 'C5D_SxList', [],
+    { pattern: SX_LIST_PATTERN, info: 'sx', ...extra });
+const sxWhoStep = (name, library, extra = {}) => sxCall(name, library, SX_MODULE, 'C5D_SxWho', [], { check: result => whoIsSelf(result, library), self: library, ...extra });
+const sxCloseStep = (name, library, file, extra = {}) => sxCall(name, library, SX_MODULE, 'C5D_SxSelf', [],
+    { actions: sxCloseActions(library, file), mustSucceed: [SX_CLOSE_ACTION], resultType: 'ComObject', closeOf: library, ...extra });
+const sxRecallStep = (name, library, extra = {}) => sxCall(name, library, BRIDGE_MODULE, 'C5D_Version', [], { expectFailure: BRIDGE_VERSION, ...extra });
+
+/** Phase 1 (through B): identify B, install the writer, list, put C5D_Sx into B, B identifies itself. */
+function buildSelfCloseStart(b) {
+    return [
+        sxCall('sc-b-alive', b, B_MODULE, 'C5D_BAlive', [], { expected: B_ALIVE }),
+        sxCall('sc-b-install', b, BRIDGE_MODULE, 'C5D_Install', [SXB_MODULE, SXB_SOURCE], { expected: 'ok' }),
+        sxListStep('sc-start-list', b, 'b'),
+        sxCall('sc-b-put', b, SXB_MODULE, 'C5D_SxPut', [b, SX_SOURCE], { pattern: SX_PUT_PATTERN, requires: ['sc-b-install'], putOf: b }),
+        sxWhoStep('sc-b-who', b, { requires: ['sc-b-put'] })
+    ];
+}
+/** Phase 2: every other copy t<n> = { tag, display, file }: put, who (own path), guarded self-close, list through B, same path again. */
+function buildSelfCloseTargets(b, targets) {
+    const steps = [];
+    for (const t of targets) {
+        steps.push(
+            sxCall(`${t.tag}-put`, b, SXB_MODULE, 'C5D_SxPut', [t.display, SX_SOURCE], { pattern: SX_PUT_PATTERN, requires: ['sc-b-install'], target: t.tag, putOf: t.display }),
+            sxWhoStep(`${t.tag}-who`, t.display, { requires: [`${t.tag}-put`], target: t.tag }),
+            sxCloseStep(`${t.tag}-close`, t.display, t.file, { requires: [`${t.tag}-who`], target: t.tag }),
+            sxListStep(`${t.tag}-gone`, b, 'b', { target: t.tag }),
+            sxRecallStep(`${t.tag}-recall`, t.display, { after: [`${t.tag}-close`], target: t.tag }));
+    }
+    return steps;
+}
+/** Phase 3: B closes itself, but only when the list through B shows no other C5D_Bridge. */
+function buildSelfCloseB(b, bFile = b) {
+    return [
+        sxListStep('b-list', b, 'b', { check: result => { const l = parseSxList(result); const br = sxBridges(l); return SX_LIST_PATTERN.test(result) && br.length === 1 && sameText(br[0].display, b); } }),
+        sxCloseStep('b-close', b, bFile, { requires: ['sc-b-who', 'b-list'] }),
+        sxRecallStep('b-recall', b, { after: ['b-close'] })
+    ];
+}
+/**
+ * Phase 4: the production idea per round r = { tag, path } (a new hard link of A): link, auto-load, C5D_Install (writes into the
+ * first C5D_Bridge = this one), who, list (C5D_Bridge x1 = this link, userCount + 1 projects), guarded self-close, same path again,
+ * lock. Round n starts only after round n-1 (or B) was closed (else C5D_Install would write into the left-over project).
+ */
+function buildSelfCloseRounds(rounds, userCount = null, first = 'b-close') {
+    const steps = [];
+    let previous = first;
+    for (const r of rounds) {
+        const p = r.path;
+        const listCheck = result => {
+            const l = parseSxList(result), br = sxBridges(l);
+            return Boolean(l && SX_LIST_PATTERN.test(result) && br.length === 1 && sameText(br[0].display, p)
+                && (userCount === null || (l.count === userCount + 1 && l.vbeCount === userCount + 1)));
+        };
+        steps.push(
+            { name: `${r.tag}-link`, local: 'link', path: p, round: r.tag, requires: [previous] },
+            sxCall(`${r.tag}-load`, p, BRIDGE_MODULE, 'C5D_Version', [], { expected: BRIDGE_VERSION, requires: [`${r.tag}-link`], round: r.tag }),
+            sxCall(`${r.tag}-install`, p, BRIDGE_MODULE, 'C5D_Install', [SX_MODULE, SX_SOURCE], { expected: 'ok', requires: [`${r.tag}-load`], round: r.tag }),
+            sxWhoStep(`${r.tag}-who`, p, { requires: [`${r.tag}-install`], round: r.tag }),
+            sxListStep(`${r.tag}-list`, p, 'self', { after: [`${r.tag}-load`], check: listCheck, round: r.tag }),
+            sxCloseStep(`${r.tag}-close`, p, p, { requires: [`${r.tag}-who`], round: r.tag }),
+            sxRecallStep(`${r.tag}-recall`, p, { after: [`${r.tag}-close`], round: r.tag }),
+            { name: `${r.tag}-lock`, local: 'locks', files: [r.tag], after: [`${r.tag}-link`], round: r.tag });
+        previous = `${r.tag}-close`;
+    }
+    return steps;
+}
+/** Hard link names of the rounds: C5D_Bridge-<8 hex>-p<yyyyMMddHHmmss>-<n>.catvba next to A (n = 1..4; 4 = the final check pz). */
+function selfCloseRounds(a, runTag) {
+    const dir = path.win32.dirname(a), base = path.win32.basename(a, '.catvba');
+    return [...SX_ROUNDS, SX_FINAL].map((tag, i) => ({ tag, path: path.win32.join(dir, `${base}-p${runTag}-${i + 1}.catvba`) }));
+}
+/**
+ * The copies to close: every C5D_Bridge of the start list (apc part) except B, in list order, as { tag: t<n>, display, file, label }.
+ * label = the tag of the --reload-experiment path it equals (expected: [{ tag, path }]), else null. Throws above SX_MAX_TARGETS.
+ */
+function selfCloseTargets(list, b, expected = []) {
+    const others = sxBridges(list).filter(p => !sameText(p.display, b));
+    if (others.length > SX_MAX_TARGETS) throw new Error(`${others.length} C5D_Bridge copies loaded (more than ${SX_MAX_TARGETS}); not what this mode expects`);
+    return others.map((p, i) => ({ tag: `t${i + 1}`, display: p.display, file: p.file,
+        label: (expected.find(x => x.path === p.display) ?? expected.find(x => sameText(x.path, p.display)))?.tag ?? null }));
+}
+/** The C5D_Bridge paths the latest --reload-experiment left loaded: [{ tag, path }] (copies c1..c3, z and the loaded path variants), or null. */
+function reloadLeftovers(directory = TEMP) {
+    let names;
+    try { names = fs.readdirSync(directory); } catch { return null; }
+    const latest = names.filter(name => /^probe-bridge-reload-\d{8}-\d{6}(-\d+)?\.json$/.test(name)).sort((x, y) => x.localeCompare(y, 'en', { numeric: true })).pop();
+    if (!latest) return null;
+    try {
+        const r = JSON.parse(fs.readFileSync(path.join(directory, latest), 'utf8'));
+        const loaded = name => r.summary?.steps?.find(s => s.step === name)?.match === true;
+        const list = [...RL_ROUNDS, RL_FINAL].filter(tag => loaded(`${tag}-load`) && r.files?.[tag]?.state?.path).map(tag => ({ tag, path: r.files[tag].state.path }));
+        for (const v of r.variants ?? []) if (!v.disabled && loaded(`${v.tag}-load`)) list.push({ tag: v.tag, path: v.library });
+        return { report: path.join(directory, latest), list };
+    } catch (error) { return { report: path.join(directory, latest), error: errorText(error), list: [] }; }
+}
+/** All step names of --self-close-experiment for n copies (the targets come from the live list, so the names depend on n). */
+function selfCloseStepNames(n = 0) {
+    const x = 'C:\\x\\C5D_Bridge-x.catvba';
+    const targets = Array.from({ length: n }, (_, i) => ({ tag: `t${i + 1}`, display: x, file: x }));
+    return [...buildSelfCloseStart(x), ...buildSelfCloseTargets(x, targets), ...buildSelfCloseB(x), ...buildSelfCloseRounds(selfCloseRounds(x, '0')), { name: 'locks-end' }]
+        .map(s => s.name);
+}
+
+// -- judging
+const actionOf = (e, index) => (e?.actions ?? []).find(a => a.action === index);
+/** { ok, ms, display, file, guard, error } of a self-close step (guard: the first failed guard, if any). */
+function sxCloseFacts(e) {
+    if (!e || e.skipped) return { ok: null, ms: null, display: null, file: null, guard: null, error: e ? e.skipped : 'not in this run' };
+    const get = i => { const a = actionOf(e, i); return a?.ok ? a.result : null; };
+    const failedGuard = (e.actions ?? []).find(a => String(a.op).startsWith('guard:') && a.ok === false && !a.skipped);
+    const close = actionOf(e, SX_CLOSE_ACTION);
+    const base = { display: get(1), file: get(2), guard: failedGuard ? `${failedGuard.op} -> ${failedGuard.message ?? failedGuard.hresult}` : null };
+    if (!close) return { ok: false, ms: null, ...base, error: e.ok ? `no object (${JSON.stringify(e.result)})` : rlOutcome(e) };
+    if (close.skipped) return { ok: false, ms: null, ...base, error: base.guard ? `guard failed: ${base.guard}` : close.message ?? rlOutcome(e) };
+    return { ok: close.ok === true, ms: close.elapsedMs ?? null, ...base, error: close.ok ? null : `${close.hresult} ${String(close.message ?? '').split(/\r?\n/)[0]}`.trim() };
+}
+const closeWord = c => c.ok === null ? `close not run (${c.error})` : c.ok ? `closed ${c.ms}ms` : `NOT closed (${c.error})`;
+const whoWord = (e, library) => {
+    if (!e || e.skipped || !e.ok) return `who ${rlOutcome(e)}`;
+    const who = parseWho(e.result);
+    if (!who || who.who !== 'ok') return `who ${JSON.stringify(e.result)}`;
+    const exact = who.display === library;
+    return `ExecutingProject = ${JSON.stringify(who.display)} file ${JSON.stringify(who.file)} -> self ${whoIsSelf(e.result, library) ? (exact ? 'yes (exact)' : 'yes (ignoring case)') : 'NO'}`;
+};
+const putWord = e => !e || e.skipped || !e.ok ? `put ${rlOutcome(e)}` : SX_PUT_PATTERN.test(e.result)
+    ? `put ok (pass ${sxFields(e.result).pass}, existed ${sxFields(e.result).existed})` : `put ${JSON.stringify(e.result)}`;
+const listOf = e => (e && !e.skipped && e.ok ? parseSxList(e.result) : null);
+const bridgeNames = list => sxBridges(list).map(p => baseName(p.display) + (p.display.includes('\\.\\') ? ' (\\.\\)' : p.display.includes('\\..\\') ? ' (\\..\\)'
+    : p.display.includes('/') ? ' (/)' : p.display.startsWith('\\\\?\\') ? ' (\\\\?\\)' : ''));
+const describeSxList = e => {
+    if (!e || e.skipped || !e.ok) return rlOutcome(e);
+    const l = parseSxList(e.result);
+    if (!l) return `unexpected ${JSON.stringify(e.result)}`;
+    const br = bridgeNames(l);
+    return `apc ${l.count} / vbe ${l.vbeCount} projects, ${BRIDGE_PROJECT} x${br.length}${br.length ? ` [${br.join('; ')}]` : ''}${l.err !== '0' ? ` err=${l.err}` : ''}`;
+};
+/** Differences of the user projects between two lists (name, FileName, module count; VBE also Saved), [] = identical. */
+function userDiff(start, end) {
+    if (!start || !end) return null;
+    const diffs = [];
+    for (const kind of ['apc', 'vbe']) {
+        const a = start[kind], b = end[kind];
+        if (a.length !== b.length) diffs.push(`${kind}: ${a.length} -> ${b.length} projects`);
+        for (let i = 0; i < Math.max(a.length, b.length); i++) {
+            const x = a[i], y = b[i];
+            if (JSON.stringify(x) !== JSON.stringify(y)) diffs.push(`${kind} #${i + 1}: ${JSON.stringify(x ?? null)} -> ${JSON.stringify(y ?? null)}`);
+        }
+    }
+    return diffs;
+}
+
+/**
+ * Verdict of --self-close-experiment: { lines, data }. ctx: { b, a, targets, rounds, leftovers, cleanup, userCount }.
+ * entries carry elapsedMs (ExecuteScript time measured by eval-probe.exe) and, for local link steps, ms.
+ */
+function judgeSelfClose(beforeLoaded, entries, ctx) {
+    const get = name => entries.find(e => e.step === name);
+    const lines = [];
+    const startList = listOf(get('sc-start-list'));
+    lines.push(`start: B ${baseName(ctx.b)} ${get('sc-b-alive')?.match ? 'answers C5D_ProbeB (the B of the earlier runs)' : `C5D_ProbeB ${rlOutcome(get('sc-b-alive'))}`}, `
+        + `C5D_SxB via C5D_Install ${get('sc-b-install')?.match ? 'ok' : rlOutcome(get('sc-b-install'))}`);
+    lines.push(`start list (through B): ${describeSxList(get('sc-start-list'))}`);
+    const users = sxUserProjects(startList);
+    if (users) lines.push(`user projects at start: ${users.vbe.length} (${users.vbe.map(p => `${p.name}[${p.comps}]`).join(', ')})`);
+    if (ctx.leftovers) {
+        const live = ctx.targets.map(t => t.display);
+        const expected = ctx.leftovers.list.map(x => x.path);
+        const missing = expected.filter(p => !live.some(l => l === p));
+        const extra = ctx.targets.filter(t => !t.label).map(t => t.display);
+        lines.push(`copies other than B: ${ctx.targets.length} live vs ${expected.length} left by ${baseName(ctx.leftovers.report)}`
+            + `${missing.length ? `; not loaded any more: ${missing.map(p => JSON.stringify(p)).join(', ')}` : ''}${extra.length ? `; not from that run: ${extra.map(p => JSON.stringify(p)).join(', ')}` : ''}`);
+    } else lines.push(`copies other than B: ${ctx.targets.length} (no --reload-experiment report to compare with)`);
+    lines.push(`B: ${putWord(get('sc-b-put'))}, ${whoWord(get('sc-b-who'), ctx.b)}`);
+    let previous = startList ? sxBridges(startList).length : null;
+    const targets = ctx.targets.map(t => {
+        const close = sxCloseFacts(get(`${t.tag}-close`));
+        const gone = listOf(get(`${t.tag}-gone`));
+        const now = gone ? sxBridges(gone).length : null;
+        const left = gone ? sxBridges(gone).some(p => p.display === t.display) : null;
+        const fact = { tag: t.tag, label: t.label, display: t.display, file: t.file, put: get(`${t.tag}-put`)?.result ?? null,
+            self: get(`${t.tag}-who`)?.match ?? null, who: parseWho(get(`${t.tag}-who`)?.result), close,
+            counts: [previous, now], gone: left === null ? null : !left, recall: get(`${t.tag}-recall`) ? recallWord(get(`${t.tag}-recall`)) : null };
+        lines.push(`target ${t.tag}${t.label ? ` (${t.label})` : ''} ${JSON.stringify(t.display)}: ${putWord(get(`${t.tag}-put`))}, ${whoWord(get(`${t.tag}-who`), t.display)}, `
+            + `${closeWord(close)}, ${BRIDGE_PROJECT} ${previous ?? '?'} -> ${now ?? '?'}, gone ${yn(fact.gone)}, same path after close ${fact.recall ?? '-'}`);
+        if (now !== null) previous = now;
+        return fact;
+    });
+    const bClose = sxCloseFacts(get('b-close'));
+    lines.push(`B before its close: ${describeSxList(get('b-list'))} (only B left: ${yn(get('b-list')?.skipped ? null : get('b-list')?.match ?? null)}); `
+        + `B ${closeWord(bClose)}, B path after close ${get('b-recall') ? recallWord(get('b-recall')) : '-'}`);
+    const rounds = ctx.rounds.map(r => {
+        const link = get(`${r.tag}-link`), load = get(`${r.tag}-load`), install = get(`${r.tag}-install`), list = get(`${r.tag}-list`);
+        const close = sxCloseFacts(get(`${r.tag}-close`));
+        const lock = get(`${r.tag}-lock`)?.locks?.[r.tag] ?? null;
+        const fact = { tag: r.tag, path: r.path, link: link?.skipped ? null : link?.match ?? null, linkMs: link?.ms ?? null,
+            load: load?.skipped ? null : load?.match ?? null, loadMs: load?.elapsedMs ?? null,
+            install: install?.skipped ? null : install?.match ?? null, installMs: install?.elapsedMs ?? null,
+            self: get(`${r.tag}-who`)?.skipped ? null : get(`${r.tag}-who`)?.match ?? null, listOk: list?.skipped ? null : list?.match ?? null,
+            counts: listOf(list) ? { apc: listOf(list).count, vbe: listOf(list).vbeCount, bridges: sxBridges(listOf(list)).length } : null,
+            close, recall: get(`${r.tag}-recall`) ? recallWord(get(`${r.tag}-recall`)) : null, lockAfterClose: lock };
+        const head = `round ${r.tag}${r.tag === SX_FINAL ? ' (final check)' : ''} ${baseName(r.path)}: `;
+        if (!link || link.skipped) lines.push(head + `not run (${link?.skipped ?? 'not in this run'})`);
+        else {
+            lines.push(head + `link ${fact.link ? `ok ${fact.linkMs}ms` : `FAILED ${link.message ?? ''}`}, load ${fact.load ? `ok ${fact.loadMs}ms` : rlOutcome(load)}, `
+                + `install ${fact.install ? `ok ${fact.installMs}ms` : rlOutcome(install)}, ${whoWord(get(`${r.tag}-who`), r.path)}, `
+                + `list ${describeSxList(list)} (C5D_Bridge x1 = this link and user ${ctx.userCount ?? '?'} + 1: ${yn(fact.listOk)}), `
+                + `${closeWord(close)}, same path after close ${fact.recall ?? '-'}, lock after close ${lockWord(lock)}`);
+        }
+        return fact;
+    });
+    const doneRounds = rounds.filter(r => r.close.ok);
+    if (rounds.length) {
+        const ms = key => doneRounds.map(r => key(r)).filter(n => typeof n === 'number');
+        const avg = list => list.length ? Math.round(list.reduce((x, y) => x + y, 0) / list.length) : '-';
+        lines.push(`rounds closed: ${doneRounds.length}/${rounds.length}; average load ${avg(ms(r => r.loadMs))}ms, install ${avg(ms(r => r.installMs))}ms, `
+            + `close ${avg(ms(r => r.close.ms))}ms`);
+    }
+    const all = [...targets.map(t => ({ self: t.self, close: t.close })), { self: get('sc-b-who')?.match ?? null, close: bClose },
+        ...rounds.map(r => ({ self: r.self, close: r.close }))];
+    const tried = all.filter(x => x.self !== null);
+    lines.push(`self-identification by apc.ExecutingProject through the own path: ${tried.filter(x => x.self).length}/${tried.length}; `
+        + `guarded Close: ${all.filter(x => x.close.ok).length}/${all.filter(x => x.close.ok !== null).length} closed`
+        + `${all.some(x => x.close.guard) ? `, a guard stopped ${all.filter(x => x.close.guard).length}` : ''}`);
+    const lastList = [...ctx.rounds].reverse().map(r => listOf(get(`${r.tag}-list`))).find(Boolean) ?? listOf(get('b-list'));
+    const diff = userDiff(users, sxUserProjects(lastList));
+    lines.push(diff === null ? 'user projects start vs end: not compared (a list is missing)'
+        : diff.length ? `user projects start vs end: DIFFER: ${diff.join('; ')}` : `user projects start vs end: identical (${users.vbe.length} projects: name, FileName, module count, Saved)`);
+    const locks = get('locks-end')?.locks ?? {};
+    lines.push(`locks at end: ${Object.entries(locks).map(([k, l]) => `${k} ${lockWord(l)}`).join(', ') || 'not probed'}`);
+    if (ctx.cleanup) lines.push(`cleanup: ${ctx.cleanup.map(c => `${c.key} ${c.action}${c.error ? ` (${c.error})` : ''}`).join(', ') || 'nothing'}`
+        + `${ctx.aReadOnly === undefined ? '' : `; A read-only afterwards ${yn(ctx.aReadOnly)}`}`);
+    const crashed = entries.find(e => e.crashed);
+    if (crashed) lines.push(`CATIA crashed after step ${crashed.step}`);
+    const timedOut = entries.find(e => e.timedOut);
+    if (timedOut) lines.push(`timed out at step ${timedOut.step} (CATIA may be stopped at a dialog)`);
+    lines.push(describeVbscript(beforeLoaded, entries));
+    return { lines, data: { targets, bClose, rounds, userDiff: diff, locks, cleanup: ctx.cleanup ?? null } };
+}
+
+/**
+ * --self-close-experiment (the SAME CATIA the reload experiment left: B first, other copies loaded; NOT restarted). Phase 1 through
+ * B; the copies to close come from its start list; then phases 2-4 (buildSelfCloseTargets / buildSelfCloseB / buildSelfCloseRounds)
+ * one --no-retry call at a time. Only a timeout, an unreachable CATIA or a vanished CNEXT.exe stops the run. At the end the hard
+ * links are deleted when not locked (A read-only again).
+ */
+async function runSelfClose(report) {
+    const paths = hashedPaths();
+    const a = paths.target;
+    const b = path.join(path.dirname(a), COPY_B_FILE);
+    report.cnext = cnextProcesses();
+    if (!report.cnext.error && !report.cnext.processes.length) throw new Error('CNEXT.exe is not running');
+    for (const f of [a, b]) if (!fs.existsSync(f)) throw new Error(`${f} does not exist; this mode continues after --reload-experiment (B and the copies loaded)`);
+    const runTag = timestamp().replace('-', '');
+    const rounds = selfCloseRounds(a, runTag);
+    const files = { a, b, ...Object.fromEntries(rounds.map(r => [r.tag, r.path])) };
+    report.files = { a: { role: 'A (master, read-only; hard links are made of it; never modified)', state: fileState(a), lock: lockProbe(a) },
+        b: { role: 'B (first C5D_Bridge; never modified on disk)', state: fileState(b), lock: lockProbe(b) } };
+    if (report.files.a.state.readOnly !== true) report.notes.push(`${a} is NOT read-only at the start.`);
+    if (report.files.a.state.sha256 !== sha256(paths.source)) report.notes.push(`${a} differs from ${paths.source}.`);
+    for (const r of rounds) if (fs.existsSync(r.path)) throw new Error(`${r.path} already exists`);
+    const leftovers = reloadLeftovers();
+    report.leftovers = leftovers;
+    report.library = '(per step, see each run)';
+    report.libraryPerStep = true;
+    report.exe = buildProbe(ROOT);
+    const first = trySnapshot(report, 'before');
+    if (first.error) throw new Error(`module snapshot failed: ${first.error}`);
+    checkCnext(report, first.snapshot);
+    const pids = first.snapshot.cnextPids;
+    report.cnextPids = pids;
+    report.vbscriptBefore = first.snapshot.loaded;
+    if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step.');
+    const local = async step => {
+        const started = Date.now();
+        if (step.local === 'link') {
+            const link = makeHardlink(a, step.path);
+            const ms = Date.now() - started;
+            report.files[step.round] = { role: `hard link of A for round ${step.round}`, hardlink: link, state: link.ok ? fileState(step.path) : null, lock: link.ok ? lockProbe(step.path) : null };
+            const aReadOnly = fileState(a).readOnly;
+            return { run: { local: true, kind: 'link', ok: link.ok, match: link.ok, ...link, aReadOnly, durationMs: ms, message: link.error },
+                entry: { ok: link.ok, match: link.ok, ms, path: step.path, message: link.error, aReadOnly } };
+        }
+        if (step.local !== 'locks') throw new Error(`unknown local step ${step.local}`);
+        const locks = Object.fromEntries(step.files.filter(key => files[key] && fs.existsSync(files[key])).map(key => [key, lockProbe(files[key])]));
+        return { run: { local: true, kind: 'locks', ok: true, match: true, locks, durationMs: Date.now() - started }, entry: { ok: true, match: true, locks } };
+    };
+    // phase 1, then the copies from its list
+    const start = buildSelfCloseStart(b);
+    let state = await runSequence(report, start, step => step.library, pids, local);
+    const startList = listOf(state.entries.find(e => e.step === 'sc-start-list'));
+    if (!startList) report.notes.push('The start list through B failed; no copy is closed (B and the rounds are still tried).');
+    const targets = selfCloseTargets(startList, b, leftovers?.list ?? []);
+    report.targets = targets;
+    const userCount = startList ? sxUserProjects(startList).vbe.length : null;
+    const bFile = sxBridges(startList).find(p => sameText(p.display, b))?.file || b;
+    // lock probes at the end: A, B, the hard links and the copies (the files behind their path strings; nothing is deleted)
+    targets.forEach(t => { files[t.tag] = t.display; });
+    const rest = [...buildSelfCloseTargets(b, targets), ...buildSelfCloseB(b, bFile), ...buildSelfCloseRounds(rounds, userCount),
+        { name: 'locks-end', local: 'locks', files: Object.keys(files) }];
+    state = await runSequence(report, rest, step => step.library, pids, local, state);
+    const { entries, aborted } = state;
+    const steps = [...start, ...rest];
+    report.steps = steps.map(s => s.name);
+    for (const entry of entries) {
+        const run = report.runs.find(r => r.step === entry.step);
+        if (run?.result) Object.assign(entry, { elapsedMs: run.result.elapsedMs ?? null, processMs: run.durationMs ?? null });
+        if (run?.actions) Object.assign(entry, { resultType: run.result?.resultType ?? null, typeInfo: run.result?.typeInfo ?? null });
+    }
+    for (const [key, f] of Object.entries(report.files)) {
+        const file = files[key];
+        if (file) Object.assign(f, { stateAtEnd: fileState(file), lockAtEnd: lockProbe(file) });
+    }
+    for (const key of ['a', 'b']) {
+        const f = report.files[key];
+        if (f.state.sha256 && f.stateAtEnd.sha256 && f.state.sha256 !== f.stateAtEnd.sha256) report.notes.push(`${files[key]} changed during the run.`);
+    }
+    report.cleanup = cleanupProbeFiles(rounds.filter(r => fs.existsSync(r.path)).map(r => ({ key: r.tag, path: r.path, linkOf: a })));
+    const aReadOnly = fileState(a).readOnly;
+    if (aReadOnly !== true) report.notes.push(`${a} is NOT read-only after the cleanup.`);
+    const kept = report.cleanup.filter(c => c.action !== 'deleted' && c.action !== 'missing');
+    if (kept.length) report.notes.push(`Hard links left in ${path.dirname(a)} (${kept.map(c => `${path.basename(c.path)}: ${c.action}`).join(', ')}); `
+        + 'a hard link shares the lock of A (one file), so they stay until CATIA releases A; delete them after CATIA is restarted.');
+    report.notes.push('CATIA was changed by this run (C5D_Bridge copies closed, hard links loaded and closed). Restart CATIA before a probe run that needs a fresh CATIA.');
+    const { lines, data } = judgeSelfClose(first.snapshot.loaded, entries, { b, a, targets, rounds, leftovers, cleanup: report.cleanup, userCount, aReadOnly });
+    report.summary = { ...sequenceSummary(report, entries),
+        lists: Object.fromEntries(steps.filter(s => s.info === 'sx').map(s => [s.name, parseSxList(entries.find(e => e.step === s.name)?.result)])),
+        selfClose: data, verdictLines: lines, verdict: lines.join('\n') };
+    if (aborted) process.exitCode = 1;
+}
+/** Summary of --self-close-experiment: the copies found, then as formatReloadSummary. */
+function formatSelfCloseSummary(report) {
+    const text = formatReloadSummary(report).split('\n');
+    const lines = (report.targets ?? []).map(t => `target ${t.tag}${t.label ? ` (${t.label})` : ''}: ${JSON.stringify(t.display)} file ${JSON.stringify(t.file)}`);
+    if (report.leftovers) lines.push(`left by ${report.leftovers.report}: ${report.leftovers.list.length} copies${report.leftovers.error ? ` (${report.leftovers.error})` : ''}`);
+    return [...text.slice(0, 2), ...lines, ...text.slice(2)].join('\n');
+}
+
 /** temp/<prefix>-<time>.json; never overwrites an earlier report. */
 function uniqueReportPath(directory, prefix = 'probe-bridge') {
     const base = path.join(directory, `${prefix}-${timestamp()}`);
@@ -2712,6 +3533,9 @@ function formatUnloadSummary(report) {
             else if (run.kind === 'read-timer-log') {
                 lines.push(`  ${run.step}: ${run.log === null ? 'log MISSING' : `${run.log.split(/\r?\n/).filter(Boolean).length} lines`}  ${tail}`);
                 for (const line of (run.log ?? '').split(/\r?\n/).filter(Boolean)) lines.push(`    | ${line}`);
+            } else if (run.kind === 'link') {
+                lines.push(`  ${run.step}: hard link ${run.ok ? 'ok' : `FAILED (${run.error})`} sameFile=${yn(run.sameFile)} links=${run.links ?? '-'} `
+                    + `A readOnly=${yn(run.aReadOnly)} ${run.durationMs}ms  ${tail}`);
             } else if (run.kind === 'locks') {
                 lines.push(`  ${run.step}: ${Object.entries(run.locks ?? {}).map(([key, l]) => `${key} ${lockWord(l)}`).join(', ') || '(no files)'}  ${tail}`);
             } else if (run.local) {
@@ -2795,7 +3619,8 @@ function formatReadonlyCheck(report) {
 
 const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup',
     'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check',
-    'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky', 'reload-experiment': 'probe-bridge-reload' };
+    'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky', 'reload-experiment': 'probe-bridge-reload',
+    'self-close-experiment': 'probe-bridge-selfclose' };
 /** Runner, summary formatter and report prefix of a parsed mode (not 'help'). */
 function dispatch(options) {
     switch (options.mode) {
@@ -2805,6 +3630,7 @@ function dispatch(options) {
         case 'readonly-fresh-check': return { run: runReadonlyFreshCheck, format: formatReadonlyCheck, prefix: REPORT_PREFIXES[options.mode] };
         case 'remove-experiment': case 'remove-experiment-risky': return { run: runRemove, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'reload-experiment': return { run: runReload, format: formatReloadSummary, prefix: REPORT_PREFIXES[options.mode] };
+        case 'self-close-experiment': return { run: runSelfClose, format: formatSelfCloseSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'run': return { run: runBridge, format: formatSummary, prefix: 'probe-bridge' };
         default: throw new Error(`no runner for mode ${options.mode}`);
     }
@@ -2836,4 +3662,7 @@ module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codep
     REMOVE_STEPS, REMOVE_RISKY_STEPS, REMOVE_SOURCE, B_SOURCE, TIMER_SOURCE, REMOVE_MODULE, B_MODULE, TIMER_MODULE, COPY_B_FILE, TIMER_LOG_FILE,
     TIMER_LOG_TOKEN, materializeSteps, skipReason, parseInfo, describeInfo, judgeRemove, runRemove, runSequence,
     reloadSource, buildReloadSteps, reloadStepNames, pathVariants, shortPathOf, makeHardlink, cleanupProbeFiles, rlBridges, describeRlInfo,
-    judgeReload, runReload, formatReloadSummary, RL_ROUNDS, RL_FINAL, RL_CLOSE_ACTIONS, rlModule, rlFunc };
+    judgeReload, runReload, formatReloadSummary, RL_ROUNDS, RL_FINAL, RL_CLOSE_ACTIONS, rlModule, rlFunc,
+    SX_MODULE, SXB_MODULE, SX_SOURCE, SXB_SOURCE, SX_ROUNDS, SX_FINAL, SX_CLOSE_ACTION, SX_MAX_TARGETS, sxCloseActions, sxLiteral, parseSxList, parseWho,
+    whoIsSelf, sxUserProjects, userDiff, buildSelfCloseStart, buildSelfCloseTargets, buildSelfCloseB, buildSelfCloseRounds, selfCloseRounds,
+    selfCloseTargets, selfCloseStepNames, reloadLeftovers, sxCloseFacts, judgeSelfClose, runSelfClose, formatSelfCloseSummary };

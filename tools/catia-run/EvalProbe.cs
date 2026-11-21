@@ -23,21 +23,24 @@
 //     期待値は持たない（match = null）。判定は呼び出し側が行う。--label <name> で出力 JSON の step 名を変えられる（既定 vbacall）。
 //   --no-retry: vbacall の ByRef 再試行をしない（ExecuteScript をちょうど 1 回だけ呼ぶ。アンロード等の副作用がある関数用）
 //   オブジェクト戻り値: [--obj-arg <value> ...] vbacall-obj <library> <module> <function> [<action> ...]
-//     （scripts/probe-bridge.js --remove-experiment / --reload-experiment から呼ぶ）
+//     （scripts/probe-bridge.js --remove-experiment / --reload-experiment / --self-close-experiment から呼ぶ）
 //     VBA 関数を ExecuteScript で 1 回だけ呼び（ByRef 再試行なし。VBA への引数は vbacall-obj より前の --obj-arg で、出現順に ByVal の文字列で渡す。
-//     無ければ引数なし）、戻り値（VT_DISPATCH なら COM プロキシ）を保持したまま、
+//     無ければ引数なし。iParameters は必ず要素型 object の配列 = VT_ARRAY|VT_VARIANT で渡す。string[] のままだと VT_ARRAY|VT_BSTR になり、
+//     引数が 1 個以上のとき ExecuteScript が 0x80020005 DISP_E_TYPEMISMATCH になる）、戻り値（VT_DISPATCH なら COM プロキシ）を保持したまま、
 //     ExecuteScript が戻った後（VBA の実行が終わった後）に、この exe から IDispatch のレイトバインドで action を順に実行する。
 //     action（各 1 トークン、b64: 可）:
 //       get:<expr>             式の値を読む（例 get:$.Name / get:$.VBProject.Type / get:$.Projects.Item('C5D_Bridge').Mode）
 //       type:<expr>            式のオブジェクトの型名（IDispatch.GetTypeInfo の名前）
 //       call:<expr>            最後の区間がメソッド呼び出しの式（例 call:$.Collection.Remove($) / call:$.Close(false) / call:$.Apc.End()）
 //       let:<expr>=<arg>       プロパティに値を入れる（例 let:$.Mode=0）
-//       sleep:<ms>             待つ（CATIA 側の処理を待つため）
+//       guard:<expr>=<literal> 式の値（文字列化）が literal（'text' / 整数 / true / false）と大小無視で等しいか確かめる。違えば失敗し、
+//                              以降の action は実行しない（例 guard:$.DisplayName='C:\x\y.catvba' の後の call:$.Close(false) = 一致したときだけ Close）
+//       sleep:<ms>            待つ（CATIA 側の処理を待つため）
 //     <expr> = $ | $<n>（戻り値が配列ならその n 番目、0 始まり）に .Name または .Name(<arg>, ...) を続けたもの。
 //     <arg> = <expr> | true | false | 整数 | 'text'（'' で ' 自身）| missing（省略引数）
 //     出力: 1 行目は ExecuteScript の結果（resultType = ComObject なら VT_DISPATCH/VT_UNKNOWN で返った。isDispatch / typeInfo / arrayLength も出す）、
 //     続いて action ごとに {"step","action":<番号>,"op","kind","ok","result","resultType","typeInfo","hresult","message","elapsedMs"}。
-//     ExecuteScript が例外ならアクションは実行しない（"skipped" 行を出す）。action の失敗は後続を止めない。
+//     ExecuteScript が例外ならアクションは実行しない（"skipped" 行を出す）。guard 以外の action の失敗は後続を止めない。
 //   eval-probe.exe --obj-selftest <progid> [<action> ...]   （CATIA に接続せず、CreateObject(progid) を戻り値の代わりにして action を実行する。テスト用）
 //   --byref: iParameters を VT_BYREF で渡す（params / jscript-params は指定がなくても ByVal 失敗時に ByRef で再試行する）
 //   jscript*: 言語 4（JScript）。ES3 構文のみ・全処理を try/catch で囲み、例外は結果文字列に含めて返す。書き込み系 API は呼ばない。
@@ -477,7 +480,20 @@ function CATMain() {
     static Step VbaCall(string label, string library, string module, string function, object[] parameters)
     {
         return new Step { Name = label ?? "vbacall", Language = -1, Method = ExecuteScriptMethod, Library = library, ProgramName = module,
-            FunctionName = function, Parameters = parameters, RetryByRef = true };
+            FunctionName = function, Parameters = VariantArray(parameters), RetryByRef = true };
+    }
+
+    /// <summary>
+    /// 要素型 object の新しい配列に詰め直す。iParameters（CATSafeArrayVariant）は VT_ARRAY|VT_VARIANT でなければならないが、string[] を
+    /// object[] として渡すと（配列の共変性。Clone() しても string[] のまま）interop が VT_ARRAY|VT_BSTR に変換し、ExecuteScript は
+    /// 要素が 1 個以上のとき 0x80020005 DISP_E_TYPEMISMATCH で失敗する（--reload-experiment の vbacall-obj + --obj-arg が全て失敗した原因:
+    /// --obj-arg は List&lt;string&gt;.ToArray() = string[] だった。引数なしの vbacall-obj と、object[] を作っていた vbacall は動いていた）。
+    /// </summary>
+    static object[] VariantArray(object[] values)
+    {
+        object[] result = new object[values == null ? 0 : values.Length];
+        for (int i = 0; i < result.Length; i++) { result[i] = values[i]; }
+        return result;
     }
 
     static Step[] Concat(params Step[][] groups)
@@ -766,11 +782,7 @@ function CATMain() {
         {
             WriteJson(step.Name, step.Language, ok, null, Describe(result), TypeOf(result), hresult, message, "byval", attempts, watch.ElapsedMilliseconds,
                 StepFields(step) + ActionFields(step) + ResultFields(result));
-            for (int i = 0; i < step.Actions.Count; i++)
-            {
-                if (!ok) { WriteAction(step.Name, i, step.Actions[i], false, null, null, 0, "not run: ExecuteScript failed", null, 0, true); allOk = false; continue; }
-                if (!RunAction(step.Name, i, step.Actions[i], result, held)) { allOk = false; }
-            }
+            if (!RunActions(step.Name, step.Actions, ok ? null : "not run: ExecuteScript failed", result, held)) { allOk = false; }
         }
         finally
         {
@@ -799,11 +811,28 @@ function CATMain() {
             if (type == null) { Console.Error.WriteLine("unknown ProgID " + args[1]); return StepFailed; }
             root = Activator.CreateInstance(type);
             Out.WriteLine("{\"step\":\"obj-selftest\",\"progid\":" + Str(args[1]) + ",\"resultType\":" + Str(TypeOf(root)) + ResultFields(root) + "}");
-            bool allOk = true;
-            for (int i = 0; i < actions.Count; i++) { if (!RunAction("obj-selftest", i, actions[i], root, held)) { allOk = false; } }
-            return allOk ? Ok : StepFailed;
+            return RunActions("obj-selftest", actions, null, root, held) ? Ok : StepFailed;
         }
         finally { ReleaseAll(held, root); }
+    }
+
+    /// <summary>
+    /// action を順に実行する。skipReason != null なら 1 つも実行せず "skipped" 行を出す。guard が失敗したら以降は実行しない
+    /// （"not run: guard <n> failed"。例: 自分のパスと一致したときだけ Close する）。guard 以外の失敗は後続を止めない。全て ok なら true。
+    /// </summary>
+    static bool RunActions(string stepName, List<ObjAction> actions, string skipReason, object root, List<object> held)
+    {
+        bool allOk = true;
+        for (int i = 0; i < actions.Count; i++)
+        {
+            if (skipReason != null) { WriteAction(stepName, i, actions[i], false, null, null, 0, skipReason, null, 0, true); allOk = false; continue; }
+            if (!RunAction(stepName, i, actions[i], root, held))
+            {
+                allOk = false;
+                if (actions[i].Kind == "guard") { skipReason = "not run: guard " + i.ToString(CultureInfo.InvariantCulture) + " failed"; }
+            }
+        }
+        return allOk;
     }
 
     static bool RunAction(string stepName, int index, ObjAction action, object root, List<object> held)
@@ -829,6 +858,19 @@ function CATMain() {
                 case "let":
                     ObjActions.Let(action.Target, action.Value, root, held);
                     break;
+                case "guard":
+                    {
+                        // 式の値の文字列（Describe）と右辺を大小無視で比べる。不一致なら失敗（RunActions が以降を止める）
+                        value = ObjActions.Eval(action.Target, root, held);
+                        string actual = Describe(value), expected = ObjActions.LiteralText(action.Value);
+                        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                        {
+                            WriteAction(stepName, index, action, false, value, null, 0, "guard failed: got " + (actual == null ? "(Empty)" : "'" + actual + "'")
+                                + ", expected '" + expected + "' (ignoring case)", null, watch.ElapsedMilliseconds, false);
+                            return false;
+                        }
+                        break;
+                    }
                 default: // get / call
                     value = ObjActions.Eval(action.Target, root, held);
                     break;
@@ -1011,6 +1053,8 @@ function CATMain() {
             b.Append(",\"libraryType\":").Append(LibraryTypeVbaProject.ToString(CultureInfo.InvariantCulture));
             b.Append(",\"program\":").Append(Str(step.ProgramName));
             b.Append(",\"function\":").Append(Str(step.FunctionName));
+            // iParameters の .NET の配列型（System.Object[] でなければ VT_ARRAY|VT_VARIANT にならない。0x80020005 の再発確認用）
+            b.Append(",\"parametersType\":").Append(Str(step.Parameters.GetType().FullName));
             // 実際に渡した iParameters（文字列はそのまま、他は Describe）。node→exe の受け渡しで化けていないかの確認用
             b.Append(",\"arguments\":[");
             for (int i = 0; i < step.Parameters.Length; i++)
@@ -1067,7 +1111,7 @@ function CATMain() {
     }
 }
 
-// ---- vbacall-obj の action（get / type / call / let / sleep）の構文木・構文解析・評価（IDispatch レイトバインド）
+// ---- vbacall-obj の action（get / type / call / let / guard / sleep）の構文木・構文解析・評価（IDispatch レイトバインド）
 internal sealed class ObjExpr
 {
     public int Root = -1;                                   // -1 = $（戻り値そのもの）, n = $n（戻り値の配列の n 番目）
@@ -1089,10 +1133,10 @@ internal sealed class ObjArg
 
 internal sealed class ObjAction
 {
-    public string Kind;                                     // get / type / call / let / sleep
+    public string Kind;                                     // get / type / call / let / guard / sleep
     public string Text;                                     // 受け取った文字列
     public ObjExpr Target;
-    public ObjArg Value;                                    // let の右辺
+    public ObjArg Value;                                    // let / guard の右辺
     public int Ms;                                          // sleep
 }
 
@@ -1105,7 +1149,7 @@ internal static class ObjActions
     {
         error = null;
         int colon = text.IndexOf(':');
-        if (colon <= 0) { error = "expected <get|type|call|let|sleep>:..."; return null; }
+        if (colon <= 0) { error = "expected <get|type|call|let|guard|sleep>:..."; return null; }
         string kind = text.Substring(0, colon), rest = text.Substring(colon + 1);
         ObjAction action = new ObjAction { Kind = kind, Text = text };
         int pos = 0;
@@ -1140,6 +1184,16 @@ internal static class ObjActions
                     if (pos >= rest.Length || rest[pos] != '=') { throw new FormatException("expected '='"); }
                     pos++;
                     action.Value = ParseArg(rest, ref pos);
+                    ExpectEnd(rest, ref pos);
+                    return action;
+                case "guard":
+                    // guard:<expr>=<literal>（'text' / 整数 / true / false。右辺に $ 式と missing は使えない）
+                    action.Target = ParseExpr(rest, ref pos);
+                    SkipSpaces(rest, ref pos);
+                    if (pos >= rest.Length || rest[pos] != '=') { throw new FormatException("expected '='"); }
+                    pos++;
+                    action.Value = ParseArg(rest, ref pos);
+                    if (action.Value.Ref != null || action.Value.Missing) { throw new FormatException("guard needs a literal on the right ('text', integer, true or false)"); }
                     ExpectEnd(rest, ref pos);
                     return action;
                 default:
@@ -1249,7 +1303,8 @@ internal static class ObjActions
         switch (action.Kind)
         {
             case "sleep": return "sleep:" + action.Ms.ToString(CultureInfo.InvariantCulture);
-            case "let": return "let:" + FormatExpr(action.Target) + "=" + FormatArg(action.Value);
+            case "let":
+            case "guard": return action.Kind + ":" + FormatExpr(action.Target) + "=" + FormatArg(action.Value);
             default: return action.Kind + ":" + FormatExpr(action.Target);
         }
     }
@@ -1277,6 +1332,14 @@ internal static class ObjActions
         if (arg.Value is int) { return ((int)arg.Value).ToString(CultureInfo.InvariantCulture); }
         string q = Quote.ToString();
         return q + ((string)arg.Value).Replace(q, q + q) + q;
+    }
+
+    /// <summary>guard の右辺の比較用文字列（true/false は Describe(bool) と同じ True/False、整数は 10 進）。</summary>
+    public static string LiteralText(ObjArg arg)
+    {
+        if (arg.Value is bool) { return (bool)arg.Value ? "True" : "False"; }
+        if (arg.Value is int) { return ((int)arg.Value).ToString(CultureInfo.InvariantCulture); }
+        return (string)arg.Value;
     }
 
     /// <summary>式を評価する。途中で得た COM オブジェクトは held に積む（呼び出し側が最後に解放する）。</summary>
