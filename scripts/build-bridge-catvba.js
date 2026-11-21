@@ -360,7 +360,9 @@ function createPaths({ env = process.env, root = ROOT, stamp = stampOf(), base =
 }
 
 /** Lines of a module as compared here: trailing blanks of each line and trailing empty lines ignored (VBE may drop them). */
-const comparable = text => String(text).replace(/\r\n?/g, '\n').split('\n').map(l => l.replace(/[ \t]+$/, '')).join('\n').replace(/\n+$/, '');
+// Lower-cased: the VBA editor re-cases identifiers project-wide (a parameter named `number` turns `Err.Number` into `Err.number`),
+// and VBA itself is case-insensitive, so case differences are not real differences.
+const comparable = text => String(text).replace(/\r\n?/g, '\n').split('\n').map(l => l.replace(/[ \t]+$/, '')).join('\n').replace(/\n+$/, '').toLowerCase();
 
 /**
  * Offline facts of a .catvba (no CATIA): { ok, problems, projectName, modules: [{ name, type, chars, same }], version, runtimeVersion,
