@@ -1,8 +1,8 @@
 # C5D_Bridge 契約書（Push / Pull の VBScript 非依存化）
 
-対象: `feature/push-improvement`。プラン `temp/push-bridge-plan-2026-11-21.md` の 2.3・3.1a・3.3〜3.6 を実装するための仕様。
-C# 担当（`catia-run.exe`）と TypeScript 担当（拡張機能）は、**この文書だけを見て並行して実装できる**ことを目標にしている。
-曖昧な点を見つけたら、実装で決めずにこの文書を直してから進めること。
+Push / Pull で、拡張機能（TypeScript）・`catia-run.exe`（C#）・CATIA 内の VBA（`C5D_Bridge`）の 3 つが守る取り決め。
+コードのコメントはこの文書を章番号で参照している。章番号を変えるときは参照も直すこと。
+取り決めを変えるときは、先にこの文書を直してから、3 つの実装を合わせて直す。
 
 | 用語 | 意味 |
 |---|---|
@@ -15,11 +15,11 @@ C# 担当（`catia-run.exe`）と TypeScript 担当（拡張機能）は、**こ
 
 関係するファイル:
 
-| ファイル | 役割 | 担当 |
+| ファイル | 役割 | 言語・仕様 |
 |---|---|---|
-| `resources/bridge/C5D_Bridge.catvba` | 同梱するブリッジ（v2 = `C5D_Bridge_Push` v2 ＋ `C5D_Bridge_Runtime`） | `scripts/build-bridge-catvba.js` で作る |
-| `resources/bridge/C5D_Bridge_Push.bas` | ブリッジの起動用モジュール v2 の本文 | 確定（本書 8 章） |
-| `resources/bridge/C5D_Bridge_Runtime.bas` | runtime の本文 | 確定（本書 9 章） |
+| `resources/bridge/C5D_Bridge.catvba` | 同梱するブリッジ（v2 = `C5D_Bridge_Push` v2 ＋ `C5D_Bridge_Runtime`） | `scripts/build-bridge-catvba.js` で作る（11 章） |
+| `resources/bridge/C5D_Bridge_Push.bas` | ブリッジの起動用モジュール v2 の本文 | VBA（本書 8 章） |
+| `resources/bridge/C5D_Bridge_Runtime.bas` | runtime の本文 | VBA（本書 9 章） |
 | `tools/catia-run/CatiaRun*.cs` | `catia-run.exe` | C# |
 | `scripts/build-bridge.js` | `catia-run.exe` のビルド（runtime の埋め込み） | C# |
 | `src/*.ts` | request.json を書き、exe を呼び、result.json を読む | TS |
@@ -57,7 +57,7 @@ result.json を検証（validateCatiaResult、形式は今と同じ）←┘
 
 - パス: `%LOCALAPPDATA%\Cat5Dev\bridge\C5D_Bridge-<sha8>.catvba`
   - `<sha8>` = 同梱の `resources/bridge/C5D_Bridge.catvba` の SHA-256（小文字 16 進）の先頭 8 文字。
-- 手順（プラン 3.2 のとおり）:
+- 手順:
   1. 同じ名前のファイルがあり、ハッシュが同じなら、そのまま使う（ロックされていてもよい）。
   2. 無ければコピーし、**読み取り専用属性を付け、付いたことを確かめる**。ハッシュも確かめる。
   3. 名前が同じでハッシュが違う場合（壊れている）: ロックされていなければ消して作り直す。ロックされていれば Push を中止する（エラー表示: 一般的なエラー。CATIA を再起動すれば直る）。
@@ -235,7 +235,7 @@ object r = service.GetType().InvokeMember("ExecuteScript", BindingFlags.InvokeMe
    - DisplayName のフォルダが正本のフォルダと等しく（大文字小文字を無視）、ファイル名が `^C5D_Bridge.*\.catvba$` なら、**残骸自身のパスで** `ExecuteScript(<残骸の DisplayName>, 2, "C5D_Bridge_Push", "C5D_Self")` → 戻ったオブジェクトを guard（Name = `C5D_Bridge`、DisplayName = 残骸の DisplayName）してから `Close(False)`。
    - それ以外（フォルダ外の `C5D_Bridge`、DisplayName が空、`C5D_Self` が無い v1 の残骸、Close の失敗、残骸が 5 個を超える）→ 13。
    - 全部外したら、もう一度 `C5D_List()` で自分だけになったことを確かめる（違えば 13）。
-   - **この手順が終わるまで、ブリッジにも書き込まない**（同じ実ファイルを 2 つ読み込んで書き込むと VBA 全体が壊れるため。プラン 2.3）。
+   - **この手順が終わるまで、ブリッジにも書き込まない**（同じ実ファイルを 2 つ読み込んで書き込むと CATIA の VBA 全体が 0x800ADF09 で動かなくなり、CATIA の再起動が要るため。2026-11-21 に実機で確認）。
 8. **runtime**: 手順 6 の部品一覧に `C5D_Bridge_Runtime` があれば `C5D_RT_Version()` を呼び、埋め込みの版と同じなら何もしない。無い、または違えば `C5D_Install("C5D_Bridge_Runtime", <埋め込みの本文>)` → `"ok"` を確かめ、`C5D_RT_Version()` が埋め込みの版を返すことを確かめる。どこかで違えば 13。
 9. **VBA エディタの確認**: `C5D_RT_ListProjects()` → `ok` で名前が 0 件なら 14。`error:` なら（kind に関わらず）その失敗を記録し、result.json を書いて 0（5.2）。
 10. **要求の処理**（5.1）。`list` は手順 9 の結果をそのまま使う。
@@ -329,7 +329,7 @@ ok
 - **Push**: `CountOfLines > 0` なら `DeleteLines 1, CountOfLines`、`Len(text) > 0` なら `AddFromString text`（空の本文なら中身を消すだけ）。本文は変えずに渡す（LF のままでも、今と同じく VBE が行に分ける）。**`Attribute` 行も特別扱いしない**: ローカルのファイルに `Attribute` 行があれば、今と同じくそのまま `AddFromString` に渡る（VBE では構文エラーの行になる）。
 - 新しく作ったモジュールに VBE が自動で入れる `Option Explicit` は、`DeleteLines` で消えてから本文が入る（今と同じ）。
 - 途中で失敗したときに残るもの（今と同じ・改善しない）: `Add` の後で名前の設定に失敗すると `Module1` などが残る。`DeleteLines` の後で `AddFromString` に失敗すると中身が空のまま残る。
-- 大きな本文: 引数・戻り値の BSTR に大きさの上限は設けていない。どこまで通るかは実機で確かめる（プラン 4 の手順 1。目安として 1 MiB の本文の往復を試す）。
+- 大きな本文: 引数・戻り値の BSTR に大きさの上限は設けていない。どこまで通るかは実機で確かめる（目安として 1 MiB の本文の往復を試す。13 章）。
 - 名前・本文の文字: UTF-16 のまま往復する（日本語・🙂 を含む）。ブリッジの .bas 自体は ASCII だけ。
 
 ### 9.2 モジュールの種類（`VBComponent.Type`）
@@ -353,16 +353,18 @@ ok
 
 ---
 
-## 10. TS 側で変わること（参考。詳細は TS 担当が決める）
+## 10. 拡張機能（TS）側の実装
 
-- `src/catiaTypes.ts`: `CatiaRequest` から `encoding` をなくす（または無視）。Push の要求は `{ name, type, text }`（`file` ではなく本文）。`CatiaItem`（結果の `items`）はそのまま。
-- `src/catiaExecution.ts`: `operation.catvbs` を書く代わりに `request.json` を書き、`catia-run.exe --bridge <正本> --request <dir>\request.json --result <dir>\result.json` を呼ぶ。`preDispatch` に 2・13・14 を足す。10・13・14 を利用者向けのメッセージに区別できるようにする（例: `CatiaExecutionError` に終了コードを持たせる）。
-- `src/catiaSync.ts`: `m<i>.txt` を UTF-8 で読む。Push の本文を `request.modules[].text` に入れる（`iconv` を使わない）。`encoding` を読まない。
-- 新しいモジュール（例 `src/bridgeFiles.ts`）: 正本の用意（2.1）と掃除（2.3）。ロックの中で行う。
-- `src/i18n.ts`: 10・13・14 のメッセージ（日・英・中）。
-- 削除（プラン 3.6）: `buildCatiaScript` と `vbString`（他で使っていなければ）、`scripts/c5d_push.catvbs.bas_utf`、`scripts/update-sync-templates.js` の該当部分、`sync:templates`、`tests/catiaScripts.test.js` の cscript ハーネス（runtime の静的検査は `tests/bridgeBas.test.js` で済んでいる）。
-- `.vscodeignore`: `resources/bridge/*.bas` を VSIX から外す（runtime は exe に埋め込むため不要）。`resources/bridge/C5D_Bridge.catvba` は含める（今も含まれている）。
-- テスト: `tests/catiaExecution.test.js` / `tests/catiaSync.test.js` の `m0.txt` の文字コード（今は `latin1` / `shift_jis` 前提）と、exe の引数の確認を直す。
+| ファイル | 役割 |
+|---|---|
+| `src/catiaTypes.ts` | request / result の型と `validateCatiaResult`（5 章） |
+| `src/catiaExecution.ts` | request.json を書き（4 章）、`catia-run.exe` を呼び（3 章）、result.json を検証する。終了コードを `CatiaExecutionError.exitCode` に持たせ、`preDispatch`（6 章）ならロックをすぐ解除する |
+| `src/catiaSync.ts` | Pull / check で `m<i>.txt` を UTF-8 で読む。Push で本文を `request.modules[].text` に入れる |
+| `src/bridgeFiles.ts` | 正本の用意（2.1）と古いリンク・コピーの掃除（2.3）。排他ロックの中で行う |
+| `src/i18n.ts` | 終了コード 10・13・14 のメッセージ（日・英・中） |
+
+- `cat5dev.toml` の `[project] encoding` は Push / Pull では使わない（4 章）。
+- `.vscodeignore` で `resources/bridge/*.bas` を VSIX から外す（runtime は exe に埋め込んであるため）。`resources/bridge/C5D_Bridge.catvba` は含める。
 
 ---
 
@@ -390,7 +392,7 @@ node scripts/build-bridge-catvba.js --base <file.catvba>  # 元にするファ�
 2. そのパスで `C5D_Version`（自動読み込み）→ 元の `C5D_Install` で一時モジュール `C5D_Builder` を書く → `C5D_BuildWho` で「ExecutingProject がこのコピー」「`C5D_Bridge` はこれ 1 個」を確かめる。
 3. `C5D_Builder.C5D_BuildPut` が `C5D_Bridge_Push` を v2 の本文で置き換え、`C5D_Bridge_Runtime` を書く。`C5D_Version` = `c5d-bridge:2`、`C5D_RT_Version` を確かめる。
 4. ExecuteScript が戻った後で、外から（`eval-probe.exe vbacall-obj`）`C5D_Self` の戻り値を guard（Name・DisplayName）してから `VBProject.VBComponents.Remove(VBComponents.Item("C5D_Builder"))`。実行中でないモジュールを外から消すので、自分で自分を消す問題が起きない。v2 に一時的な削除関数を持たせる必要もない。
-5. `C5D_Who` で部品がちょうど `C5D_Bridge_Push` と `C5D_Bridge_Runtime` であることを確かめ、`IApcProject.Save(True)`（型情報 `temp/typelib-apc71-20261121-132410.txt`: `Save([opt] ForceSave As BOOL = False)`）→ `Close(False)`。途中で失敗しても、自分を特定できていれば guard 付きで `Close(False)` する（壊れた状態は保存しない）。
+5. `C5D_Who` で部品がちょうど `C5D_Bridge_Push` と `C5D_Bridge_Runtime` であることを確かめ、`IApcProject.Save(True)`（型情報（`scripts/dump-typelib.js` で確認）: `Save([opt] ForceSave As BOOL = False)`）→ `Close(False)`。途中で失敗しても、自分を特定できていれば guard 付きで `Close(False)` する（壊れた状態は保存しない）。
 6. 保存されたファイルを `temp/bridge-build-<時刻>/C5D_Bridge.catvba` に写し、オフラインで検査する（`scripts/lib/catvba-read.js` で MS-CFB / MS-OVBA を読む）: プロジェクト名、モジュールがちょうど 2 つで本文が `.bas` と同じ、v2、runtime の版、**孤立したストレージ**（どのモジュールにも属さないフォーム等のデータ）。
 7. 写したファイルを**新しい**読み取り専用のパス（`...-v.catvba`）で読み込み、`C5D_Version` / `C5D_Who` / `C5D_List` / `C5D_RT_Version` / `C5D_RT_ListProjects` / `C5D_Install`（試験モジュールを書いて呼び、日本語と 🙂 が往復すること）/ `C5D_Install("C5D_Bridge_Push")` = `error:self` を確かめ、guard 付きで `Close(False)`。
 8. すべて通れば、`resources/bridge/C5D_Bridge.catvba` を `temp/C5D_Bridge.catvba.bak-<時刻>` に退避して置き換える。孤立したストレージがあれば**置き換えない**（`--allow-orphans` で上書き可。11.4 参照）。
@@ -439,22 +441,18 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 
 ---
 
-## 12. C# 担当と TS 担当の作業範囲
+## 12. 実装ファイルとテスト
 
-| 担当 | ファイル | 内容 |
+| 部分 | ファイル | テスト |
 |---|---|---|
-| C# | `tools/catia-run/CatiaRun.cs`（＋必要なら `CatiaRun.*.cs` に分割） | 3〜7 章のすべて（引数、request.json の検証、リンク、ブリッジの手順、runtime の入れ直し、要求の処理、m<i>.txt と result.json、終了コード、guard 付き Close、`--validate-only`） |
-| C# | `scripts/build-bridge.js` | 複数ファイルのコンパイル、runtime の埋め込み（`/resource:`）、必要な参照 |
-| C# | `tests/catiaRun.test.js`（新規） | `--validate-only` で引数と request.json の検証（CATIA 非接続）。exe のビルドに csc.exe が要るので、無ければ skip |
-| TS | `src/catiaTypes.ts`、`src/catiaExecution.ts`、`src/catiaSync.ts`、新規 `src/bridgeFiles.ts`、`src/extension.ts`、`src/i18n.ts` | 10 章、2.1・2.3、6 章の TS の扱い |
-| TS | `src/catiaScripts.ts`、`scripts/c5d_push.catvbs.bas_utf`、`scripts/update-sync-templates.js`、`package.json`（`sync:templates`）、`.vscodeignore` | 3.6 の削除と同梱の調整 |
-| TS | `tests/catiaExecution.test.js`、`tests/catiaSync.test.js`、`tests/catiaScripts.test.js`、新規 `tests/bridgeFiles.test.js` | 偽の executor で request.json の中身・終了コードの扱い・UTF-8 の m<i>.txt を確かめる |
-| 共有（変更は両者で合意） | `docs/dev/bridge-contract.md`、`resources/bridge/*.bas` | この文書と VBA |
+| `catia-run.exe` | `tools/catia-run/CatiaRun.cs`、`tools/catia-run/CatiaRun.*.cs`、`scripts/build-bridge.js`（コンパイルと runtime の埋め込み） | `tests/catiaRun.test.js`: `--validate-only` で 3・4 章、偽の ExecuteScript で 5〜7 章（CATIA 非接続。csc.exe が無ければ skip） |
+| VBA | `resources/bridge/*.bas` | `tests/bridgeBas.test.js`: 9.3 の静的検査 |
+| 拡張機能 | 10 章のファイル | `tests/catiaExecution.test.js`、`tests/catiaSync.test.js`、`tests/bridgeFiles.test.js` |
+| ブリッジの作り直し | `scripts/build-bridge-catvba.js`、`scripts/lib/catvba-read.js` | `tests/buildBridgeCatvba.test.js` |
+| 実機スモーク | `scripts/smoke-catia.js` | `tests/smokeCatia.test.js`（偽の exe）。実機で動かすには v2 の `.catvba`（11 章）が要る |
 
-並行して進めるための約束:
-
-- TS は exe を偽の executor で置き換えてテストする（今の `ExecutionOptions.execute` と同じ）。偽の executor は request.json を読み、この文書どおりの result.json と m<i>.txt を書く。
-- C# は `--validate-only` と、CATIA に接続した実機スモーク（toQI の `C5D_BridgeTest`）で確かめる。実機には v2 の `.catvba`（11 章）が要る。
+- 拡張機能のテストでは、exe を偽の executor（`ExecutionOptions.execute`）で置き換える。偽の executor は request.json を読み、この文書どおりの result.json と `m<i>.txt` を書く。
+- この文書と `resources/bridge/*.bas` を変えるときは、TS・C#・VBA の 3 つを合わせて直す。
 
 ---
 
