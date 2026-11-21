@@ -9,6 +9,8 @@
 // Modules are read with 64-bit PowerShell (Process.Modules); `tasklist /M <dll>` is a secondary check
 // (the full `tasklist /M` text listing was seen to miss modules). Each run writes
 // temp/probe-catscript-<mode>-<yyyyMMdd-HHmmss>.json and prints a summary to stdout.
+// Historical: the CATIA modes need the pre-bridge bin/catia-run.exe (`catia-run.exe <dir> <script>`); the current one takes
+// --bridge/--request/--result and rejects these calls. The generated list step is skipped (its generator was removed).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -16,6 +18,18 @@ const { execFileSync } = require('node:child_process');
 
 const RESULT_NAME = 'probe-result.txt';
 const q = text => `"${text.replace(/"/g, '""')}"`;
+/** ASCII VBScript string literal (printable ASCII kept, everything else as ChrW). Copy of the removed src/catiaScripts.ts vbString. */
+function vbString(value) {
+    const parts = [];
+    let text = '';
+    const flush = () => { if (text) { parts.push(`"${text.replace(/"/g, '""')}"`); text = ''; } };
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code >= 32 && code <= 126) text += value[i];
+        else { flush(); parts.push(`ChrW(${code > 32767 ? code - 65536 : code})`); }
+    }
+    flush(); return parts.length ? parts.join(' & ') : '""';
+}
 /** Same error-capture style as buildCatiaScript: Err.Clear, statement, copy Err, Err.Clear. */
 function probe(statement, name, value = '""') {
     return `
@@ -204,7 +218,6 @@ function expand(names) {
 }
 /** Writes results line by line (name TAB Err.Number TAB detail) with ADODB.Stream as UTF-8, FSO as fallback. */
 function buildProbeScript(directory, names = Object.keys(SECTIONS)) {
-    const { vbString } = require('../out/catiaScripts');
     const sections = expand(names);
     return `Option Explicit
 Dim gFSO, gApc, gLog, gDirectory, gResultPath, gBuffer
@@ -333,12 +346,17 @@ function moduleSnapshot(label) {
     const cnextPids = [...new Set([...all.pids, ...processes.map(p => p.pid)])];
     return { label, at: new Date().toISOString(), cnextPids, powershell: { exe: ps.exe, is64: ps.is64, error: ps.error }, processes, dlls, loaded: dlls['vbscript.dll'].loaded };
 }
+/** Runs <directory>\<scriptName> with the pre-bridge catia-run.exe CLI (`catia-run.exe <directory> <scriptName>`, aac4aaa..1145ac6). */
+function legacyRun(bridge, directory, scriptName, timeoutMs) {
+    const { execFile } = require('node:child_process');
+    return new Promise(resolve => execFile(bridge, [directory, scriptName], { windowsHide: true, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' },
+        (error, stdout, stderr) => resolve({ error, stdout, stderr })));
+}
 async function runScript(bridge, directory, scriptName, source, timeoutMs = 60000) {
-    const { bridgeExecutor } = require('../out/catiaExecution');
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(path.join(directory, scriptName), source, 'utf8');
     const started = Date.now();
-    const output = await bridgeExecutor(bridge)(directory, scriptName, timeoutMs);
+    const output = await legacyRun(bridge, directory, scriptName, timeoutMs);
     const run = { script: path.join(directory, scriptName), exitCode: output.error ? output.error.code ?? null : 0,
         error: output.error ? output.error.message : null, stdout: output.stdout.trim(), stderr: output.stderr.trim(), durationMs: Date.now() - started };
     for (const name of [RESULT_NAME, RESULT_NAME + '.fso.txt']) {
@@ -407,19 +425,10 @@ async function runProbe(report, bridge, work, names) {
     return full;
 }
 /** The real generated script (read-only 'list') renamed to .CATScript. */
-async function runGeneratedList(report, bridge, work) {
-    const { buildCatiaScript } = require('../out/catiaScripts');
-    const { validateCatiaResult } = require('../out/catiaTypes');
-    const listDirectory = path.join(work, 'catscript-list');
-    fs.mkdirSync(listDirectory);
-    const request = { operationId: 'probe', stepId: 'list', kind: 'list', targetProject: '', encoding: 'shift_jis', directory: listDirectory };
-    const list = await runScript(bridge, listDirectory, 'operation.CATScript', buildCatiaScript(request));
-    try {
-        const result = validateCatiaResult(fs.readFileSync(path.join(listDirectory, 'result.json'), 'utf8'), request);
-        list.listResult = { expectedCount: result.expectedCount, succeededCount: result.succeededCount, failures: result.failures, projectCount: result.projects.length };
-    } catch (error) { list.listResultError = String(error); }
-    report.catscript.generatedList = list;
-    return list;
+async function runGeneratedList(report) {
+    // The generated operation script (src/catiaScripts.ts buildCatiaScript) was removed with the C5D_Bridge migration.
+    report.notes.push('generated list skipped: the operation script generator was removed (Push/Pull now run through C5D_Bridge.catvba).');
+    return undefined;
 }
 function timestamp(date = new Date()) {
     const p = n => String(n).padStart(2, '0');

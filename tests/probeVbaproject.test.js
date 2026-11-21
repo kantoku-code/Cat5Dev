@@ -6,7 +6,10 @@ const { execFileSync } = require('node:child_process');
 const { fixture } = require('./helpers');
 const { parseArgs, judgeCall, parseProjectsResult, resolveLibrary, withProjectInfo, parseInfo, changedModules, BRIDGE_BODY, MARKER, CALL_STEPS }
     = require('../scripts/probe-vbaproject');
-const { buildCatiaScript } = require('../out/catiaScripts');
+// The operation.catvbs generator (src/catiaScripts.ts) was removed with the C5D_Bridge migration; withProjectInfo is
+// checked against the layout of the last generated script (CATMain ends with ExportModules / FinishResult).
+const legacyScript = kind => 'Option Explicit\r\nSub CATMain()\r\n    On Error Resume Next\r\n    '
+    + (kind === 'list' ? 'ListProjects' : 'ExportModules') + '\r\n    FinishResult\r\nEnd Sub\r\n\r\nSub FinishResult()\r\nEnd Sub\r\n';
 const csc = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
 
 test('VBAProject probe parses modes, library and steps', () => {
@@ -64,12 +67,11 @@ test('C5D_BridgeTest body is ASCII VBA with the owner marker and no Attribute li
     assert.ok(BRIDGE_BODY.includes('Dim n As Long'));
 });
 test('the info override is injected into a check operation.catvbs and its result is parsed', () => {
-    const request = { operationId: 'o', stepId: 's', kind: 'check', targetProject: 'toQI', encoding: 'shift_jis', directory: 'C:\\t' };
-    const source = withProjectInfo(buildCatiaScript(request));
+    const source = withProjectInfo(legacyScript('check'));
     assert.match(source, /\r\n    ExportModules\r\n    C5DProjectInfo\r\n    FinishResult\r\nEnd Sub\r\n/);
     assert.match(source, /Sub C5DProjectInfo\(\)/);
     assert.ok(!/[^\r]\n/.test(source));
-    assert.throws(() => withProjectInfo(buildCatiaScript({ ...request, kind: 'list' })), /layout changed/);
+    assert.throws(() => withProjectInfo(legacyScript('list')), /layout changed/);
     assert.deepEqual(parseInfo(['name=toQI', 'fileName=C:\\a\\toQI.catvba', 'protection=0', 'saved!err=438 x', 'component=Module1:1', 'component=C5D_BridgeTest:1', 'component!err=9 bad']), {
         properties: { name: 'toQI', fileName: 'C:\\a\\toQI.catvba', protection: '0' },
         errors: { saved: '438 x', component: '9 bad' },

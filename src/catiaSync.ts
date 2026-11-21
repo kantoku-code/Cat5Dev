@@ -1,31 +1,33 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as iconv from 'iconv-lite';
 import { VbaServer } from './vbaServer';
 import { formatVbaDocument } from './formatter';
-import { t, getLanguage } from './i18n';
-import { defaultEncodingFor, readFormatterOptions, readProjectSettings, writeTomlProjectKey } from './lintConfig';
+import { t } from './i18n';
+import { readFormatterOptions, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { OperationContext, SyncBusyError, SyncOperationManager } from './syncOperation';
-import { CatiaExecutionError, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
-import { CatiaItem, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName, stripBom } from './catiaTypes';
+import { CatiaExecutionError, EXIT, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
+import { BRIDGE_PROJECT_NAME, CatiaModuleText, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName, stripBom } from './catiaTypes';
+import { BridgeFiles } from './bridgeFiles';
 import { PullConflictError, PullRecoveryError, applyPull, captureModules, listPullDeletions } from './pullTransaction';
 
 const moduleExtension = /\.(bas_utf|cls_utf|frm_utf)$/i;
 const extensionForType = { 1: '.bas_utf', 2: '.cls_utf', 3: '.frm_utf' };
 
+/** How CatiaSync runs catia-run.exe; `bridge` prepares the bridge master once per operation. */
+export interface SyncExecutionOptions extends Omit<ExecutionOptions, 'bridgeMaster' | 'log'> { bridge?: BridgeFiles }
+
 /** UI orchestration; filesystem and process behavior remain independently testable. */
 export class CatiaSync {
+    /** Bridge master per operation: prepared (with cleanup) under the lock, before the first catia-run.exe. */
+    private readonly masters = new WeakMap<OperationContext, string>();
     constructor(private readonly server: VbaServer, private readonly output: vscode.OutputChannel,
-        private readonly manager: SyncOperationManager = new SyncOperationManager(), private readonly execution: ExecutionOptions = {}) { }
+        private readonly manager: SyncOperationManager = new SyncOperationManager(), private readonly execution: SyncExecutionOptions = {}) { }
 
     private root(): string | undefined {
         const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!root) { void vscode.window.showErrorMessage(t('error.noWorkspace')); }
         return root;
-    }
-    private encoding(root: string): string {
-        return readProjectSettings(root).encoding || defaultEncodingFor(getLanguage());
     }
     /** cat5dev.toml の [formatter] format_on_pull。未記載なら旧 VSCode 設定 cat5dev.formatter.formatOnPull を読む（互換） */
     private formatOnPull(root: string): boolean {
@@ -44,7 +46,11 @@ export class CatiaSync {
             return await task(context, root);
         } catch (error) {
             this.output.appendLine(`[${kind}] ${error instanceof Error ? error.stack : String(error)}`);
+            const exitCode = error instanceof CatiaExecutionError ? error.exitCode : undefined;
             if (error instanceof SyncBusyError) { this.showBusy(); }
+            else if (exitCode === EXIT.catiaNotRunning) { void vscode.window.showErrorMessage(t('sync.catiaNotRunning')); }
+            else if (exitCode === EXIT.vbaEditorClosed) { void vscode.window.showErrorMessage(t('sync.vbaEditorClosed')); }
+            else if (exitCode === EXIT.bridgeUnavailable) { this.output.show(true); void vscode.window.showErrorMessage(t('sync.bridgeUnavailable')); }
             else if (error instanceof PullRecoveryError) {
                 void vscode.window.showErrorMessage(t('sync.recoveryFailed', error.recoveryPath, error.unrestored.join(', ')));
                 this.output.show(true);
@@ -63,13 +69,31 @@ export class CatiaSync {
             try { context?.close(); } catch (error) { this.output.appendLine(`[cleanup] ${String(error)}`); }
         }
     }
+    private bridgeMaster(context: OperationContext): string {
+        const known = this.masters.get(context);
+        if (known) { return known; }
+        if (!this.execution.bridge) { throw new Error('CATIA bridge files are not configured'); }
+        const prepared = this.execution.bridge.prepare();
+        const counts = new Map<string, number>();
+        for (const entry of prepared.cleanup) {
+            counts.set(entry.action, (counts.get(entry.action) ?? 0) + 1);
+            if (entry.action !== 'deleted' || entry.error) { this.output.appendLine(`[bridge] ${entry.action}: ${entry.file}${entry.error ? ` (${entry.error})` : ''}`); }
+        }
+        const summary = [...counts].map(([action, count]) => `${action}=${count}`).join(', ') || 'nothing';
+        this.output.appendLine(`[bridge] master ${prepared.action}: ${prepared.master}; cleanup: ${summary}`);
+        this.masters.set(context, prepared.master);
+        return prepared.master;
+    }
     private step(context: OperationContext, request: CatiaRequest): Promise<CatiaResult> {
-        return runCatiaRequest(context, request, { ...this.execution, log: text => this.output.appendLine(text) });
+        const { execute, runnerPath, timeoutMs } = this.execution;
+        return runCatiaRequest(context, request, { execute, runnerPath, timeoutMs, bridgeMaster: this.bridgeMaster(context), log: text => this.output.appendLine(text) });
     }
     private async select(context: OperationContext, root: string): Promise<string | undefined> {
-        const result = await this.step(context, createCatiaRequest(context, 'list', '', this.encoding(root)));
-        if (!result.projects.length) { void vscode.window.showInformationMessage(t('info.projectNotFound')); return undefined; }
-        const selected = await vscode.window.showQuickPick(result.projects, { placeHolder: t('select.placeholder') });
+        const result = await this.step(context, createCatiaRequest(context, 'list', ''));
+        // catia-run.exe already leaves the bridge out; filter again so it can never become the target project.
+        const projects = result.projects.filter(name => name !== BRIDGE_PROJECT_NAME);
+        if (!projects.length) { void vscode.window.showInformationMessage(t('info.projectNotFound')); return undefined; }
+        const selected = await vscode.window.showQuickPick(projects, { placeHolder: t('select.placeholder') });
         if (selected) {
             writeTomlProjectKey(root, 'target_project', selected);
             void vscode.window.showInformationMessage(t('info.projectSelected', selected));
@@ -87,12 +111,13 @@ export class CatiaSync {
             const project = await this.target(context, root); if (!project) { return; }
             const snapshot = captureModules(root);
             await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('progress.pull', project), cancellable: false }, async () => {
-                const request = createCatiaRequest(context, 'pull', project, this.encoding(root));
+                const request = createCatiaRequest(context, 'pull', project);
                 const result = await this.step(context, request);
                 const incoming = new Map<string, string>();
                 const formatOnPull = this.formatOnPull(root);
                 for (const item of result.items) {
-                    let text = normalizeModuleText(iconv.decode(fs.readFileSync(path.join(request.directory, item.file)), request.encoding)) + '\n';
+                    // catia-run.exe writes m<i>.txt as UTF-8 without BOM (bridge-contract 5.1).
+                    let text = normalizeModuleText(fs.readFileSync(path.join(request.directory, item.file), 'utf8')) + '\n';
                     if (formatOnPull) {
                         text = await formatVbaDocument(text, this.server, this.output, root) ?? text;
                     }
@@ -124,7 +149,6 @@ export class CatiaSync {
                 void vscode.window.showInformationMessage(t('info.pushCancelled')); return;
             }
             const project = await this.target(context, root); if (!project) { return; }
-            const encoding = this.encoding(root);
             // text is sent as-is; comparable ignores line-ending differences (CATIA exports CRLF, Pull writes LF).
             const local: { name: string; type: 1 | 2 | 3; text: string; comparable: string }[] = [];
             const seen = new Set<string>();
@@ -143,12 +167,12 @@ export class CatiaSync {
             const longNames = local.filter(item => item.name.length > 31).map(item => item.name);
             if (longNames.length && await vscode.window.showWarningMessage(t('warning.longModuleNames', longNames.join(', ')), { modal: true }, t('dialog.continue')) !== t('dialog.continue')) { return; }
             await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: t('progress.push', project), cancellable: false }, async () => {
-                const check = createCatiaRequest(context, 'check', project, encoding);
+                const check = createCatiaRequest(context, 'check', project);
                 const remote = await this.step(context, check);
                 const remoteByName = new Map(remote.items.map(item => [item.name.toLowerCase(), item]));
                 const changed = local.filter(item => {
                     const other = remoteByName.get(item.name.toLowerCase());
-                    return !other || other.type !== item.type || item.comparable !== normalizeModuleText(iconv.decode(fs.readFileSync(path.join(check.directory, other.file)), encoding));
+                    return !other || other.type !== item.type || item.comparable !== normalizeModuleText(fs.readFileSync(path.join(check.directory, other.file), 'utf8'));
                 });
                 const missing = remote.items.filter(item => !seen.has(item.name.toLowerCase())).map(item => item.name);
                 if (!changed.length && !missing.length) { void vscode.window.showInformationMessage(t('info.noChanges', String(local.length))); return; }
@@ -165,12 +189,9 @@ export class CatiaSync {
                     void vscode.window.showInformationMessage(changed.length ? t('warning.noMoreFiles') : t('info.noChanges', String(local.length)));
                     return;
                 }
-                const request = createCatiaRequest(context, 'push', project, encoding);
-                request.modules = transferable.map((item, index): CatiaItem => {
-                    const file = `m${index}.txt`;
-                    fs.writeFileSync(path.join(request.directory, file), iconv.encode(item.text, encoding));
-                    return { name: item.name, type: item.type, file };
-                });
+                const request = createCatiaRequest(context, 'push', project);
+                // The text travels in request.json unchanged (no encoding conversion; cat5dev.toml encoding is ignored).
+                request.modules = transferable.map((item): CatiaModuleText => ({ name: item.name, type: item.type, text: item.text }));
                 request.deletions = deletions;
                 const result = await this.step(context, request);
                 void vscode.window.showInformationMessage(result.updatedCount === 0 && result.deletedCount > 0

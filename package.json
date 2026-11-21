@@ -199,7 +199,6 @@
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "test:unit": "npm run compile && node --test tests/*.test.js",
-        "sync:templates": "npm run compile && node scripts/update-sync-templates.js",
         "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts"
     },

@@ -10,6 +10,7 @@ import { registerLinter } from './linter';
 import { tomlTemplate, gitignoreTemplate, readProjectSettings, writeTomlProjectKey } from './lintConfig';
 import { startLspClient } from './lspClient';
 import { CatiaSync } from './catiaSync';
+import { BridgeFiles } from './bridgeFiles';
 import { registerFileCommands } from './fileCommands';
 import { registerEditorSettingsSync } from './editorSettings';
 
@@ -21,8 +22,10 @@ export function activate(context: vscode.ExtensionContext) {
     const vbaServer = new VbaServer(context, outputChannel);
     context.subscriptions.push(vbaServer);
     vbaServer.start();
-    // bin/catia-run.exe は npm run compile:bridge で生成し、vsix に同梱する
-    const sync = new CatiaSync(vbaServer, outputChannel, undefined, { bridgePath: path.join(context.extensionPath, 'bin', 'catia-run.exe') });
+    // bin/catia-run.exe は npm run compile:bridge で生成し、vsix に同梱する。
+    // 仲介プロジェクトの正本（%LOCALAPPDATA%\Cat5Dev\bridge）は、各操作の最初の catia-run.exe の前に、ロックの中で用意・掃除する
+    const bridge = new BridgeFiles({ bundledPath: path.join(context.extensionPath, 'resources', 'bridge', 'C5D_Bridge.catvba') });
+    const sync = new CatiaSync(vbaServer, outputChannel, undefined, { runnerPath: path.join(context.extensionPath, 'bin', 'catia-run.exe'), bridge });
 
     let pullCmd = vscode.commands.registerCommand('cat5dev.pullFromCatia', () => {
         return sync.pull();

@@ -6,13 +6,17 @@ export interface CatiaFailure { phase: string; target: string; code: number; mes
 export interface CatiaExpectation {
     operationId: string; stepId: string; kind: string; targetProject: string;
 }
+/** A module sent by Push: the local text as-is (UTF-16 in request.json; no encoding conversion). */
+export interface CatiaModuleText { name: string; type: 1 | 2 | 3; text: string }
+/** One catia-run.exe step. directory holds request.json, result.json and the exported m<i>.txt (UTF-8). */
 export interface CatiaRequest extends CatiaExpectation {
     kind: CatiaStep;
-    encoding: string;
     directory: string;
-    modules?: CatiaItem[];
+    modules?: CatiaModuleText[];
     deletions?: string[];
 }
+/** VBA project name of the Cat5Dev bridge (C5D_Bridge.catvba); never offered as a sync target. */
+export const BRIDGE_PROJECT_NAME = 'C5D_Bridge';
 export interface CatiaResult extends CatiaExpectation {
     version: 1;
     expectedCount: number;

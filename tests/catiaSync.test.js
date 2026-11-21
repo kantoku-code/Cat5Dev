@@ -5,6 +5,7 @@ const path = require('node:path');
 const Module = require('node:module');
 const { fixture, result } = require('./helpers');
 const { SyncOperationManager } = require('../out/syncOperation');
+const { BridgeFiles } = require('../out/bridgeFiles');
 let state;
 const vscode = {
     env: { language: 'ja' }, ProgressLocation: { Notification: 1 },
@@ -41,32 +42,42 @@ function setup(t, options = {}) {
     state = { root, events: [], choice: options.choice, selection: options.selection, documents: options.documents, hangNotifications: options.hangNotifications };
     const steps = [], applies = [], deletes = [];
     const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
-    const output = { appendLine: () => {}, show: () => {} };
-    const execute = async (directory, scriptName) => {
-        const source = fs.readFileSync(path.join(directory, scriptName), 'utf8');
-        const get = name => new RegExp(`${name} = "([^"]*)"`).exec(source)[1];
-        const request = { operationId: get('gOperationId'), stepId: get('gStepId'), kind: get('gKind'), targetProject: get('gTargetProject'), directory };
+    const logs = [];
+    const output = { appendLine: line => logs.push(line), show: () => {} };
+    const invocations = [];
+    // Fake catia-run.exe (bridge-contract 12): reads request.json, writes m<i>.txt (UTF-8, no BOM) and result.json.
+    const execute = async invocation => {
+        invocations.push(invocation);
+        const directory = path.dirname(invocation.request);
+        const request = { ...JSON.parse(fs.readFileSync(invocation.request, 'utf8')), directory };
         steps.push(request.kind);
         if (options.beforeResult) await options.beforeResult(request);
+        if (options.exitCode) return { error: Object.assign(Error(`exit ${options.exitCode}`), { code: options.exitCode }), stdout: '', stderr: '' };
         let r;
         if (options.fail === request.kind) r = result(request, { failures: [{ phase: 'injected', target: '', code: 5, message: 'failure' }] });
-        else if (request.kind === 'list') r = result(request, { projects: ['Review'], expectedCount: 1, succeededCount: 1 });
-        else if (request.kind === 'pull' || request.kind === 'check') {
+        else if (request.kind === 'list') {
+            const projects = options.projects || ['Review'];
+            r = result(request, { projects, expectedCount: projects.length, succeededCount: projects.length });
+        } else if (request.kind === 'pull' || request.kind === 'check') {
             const remote = options.empty ? [] : options.remote || [{ name: 'C5D_UserModule', type: 1, text: options.remoteSource ?? 'new source' }];
             const items = remote.map((item, index) => ({ name: item.name, type: item.type, file: `m${index}.txt` }));
             remote.forEach((item, index) => fs.writeFileSync(path.join(directory, items[index].file), item.text));
             r = result(request, { items, expectedCount: items.length, succeededCount: items.length });
         } else {
-            const applied = [...source.matchAll(/^\s*ApplyModule "([^"]*)"/gm)].map(m => m[1]);
-            const deleted = [...source.matchAll(/^\s*DeleteModule "([^"]*)"/gm)].map(m => m[1]);
+            const applied = request.modules.map(m => m.name);
+            const deleted = request.deletions;
             applies.push(...applied); deletes.push(...deleted);
             const total = applied.length + deleted.length;
             r = result(request, { expectedCount: total, succeededCount: total, updatedCount: applied.length, deletedCount: deleted.length });
         }
-        fs.writeFileSync(path.join(directory, 'result.json'), JSON.stringify(r));
+        fs.writeFileSync(invocation.result, JSON.stringify(r));
         return { stdout: '', stderr: '' };
     };
-    return { root, steps, applies, deletes, events: state.events, sync: new CatiaSync({}, output, manager, { execute, timeoutMs: 1000 }) };
+    const bundledPath = path.join(root, 'bundle', 'C5D_Bridge.catvba');
+    fs.mkdirSync(path.dirname(bundledPath)); fs.writeFileSync(bundledPath, 'fake catvba');
+    const bridge = new BridgeFiles({ bundledPath, bridgeDir: path.join(root, 'bridge') });
+    return { root, steps, applies, deletes, logs, invocations, bridge, events: state.events,
+        sync: new CatiaSync({}, output, manager, { execute, timeoutMs: 1000, bridge: options.noBridge ? undefined : bridge }) };
 }
 test('Pull overwrite has no confirmation; only missing-file deletion is confirmed', async t => {
     for (const choice of ['keep', 'delete', undefined]) {
@@ -145,7 +156,7 @@ test('Push still transfers real changes under CRLF and sends the local text unch
     const { sync, steps, events } = setup(t, {
         localFiles: { 'C5D_UserModule.bas_utf': 'Sub B()\r\n    x = 2\r\nEnd Sub\r\n' },
         remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n',
-        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+        beforeResult: request => { if (request.kind === 'push') sent = request.modules[0].text; }
     });
     await sync.push();
     assert.deepEqual(steps, ['check', 'push']);
@@ -236,7 +247,7 @@ test('Push with unsaved module files continues with the content saved on disk', 
     let sent;
     const { sync, steps, events, root } = setup(t, {
         choice: 'continue',
-        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+        beforeResult: request => { if (request.kind === 'push') sent = request.modules[0].text; }
     });
     state.documents = [dirtyDoc(path.join(root, 'modules', 'C5D_UserModule.bas_utf'))];
     await sync.push();
@@ -287,7 +298,7 @@ test('Push strips a UTF-8 BOM before comparing and sending', async t => {
     const changed = setup(t, {
         localFiles: { 'C5D_UserModule.bas_utf': '﻿Sub B()\r\n    x = 2\r\nEnd Sub\r\n' },
         remoteSource: 'Sub A()\r\n    x = 1\r\nEnd Sub\r\n',
-        beforeResult: request => { if (request.kind === 'push') sent = fs.readFileSync(path.join(request.directory, 'm0.txt'), 'latin1'); }
+        beforeResult: request => { if (request.kind === 'push') sent = request.modules[0].text; }
     });
     await changed.sync.push();
     assert.deepEqual(changed.steps, ['check', 'push']);
@@ -329,4 +340,79 @@ test('format on pull follows [formatter] format_on_pull, falling back to the leg
         state.config = { 'cat5dev.formatter.formatOnPull': c.legacy };
         assert.equal(sync.formatOnPull(root), c.expected, JSON.stringify(c));
     }
+});
+test('Pull and check read m<i>.txt as UTF-8; the cat5dev.toml encoding is ignored', async t => {
+    const source = 'Sub A()\r\n    MsgBox "日本語 🙂 中文"\r\nEnd Sub\r\n';
+    const pulled = setup(t, { choice: 'keep', remoteSource: Buffer.from(source, 'utf8') });
+    await pulled.sync.pull();
+    assert.equal(fs.readFileSync(path.join(pulled.root, 'modules', 'C5D_UserModule.bas_utf'), 'utf8'), 'Sub A()\n    MsgBox "日本語 🙂 中文"\nEnd Sub\n');
+    assert.ok(!pulled.events.some(e => e[0] === 'error'), JSON.stringify(pulled.events));
+    const unchanged = setup(t, { localFiles: { 'C5D_UserModule.bas_utf': 'Sub A()\n    MsgBox "日本語 🙂 中文"\nEnd Sub\n' }, remoteSource: Buffer.from(source, 'utf8') });
+    await unchanged.sync.push();
+    assert.deepEqual(unchanged.steps, ['check']);
+    assert.ok(has(unchanged.events, 'info', '変更されていません'), JSON.stringify(unchanged.events));
+});
+test('Push sends the local text unchanged in request.json, including characters outside Shift_JIS', async t => {
+    let request;
+    const { sync, steps, events } = setup(t, {
+        localFiles: { 'C5D_UserModule.bas_utf': 'Sub B()\r\n    s = "🙂 中文"\r\nEnd Sub\r\n' },
+        beforeResult: r => { if (r.kind === 'push') request = { ...r, files: fs.readdirSync(r.directory) }; }
+    });
+    await sync.push();
+    assert.deepEqual(steps, ['check', 'push']);
+    assert.deepEqual(request.modules, [{ name: 'C5D_UserModule', type: 1, text: 'Sub B()\r\n    s = "🙂 中文"\r\nEnd Sub' }]);
+    assert.deepEqual(request.deletions, []);
+    assert.equal(request.version, 2); assert.ok(!('encoding' in request));
+    assert.deepEqual(request.files, ['request.json'], 'Push writes only request.json (no m<i>.txt)');
+    assert.ok(!events.some(e => e[0] === 'error'), JSON.stringify(events));
+});
+test('Select never offers the C5D_Bridge project', async t => {
+    let offered;
+    const { sync, events } = setup(t, { noTarget: true, projects: ['C5D_Bridge', 'Review'] });
+    vscode.window.showQuickPick = async items => { offered = items; return 'Review'; };
+    try { await sync.selectProject(); } finally { vscode.window.showQuickPick = async () => state.selection; }
+    assert.deepEqual(offered, ['Review']);
+    const only = setup(t, { noTarget: true, projects: ['C5D_Bridge'] });
+    await only.sync.selectProject();
+    assert.ok(has(only.events, 'info', 'VBAプロジェクトが見つかりませんでした'), JSON.stringify(only.events));
+    assert.ok(!events.some(e => e[0] === 'error'));
+});
+test('exit codes 10, 13 and 14 show dedicated messages and release the lock; 2 and 11 are general errors', async t => {
+    const cases = [[10, 'CATIA が起動していません'], [13, '仲介プロジェクト'], [14, 'VBA エディタ'], [2, 'プルに失敗しました'], [11, 'プルに失敗しました']];
+    for (const [exitCode, text] of cases) {
+        const { sync, events, root, steps } = setup(t, { exitCode });
+        await sync.pull();
+        assert.deepEqual(steps, ['pull'], String(exitCode));
+        assert.ok(has(events, 'error', text), `${exitCode}: ${JSON.stringify(events)}`);
+        assert.equal(events.filter(e => e[0] === 'error').length, 1, String(exitCode));
+        assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')), String(exitCode));
+        assert.equal(fs.readFileSync(path.join(root, 'modules', 'C5D_UserModule.bas_utf'), 'utf8'), 'old');
+    }
+});
+test('the bridge master is prepared once per operation, read-only, and passed as --bridge', async t => {
+    const { sync, invocations, bridge, steps, logs } = setup(t, { noTarget: true, selection: 'Review', choice: 'keep' });
+    await sync.pull();
+    assert.deepEqual(steps, ['list', 'pull']);
+    const master = bridge.masterPath();
+    assert.match(path.basename(master), /^C5D_Bridge-[0-9a-f]{8}\.catvba$/);
+    assert.deepEqual(invocations.map(i => i.bridge), [master, master]);
+    assert.equal(fs.readFileSync(master, 'utf8'), 'fake catvba');
+    assert.equal(fs.statSync(master).mode & 0o200, 0, 'read-only');
+    assert.equal(logs.filter(line => line.startsWith('[bridge] master')).length, 1, JSON.stringify(logs));
+    for (const i of invocations) {
+        assert.equal(path.dirname(i.request), path.dirname(i.result));
+        assert.equal(path.basename(i.request), 'request.json'); assert.equal(path.basename(i.result), 'result.json');
+    }
+});
+test('a bridge that cannot be prepared stops before catia-run.exe with a general error', async t => {
+    const missing = setup(t, { choice: 'keep' });
+    fs.unlinkSync(path.join(missing.root, 'bundle', 'C5D_Bridge.catvba'));
+    await missing.sync.pull();
+    assert.deepEqual(missing.steps, []);
+    assert.ok(has(missing.events, 'error', 'プルに失敗しました'), JSON.stringify(missing.events));
+    assert.ok(!fs.existsSync(path.join(missing.root, 'locks', 'active')));
+    const unconfigured = setup(t, { choice: 'keep', noBridge: true });
+    await unconfigured.sync.pull();
+    assert.deepEqual(unconfigured.steps, []);
+    assert.ok(has(unconfigured.events, 'error', 'プルに失敗しました'));
 });
