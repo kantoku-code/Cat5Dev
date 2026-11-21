@@ -4294,4 +4294,6 @@ module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codep
     selfCloseTargets, selfCloseStepNames, reloadLeftovers, sxCloseFacts, judgeSelfClose, runSelfClose, formatSelfCloseSummary,
     CY_MODULE, CY_SOURCE, CY_READ_PROJECT, CY_READ_MODULE, CY_METHODS, CY_DEFAULT_ROUNDS, CY_MAX_ROUNDS, CY_START, CY_FINAL, CY_CLOSE_ACTION,
     parseCycleOptions, cycleRounds, cyCloseActions, cycleListOk, buildCycleRound, cycleStepNames, cycleFatal, prepareCycleFile, scanBridgeFolder,
-    cleanupBridgeLeftovers, cycleRoundFacts, cycleStopReason, judgeCycle, runCycle, formatCycleSummary };
+    cleanupBridgeLeftovers, cycleRoundFacts, cycleStopReason, judgeCycle, runCycle, formatCycleSummary,
+    // shared with scripts/build-bridge-catvba.js
+    runCallStep, cnextProcesses, catiaAlive, uniqueReportPath, sha256, errorText, STEP_TIMEOUT_MS, LOCK_CODES };

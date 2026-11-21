@@ -1,0 +1,2 @@
+# VBA sources of the bridge are passed to CATIA byte for byte: always CRLF in the working tree (see docs/dev/bridge-contract.md).
+resources/bridge/*.bas text eol=crlf
