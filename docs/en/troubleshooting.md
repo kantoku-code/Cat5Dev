@@ -21,11 +21,26 @@ Error details are logged in VSCode's Output panel (**View** → **Output** in th
 
 ## Cannot connect to CATIA (Pull / Push / project selection fails)
 
-- Make sure CATIA V5 is running. If CATIA is not running, messages such as "Pull failed. Check the Output panel for details." appear.
+- If "CATIA is not running. Start CATIA and try again." appears, start CATIA V5 and try again.
+- If "Open the CATIA VBA editor (Alt+F11) once, then try again." appears, open the VBA editor in CATIA once and try again (you may close it afterwards). Until the VBA editor has been opened, Cat5Dev cannot see the VBA projects.
 - Make sure the target VBA project is open in CATIA. If it is not, "Target project not found" is logged.
-- **Make sure the CATIA VBA editor (`Alt+F11`) is open.** Pull / Push does not work unless the VBA editor is open.
 - Make sure `target_project` in `cat5dev.toml` matches the project name in CATIA (case-sensitive).
 - For details, check "CATIA VBA Sync" in the Output panel.
+
+## "Cat5Dev could not prepare its bridge project (C5D_Bridge)" appears
+
+Cat5Dev could not prepare `C5D_Bridge`, the helper project it loads into CATIA ([how it works](sync.md#how-cat5dev-talks-to-catia)). Nothing has been written to your VBA projects.
+
+1. Check "CATIA VBA Sync" in the Output panel for details.
+2. If a dialog (such as a MsgBox) is open in CATIA, close it, wait a moment and try again. This error can appear while the previous operation has not finished yet.
+3. Make sure `%LOCALAPPDATA%\Cat5Dev\bridge\` is writable (permissions, antivirus software, and so on).
+4. If the problem persists, save your work in CATIA, restart CATIA and try again.
+
+## A project named `C5D_Bridge` appears in the VBA editor
+
+This is the helper project that Cat5Dev loads temporarily while an operation is running. It is removed when the operation ends. It is read-only and is never saved. Do not edit or save it; leave it alone.
+
+It can remain after an operation (for example after a timeout); it is removed automatically at the next project selection, Pull or Push, and also disappears when CATIA exits.
 
 ## "Another CATIA operation is running…" or "CATIA completion could not be confirmed" appears
 
@@ -51,7 +66,7 @@ If CATIA has no UserForm with the same name, it cannot be created and is skipped
 
 ## Text is garbled
 
-Check `encoding` in the `[project]` section of `cat5dev.toml`. `shift_jis` is typical for the Japanese version of CATIA, and `gbk` for the Chinese version. See [Character encoding](sync.md#character-encoding).
+Pull / Push carry the text as Unicode, so it is not garbled on the way. `encoding` in `cat5dev.toml` is no longer used (it is ignored if present). If files pulled with an earlier version are garbled, pull again. See [Character encoding](sync.md#character-encoding).
 
 ## No Lint squiggles / the formatter does not run
 

@@ -60,7 +60,6 @@ Changes to `cat5dev.toml` take effect as soon as you save the file.
 [project]
 target_project = ""          # Target CATIA VBA project name (set with the ⚙️ button)
 language = "ja"              # Display language: ja / en / zh
-encoding = "shift_jis"       # Encoding used when exchanging code with CATIA
 
 [lint]
 enabled = false              # true to enable Lint
@@ -101,7 +100,9 @@ breadcrumbs_sort = "name"    # Breadcrumbs sort order: position / name / type
 |-----|---------|-------------|
 | `target_project` | `""` | Name of the CATIA VBA project to sync. Written when you select it with the ⚙️ button |
 | `language` | `"ja"` | Display language (`ja` / `en` / `zh`). Written when you switch with the 🌐 button |
-| `encoding` | `"gbk"` if `language` is `zh`, otherwise `"shift_jis"` | Encoding used when exchanging code with CATIA. See [Sync](sync.md#character-encoding) |
+
+> [!NOTE]
+> `encoding` of earlier versions (the encoding used when exchanging code with CATIA) is no longer used. Pull / Push carry the text as Unicode. If an old `cat5dev.toml` still has it, it is ignored (see [Character encoding](sync.md#character-encoding)).
 
 ### [lint] / [lint.rules]
 See [Lint and Formatter](lint-format.md#vba-lint).
@@ -180,4 +181,5 @@ Restart VSCode after changing environment variables.
 | Location | Contents |
 |----------|----------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | Sync lock information (see [Sync lock](sync.md#preventing-concurrent-operations-and-the-sync-lock)) |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | Files of `C5D_Bridge`, the helper project loaded into CATIA temporarily. The per-operation files are deleted at the next operation after CATIA exits (see [How Cat5Dev talks to CATIA](sync.md#how-cat5dev-talks-to-catia)) |
 | `%TEMP%\cat5dev-…\` | Temporary files used to exchange data with CATIA. Normally deleted when the operation ends |

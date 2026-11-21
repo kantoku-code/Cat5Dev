@@ -60,7 +60,6 @@ cat5dev.toml
 [project]
 target_project = ""          # 対象の CATIA VBA プロジェクト名（⚙️ ボタンで設定）
 language = "ja"              # 表示言語 ja / en / zh
-encoding = "shift_jis"       # CATIA とやり取りするときの文字コード
 
 [lint]
 enabled = false              # true で Lint を有効にする
@@ -101,7 +100,9 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 |------|--------|------|
 | `target_project` | `""` | 同期する CATIA の VBA プロジェクト名。⚙️ ボタンで選ぶと書き込まれます |
 | `language` | `"ja"` | 表示言語（`ja` / `en` / `zh`）。🌐 ボタンで切り替えると書き込まれます |
-| `encoding` | `language` が `zh` なら `"gbk"`、それ以外は `"shift_jis"` | CATIA とやり取りするときの文字コード。[同期](sync.md#文字コードエンコーディング) を参照 |
+
+> [!NOTE]
+> 以前の版の `encoding`（CATIA とやり取りするときの文字コード）は使われなくなりました。Pull / Push は本文を Unicode のまま運びます。古い `cat5dev.toml` に残っていても無視されます（[文字コード](sync.md#文字コードエンコーディング) を参照）。
 
 ### [lint] / [lint.rules]
 [Lint とフォーマッタ](lint-format.md#vba-lint) を参照してください。
@@ -180,4 +181,5 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 | 場所 | 内容 |
 |------|------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | 同期ロックの情報（[同期ロック](sync.md#同時実行の防止と同期ロック) を参照） |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | CATIA に一時的に読み込む仲介プロジェクト `C5D_Bridge` のファイル。処理ごとのファイルは、CATIA の終了後、次の処理のときに削除されます（[仕組み](sync.md#catia-とのやり取りの仕組み) を参照） |
 | `%TEMP%\cat5dev-…\` | CATIA とのやり取りに使う一時ファイル。通常は処理の終了時に削除されます |

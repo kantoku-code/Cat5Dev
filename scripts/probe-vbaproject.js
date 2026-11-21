@@ -3,19 +3,18 @@
 // without loading vbscript.dll?
 // Usage: node scripts/probe-vbaproject.js --call [--library <path.catvba>] [<step> ...]
 //        node scripts/probe-vbaproject.js --write-bas
-//        node scripts/probe-vbaproject.js --info | --install | --remove     (need `npm run compile` and bin/catia-run.exe)
 // Modes:
 //   --call       runs temp/eval-probe.exe (built from tools/catia-run/EvalProbe.cs) once per step:
 //                  vbaproj-ping vbaproj-sub vbaproj-projects vbaproj-filename-basename vbaproj-filename-empty vbaproj-filename-project
 //                (vbaproj-filename = the three -filename-* steps). Never runs a .catvbs/.CATScript, so it can judge vbscript.dll
-//                on a freshly restarted CATIA. --library defaults to the "library" of temp/probe-vbaproject-info.json (--info).
+//                on a freshly restarted CATIA. --library defaults to the "library" of temp/probe-vbaproject-info.json (written by
+//                the removed --info mode); pass --library when it is missing.
 //                CNEXT.exe modules (vbscript/jscript/scrrun/vbe7/apc71) are recorded before the first step and after each step.
 //                Each step has a 60 s timeout (CATIA may be stopped at a dialog); the run stops there.
 //   --write-bas  writes temp/C5D_BridgeTest.bas (ASCII, CRLF, no Attribute line) to paste into a new standard module of toQI.
-//   --info       (operation.catvbs; loads vbscript.dll) reads toQI's FileName/Protection/components -> temp/probe-vbaproject-info.json.
-//   --install    (operation.catvbs) adds the standard module C5D_BridgeTest to toQI; aborts when it already exists.
-//   --remove     (operation.catvbs) deletes C5D_BridgeTest only when its text has the owner marker; verifies it is gone.
-// The VBA project is never saved. Only the module C5D_BridgeTest is added/removed; other modules are never written.
+//   --info / --install / --remove were removed: they ran operation.catvbs, which catia-run.exe no longer accepts
+//                (docs/dev/bridge-contract.md). Add C5D_BridgeTest to toQI by hand from --write-bas; scripts/smoke-catia.js
+//                checks Push / Pull. This tool never writes a VBA project.
 // Each run writes temp/probe-vbaproject-<mode>-<yyyyMMdd-HHmmss>.json and prints a summary to stdout.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,24 +25,24 @@ const { buildProbe, parseProbeOutput } = require('./probe-evaluate');
 const ROOT = path.resolve(__dirname, '..');
 const TEMP = path.join(ROOT, 'temp');
 const INFO_PATH = path.join(TEMP, 'probe-vbaproject-info.json');
-const BASELINE_PATH = path.join(TEMP, 'probe-vbaproject-baseline.json');
 const BAS_PATH = path.join(TEMP, 'C5D_BridgeTest.bas');
 const PROJECT = 'toQI';
 const MODULE = 'C5D_BridgeTest';
 const MARKER = "' Cat5Dev-bridge-test-owner";
-const ENCODING = 'shift_jis';
 const STEP_TIMEOUT_MS = 60000;
 const PING_EXPECTED = 'vba:Long:cat5dev-param';
 const CALL_STEPS = ['vbaproj-ping', 'vbaproj-sub', 'vbaproj-projects', 'vbaproj-filename-basename', 'vbaproj-filename-empty', 'vbaproj-filename-project'];
 const CALL_ALIASES = { 'vbaproj-filename': ['vbaproj-filename-basename', 'vbaproj-filename-empty', 'vbaproj-filename-project'] };
 const PING_STEPS = ['vbaproj-ping', 'vbaproj-filename-basename', 'vbaproj-filename-empty', 'vbaproj-filename-project'];
-const MODES = { '--info': 'info', '--install': 'install', '--call': 'call', '--remove': 'remove', '--write-bas': 'write-bas' };
+const MODES = { '--call': 'call', '--write-bas': 'write-bas' };
+/** Modes of the operation.catvbs route, removed with the C5D_Bridge migration (catia-run.exe takes request.json now). */
+const REMOVED_MODES = ['--info', '--install', '--remove'];
 const USAGE = 'Usage: node scripts/probe-vbaproject.js --call [--library <path.catvba>] [<step> ...]\n'
-    + '       node scripts/probe-vbaproject.js --write-bas | --info | --install | --remove\n'
+    + '       node scripts/probe-vbaproject.js --write-bas\n'
     + `  call steps (default: all, in this order): ${CALL_STEPS.join(' ')} (alias: vbaproj-filename)\n`
-    + '  --info/--install/--remove run operation.catvbs (loads vbscript.dll); --call and --write-bas never do.';
+    + '  Neither mode runs a .catvbs/.CATScript. --info/--install/--remove were removed (use scripts/smoke-catia.js).';
 
-/** VBA of the module C5D_BridgeTest (ASCII only, CRLF, no Attribute line). Same text for --write-bas and --install. */
+/** VBA of the module C5D_BridgeTest (ASCII only, CRLF, no Attribute line), written by --write-bas. */
 const BRIDGE_BODY = [
     MARKER,
     'Option Explicit',
@@ -90,6 +89,10 @@ function parseArgs(args) {
     let library = null;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
+        if (REMOVED_MODES.includes(arg)) {
+            throw new Error(`${arg} no longer works: it ran operation.catvbs, which catia-run.exe no longer accepts. `
+                + `Add ${MODULE} to ${PROJECT} by hand (--write-bas) and check Push / Pull with node scripts/smoke-catia.js.\n${USAGE}`);
+        }
         if (Object.hasOwn(MODES, arg)) modes.push(MODES[arg]);
         else if (arg === '--library') {
             if (i + 1 >= args.length || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`--library requires a path\n${USAGE}`);
@@ -138,7 +141,7 @@ function judgeCall(beforeLoaded, entries) {
 /** Library given with --library, else the "library" of temp/probe-vbaproject-info.json. */
 function resolveLibrary(given, infoPath = INFO_PATH) {
     if (given) return { library: given, source: '--library' };
-    if (!fs.existsSync(infoPath)) throw new Error(`No --library given and ${infoPath} does not exist (run --info, or pass --library <path.catvba>)`);
+    if (!fs.existsSync(infoPath)) throw new Error(`No --library given and ${infoPath} does not exist (pass --library <path.catvba>)`);
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
     if (typeof info.library !== 'string' || !info.library) throw new Error(`${infoPath} has no "library" (FileName of ${PROJECT}); pass --library <path.catvba>`);
     return { library: info.library, source: infoPath };
@@ -204,200 +207,6 @@ async function runCall(report, options) {
     if (report.runs.some(run => run.timedOut || !run.result || run.exitCode !== 0)) process.exitCode = 1;
 }
 
-// ---- --info / --install / --remove: the existing catvbs route (src/catiaExecution.ts, compiled to out/).
-
-/** One VBScript statement whose value (or Err) is appended to the result's "projects" as "key=value" / "key!err=N text". */
-function infoProperty(key, expression) {
-    return `
-    Err.Clear
-    value = Empty
-    value = ${expression}
-    errN = Err.Number
-    errText = Err.Description
-    Err.Clear
-    C5DInfo "${key}", value, errN, errText`;
-}
-/** Sub appended to operation.catvbs (kind 'check'): project properties and every component (all types) of gProject. */
-const INFO_SUB = `
-Sub C5DProjectInfo()
-    On Error Resume Next
-    Dim value, errN, errText, total, i, component, componentName, componentType
-    ${infoProperty('name', 'gProject.Name')}
-    ${infoProperty('fileName', 'gProject.FileName')}
-    ${infoProperty('protection', 'gProject.Protection')}
-    ${infoProperty('saved', 'gProject.Saved')}
-    ${infoProperty('type', 'gProject.Type')}
-    ${infoProperty('componentCount', 'gComponents.Count')}
-    total = value
-    If errN <> 0 Then Exit Sub
-    For i = 1 To total
-        Err.Clear
-        Set component = Nothing
-        componentName = ""
-        componentType = -1
-        Set component = gComponents.Item(i)
-        componentName = component.Name
-        componentType = component.Type
-        errN = Err.Number
-        errText = Err.Description
-        Err.Clear
-        C5DInfo "component", componentName & ":" & CStr(componentType), errN, errText
-    Next
-End Sub
-
-Sub C5DInfo(key, value, errN, errText)
-    On Error Resume Next
-    If errN = 0 Then
-        AppendJson gProjectNames, JsonQuote(key & "=" & CStr(value))
-    Else
-        AppendJson gProjectNames, JsonQuote(key & "!err=" & CStr(errN) & " " & errText)
-    End If
-End Sub
-`.replace(/\r?\n/g, '\r\n');
-const EXPORT_CALL = '\r\n    ExportModules\r\n    FinishResult\r\nEnd Sub\r\n';
-/** operation.catvbs of a 'check' request with C5DProjectInfo called after ExportModules. */
-function withProjectInfo(source) {
-    if (!source.includes(EXPORT_CALL)) throw new Error('operation.catvbs layout changed: ExportModules call not found');
-    return source.replace(EXPORT_CALL, '\r\n    ExportModules\r\n    C5DProjectInfo\r\n    FinishResult\r\nEnd Sub\r\n') + INFO_SUB;
-}
-/** "projects" of the C5DProjectInfo result -> { properties, errors, components: [{ name, type }] }. */
-function parseInfo(entries) {
-    const properties = {}, errors = {}, components = [];
-    for (const entry of entries) {
-        const m = /^([A-Za-z]+)(=|!err=)([\s\S]*)$/.exec(entry);
-        if (!m) continue;
-        if (m[2] === '!err=') { errors[m[1]] = m[3]; if (m[1] === 'component') components.push({ name: null, type: null, error: m[3] }); continue; }
-        if (m[1] === 'component') {
-            const at = m[3].lastIndexOf(':');
-            components.push({ name: m[3].slice(0, at), type: Number(m[3].slice(at + 1)) });
-        } else properties[m[1]] = m[3];
-    }
-    return { properties, errors, components };
-}
-const isBridge = name => typeof name === 'string' && name.toLowerCase() === MODULE.toLowerCase();
-
-/** Runs requests of one sync operation (the extension's lock); call(kind, configure?, override?) -> { request, result }. */
-async function withOperation(report, body) {
-    const bridgePath = path.join(ROOT, 'bin', 'catia-run.exe');
-    if (!fs.existsSync(bridgePath)) throw new Error(`Missing ${bridgePath}; run npm run compile:bridge`);
-    let modules;
-    try {
-        modules = { ...require('../out/syncOperation'), ...require('../out/catiaExecution') };
-    } catch (error) { throw new Error(`out/ is missing or stale; run npm run compile (${error.message})`); }
-    const iconv = require('iconv-lite');
-    const context = new modules.SyncOperationManager().acquire('probe-vbaproject');
-    report.requests = [];
-    const call = async (kind, project, configure, override) => {
-        const request = modules.createCatiaRequest(context, kind, project, ENCODING);
-        if (configure) configure(request);
-        const execute = override ? (directory, scriptName, timeoutMs) => {
-            const file = path.join(directory, scriptName);
-            fs.writeFileSync(file, override(fs.readFileSync(file, 'utf8')));
-            return modules.bridgeExecutor(bridgePath)(directory, scriptName, timeoutMs);
-        } : undefined;
-        const entry = { kind, project, modules: request.modules, deletions: request.deletions };
-        report.requests.push(entry);
-        try {
-            const result = await modules.runCatiaRequest(context, request, { bridgePath, execute });
-            Object.assign(entry, { expected: result.expectedCount, succeeded: result.succeededCount, failures: result.failures });
-            return { request, result };
-        } catch (error) {
-            Object.assign(entry, { error: String(error), failures: error.result?.failures });
-            throw error;
-        }
-    };
-    /** 'check' of toQI + C5DProjectInfo: { info, items: [{ name, type, text }] }. */
-    const inspect = async () => {
-        const list = await call('list', '');
-        if (!list.result.projects.includes(PROJECT)) throw new Error(`Project ${PROJECT} not found (projects: ${list.result.projects.join(', ')})`);
-        const { request, result } = await call('check', PROJECT, undefined, withProjectInfo);
-        const items = result.items.map(item => ({ name: item.name, type: item.type,
-            text: iconv.decode(fs.readFileSync(path.join(request.directory, item.file)), ENCODING) }));
-        return { projects: list.result.projects, info: parseInfo(result.projects), items };
-    };
-    try { return await body({ call, inspect, iconv }); } finally {
-        try { context.close(); } catch (error) { report.notes.push(`Lock release failed: ${error}`); }
-    }
-}
-function describeInspection(inspection) {
-    const bridgeComponent = inspection.info.components.find(c => isBridge(c.name));
-    const bridgeItem = inspection.items.find(item => isBridge(item.name));
-    return {
-        projects: inspection.projects,
-        project: PROJECT,
-        library: inspection.info.properties.fileName ?? null,
-        properties: inspection.info.properties,
-        errors: inspection.info.errors,
-        components: inspection.info.components,
-        bridgePresent: Boolean(bridgeComponent || bridgeItem),
-        bridgeType: bridgeComponent?.type ?? bridgeItem?.type ?? null,
-        bridgeOwned: bridgeItem ? bridgeItem.text.includes(MARKER) : null
-    };
-}
-const { createHash } = require('node:crypto');
-const hashes = items => Object.fromEntries(items.filter(item => !isBridge(item.name))
-    .map(item => [item.name, createHash('sha256').update(item.text).digest('hex')]).sort(([a], [b]) => a.localeCompare(b)));
-/** Names of modules whose text differs from (or is missing in / new to) the baseline. */
-function changedModules(baseline, current) {
-    return [...new Set([...Object.keys(baseline), ...Object.keys(current)])].filter(name => baseline[name] !== current[name]).sort();
-}
-const normalize = text => text.replace(/\r\n?/g, '\n').trimEnd();
-
-async function runInfo(report) {
-    await withOperation(report, async ({ inspect }) => {
-        const info = describeInspection(await inspect());
-        report.info = info;
-        fs.writeFileSync(INFO_PATH, JSON.stringify({ ...info, collectedAt: new Date().toISOString() }, null, 2));
-        report.infoPath = INFO_PATH;
-        if (String(info.properties.protection) !== '0') report.notes.push(`Protection=${info.properties.protection}: the project may be locked (1 = vbext_pp_locked).`);
-        report.summary = { verdict: `${PROJECT}: library=${info.library ?? '(unknown)'}, ${MODULE} ${info.bridgePresent ? 'present' : 'absent'}` };
-    });
-}
-async function runInstall(report) {
-    await withOperation(report, async ({ call, inspect, iconv }) => {
-        const before = await inspect();
-        const info = describeInspection(before);
-        report.before = info;
-        if (info.bridgePresent) throw new Error(`${MODULE} already exists in ${PROJECT} (owner marker: ${info.bridgeOwned}); not installing`);
-        if (String(info.properties.protection) !== '0') throw new Error(`${PROJECT} Protection=${info.properties.protection}; not installing`);
-        fs.writeFileSync(BASELINE_PATH, JSON.stringify({ project: PROJECT, at: new Date().toISOString(), hashes: hashes(before.items) }, null, 2));
-        report.baselinePath = BASELINE_PATH;
-        await call('push', PROJECT, request => {
-            fs.writeFileSync(path.join(request.directory, 'm0.txt'), iconv.encode(BRIDGE_BODY, ENCODING));
-            request.modules = [{ name: MODULE, type: 1, file: 'm0.txt' }];
-        });
-        const after = await inspect();
-        const item = after.items.find(i => isBridge(i.name));
-        report.installed = Boolean(item);
-        report.bodyMatches = item ? normalize(item.text) === normalize(BRIDGE_BODY) : false;
-        report.otherModulesChanged = changedModules(hashes(before.items), hashes(after.items));
-        if (item && !report.bodyMatches) report.installedText = item.text;
-        fs.writeFileSync(INFO_PATH, JSON.stringify({ ...describeInspection(after), collectedAt: new Date().toISOString() }, null, 2));
-        report.summary = { verdict: report.installed ? `${MODULE} added to ${PROJECT}${report.bodyMatches ? '' : ' (WARNING: text differs from the source)'}`
-            : `${MODULE} not found after push` };
-        if (!report.installed || !report.bodyMatches) process.exitCode = 1;
-    });
-}
-async function runRemove(report) {
-    await withOperation(report, async ({ call, inspect }) => {
-        const before = await inspect();
-        const info = describeInspection(before);
-        report.before = info;
-        if (!info.bridgePresent) { report.summary = { verdict: `${MODULE} is not in ${PROJECT}; nothing removed` }; return; }
-        if (info.bridgeType !== 1) throw new Error(`${MODULE} is not a standard module (type ${info.bridgeType}); refusing to remove`);
-        if (!info.bridgeOwned) throw new Error(`${MODULE} has no owner marker (${MARKER}); refusing to remove`);
-        await call('push', PROJECT, request => { request.modules = []; request.deletions = [MODULE]; });
-        const after = await inspect();
-        report.removed = !describeInspection(after).bridgePresent;
-        if (fs.existsSync(BASELINE_PATH)) {
-            const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
-            report.otherModulesChangedSinceInstall = changedModules(baseline.hashes, hashes(after.items));
-        } else report.notes.push(`${BASELINE_PATH} not found (module was not added by --install); other modules were not compared.`);
-        report.otherModulesChanged = changedModules(hashes(before.items), hashes(after.items));
-        report.summary = { verdict: report.removed ? `${MODULE} removed from ${PROJECT} (project not saved)` : `${MODULE} still present after deletion` };
-        if (!report.removed) process.exitCode = 1;
-    });
-}
 function runWriteBas(report) {
     fs.writeFileSync(BAS_PATH, BRIDGE_BODY, 'ascii');
     report.basPath = BAS_PATH;
@@ -454,18 +263,6 @@ function formatSummary(report) {
     const s = report.summary;
     if (s?.libraryResolvedBy) lines.push('', `library forms that reached C5D_Ping: ${s.libraryResolvedBy.join(', ') || '(none)'}`);
     if (s?.projects) lines.push(`C5D_Projects: ${JSON.stringify(s.projects)}`);
-    const info = report.info ?? report.before;
-    if (info) {
-        lines.push('', `${info.project}: FileName=${info.library ?? '?'} Protection=${info.properties.protection ?? '?'} Saved=${info.properties.saved ?? '?'}`);
-        lines.push(`  components: ${info.components.map(c => c.name ? `${c.name}(${c.type})` : `!${c.error}`).join(', ') || '(none)'}`);
-        lines.push(`  ${MODULE}: ${info.bridgePresent ? `present (type ${info.bridgeType}, owner marker ${yn(info.bridgeOwned)})` : 'absent'}`);
-        if (Object.keys(info.errors).length) lines.push(`  errors: ${JSON.stringify(info.errors)}`);
-    }
-    if (report.otherModulesChanged) lines.push(`other modules changed by this run: ${report.otherModulesChanged.join(', ') || '(none)'}`);
-    if (report.otherModulesChangedSinceInstall) lines.push(`other modules changed since --install: ${report.otherModulesChangedSinceInstall.join(', ') || '(none)'}`);
-    for (const request of report.requests ?? []) {
-        if (request.error) lines.push(`request ${request.kind} failed: ${request.error}${request.failures?.length ? ' ' + JSON.stringify(request.failures) : ''}`);
-    }
     if (s?.verdict) lines.push('', `verdict: ${s.verdict}`);
     for (const note of report.notes) lines.push(`note: ${note}`);
     return lines.join('\n');
@@ -480,10 +277,7 @@ async function main() {
     const report = { mode: options.mode, startedAt: new Date().toISOString(), reportPath, project: PROJECT, module: MODULE, notes: [], snapshots: {} };
     try {
         if (options.mode === 'call') await runCall(report, options);
-        else if (options.mode === 'write-bas') runWriteBas(report);
-        else if (options.mode === 'info') await runInfo(report);
-        else if (options.mode === 'install') await runInstall(report);
-        else await runRemove(report);
+        else runWriteBas(report);
     } catch (error) {
         report.error = String(error); process.exitCode = 1;
     }
@@ -492,5 +286,4 @@ async function main() {
     console.log(formatSummary(report));
 }
 if (require.main === module) main();
-module.exports = { parseArgs, judgeCall, parseProjectsResult, resolveLibrary, withProjectInfo, parseInfo, changedModules,
-    BRIDGE_BODY, MARKER, CALL_STEPS, INFO_SUB };
+module.exports = { parseArgs, judgeCall, parseProjectsResult, resolveLibrary, BRIDGE_BODY, MARKER, CALL_STEPS };

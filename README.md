@@ -34,6 +34,8 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 
 Cat5Dev communicates with CATIA over COM through its bundled helper `catia-run.exe`, which runs on .NET Framework 4.x (preinstalled on Windows 10/11).
 
+For Pull / Push, Cat5Dev temporarily loads a helper VBA project, `C5D_Bridge`, into CATIA and removes it when the operation ends. You may briefly see `C5D_Bridge` in the VBA editor while an operation is running; it is never saved. VBScript is not used ([how it works](docs/en/sync.md#how-cat5dev-talks-to-catia)).
+
 ---
 
 ## Installation
@@ -96,7 +98,7 @@ Push may also ask **whether to delete modules from CATIA that do not exist in VS
 
 | Page | Contents |
 |------|----------|
-| [Syncing with CATIA](docs/en/sync.md) | How Pull / Push work and their confirmation dialogs, the module tree, the sync lock and recovery, character encoding |
+| [Syncing with CATIA](docs/en/sync.md) | How Pull / Push work and their confirmation dialogs, the module tree, how Cat5Dev talks to CATIA (the C5D_Bridge helper project), the sync lock and recovery, character encoding |
 | [IntelliSense](docs/en/intellisense.md) | Completion, hover, Go to Definition, parameter hints, the `'@As` type hint, CATIA API type information |
 | [Lint and Formatter](docs/en/lint-format.md) | Lint rules, formatter operations and options |
 | [Configuration Reference](docs/en/configuration.md) | All `cat5dev.toml` settings, display language, VSCode settings, files that are created |

@@ -10,6 +10,7 @@ Cat5Dev transfers modules between a CATIA V5 VBA project and the `modules/` fold
 - [Pull (CATIA → VSCode)](#pull-catia--vscode)
 - [Push (VSCode → CATIA)](#push-vscode--catia)
 - [Module tree](#module-tree)
+- [How Cat5Dev talks to CATIA](#how-cat5dev-talks-to-catia)
 - [Preventing concurrent operations and the sync lock](#preventing-concurrent-operations-and-the-sync-lock)
 - [Character encoding](#character-encoding)
 
@@ -136,6 +137,23 @@ Click the Cat5Dev icon in the Activity Bar to show the contents of the `modules/
 
 ---
 
+## How Cat5Dev talks to CATIA
+
+For project selection, Pull and Push, the bundled helper `catia-run.exe` connects to CATIA and temporarily loads a helper VBA project, **`C5D_Bridge`**, into CATIA. Modules are read and written through `C5D_Bridge`. VBScript (`.catvbs` or `cscript`) is not used.
+
+- `C5D_Bridge` is removed from CATIA when each operation ends (Push loads and removes it once for the change check and once for the write).
+- **You may therefore see `C5D_Bridge` in the project list of the VBA editor for a short time while an operation is running.** Leave it alone.
+- `C5D_Bridge` is loaded read-only and is **never saved**. It does not appear in the project selection list.
+- Your VBA projects are written only by Push, and only the modules of the target project.
+- `C5D_Bridge` can see only the projects loaded in the VBA editor, so **open the VBA editor (`Alt+F11`) once before you Pull / Push**.
+- Loading and removing `C5D_Bridge` adds about one second to each operation.
+
+### Temporary files
+- Cat5Dev creates the helper project file (`C5D_Bridge-<8 characters>.catvba`) and a file for each operation (`C5D_Bridge-<8 characters>-<number>-<time>.catvba`) in `%LOCALAPPDATA%\Cat5Dev\bridge\`.
+- CATIA keeps the per-operation files in use until it exits, so they remain until then. After CATIA exits, they are deleted automatically at the next project selection, Pull or Push.
+
+---
+
 ## Preventing concurrent operations and the sync lock
 
 Operations that talk to CATIA (project selection, Pull, Push) can run **only one at a time** per Windows user. If one is already running in another VSCode window or workspace, the message "Another CATIA operation is running…" appears.
@@ -159,11 +177,7 @@ In this case, the **sync lock** stays in place to prevent accidental double writ
 
 ## Character encoding
 
-Files on the VSCode side are UTF-8, while VBA in CATIA uses an ANSI code page such as Shift-JIS or GBK. Cat5Dev converts between them during Pull / Push.
+Files on the VSCode side are UTF-8. Pull / Push exchange the module text with CATIA as Unicode, without converting it to Shift-JIS, GBK or any other code page, so characters that such code pages cannot represent (for example `🙂`) are not garbled on the way.
 
-| `language` in `cat5dev.toml` | Default encoding |
-|------------------------------|------------------|
-| `"zh"` | `gbk` |
-| `"ja"` / `"en"` | `shift_jis` |
-
-You can change it with `encoding` in the `[project]` section (e.g. `encoding = "gb2312"`). If text is garbled, check this setting.
+- `encoding` in the `[project]` section of `cat5dev.toml` is no longer used. If an old `cat5dev.toml` still has it, it is ignored (no error). You may delete it.
+- How the VBA editor displays the text after it reaches CATIA, and how it is stored when you save the project, depend on CATIA (VBA).

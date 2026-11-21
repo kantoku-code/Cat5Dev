@@ -4,12 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { fixture } = require('./helpers');
-const { parseArgs, judgeCall, parseProjectsResult, resolveLibrary, withProjectInfo, parseInfo, changedModules, BRIDGE_BODY, MARKER, CALL_STEPS }
+const { parseArgs, judgeCall, parseProjectsResult, resolveLibrary, BRIDGE_BODY, MARKER, CALL_STEPS }
     = require('../scripts/probe-vbaproject');
-// The operation.catvbs generator (src/catiaScripts.ts) was removed with the C5D_Bridge migration; withProjectInfo is
-// checked against the layout of the last generated script (CATMain ends with ExportModules / FinishResult).
-const legacyScript = kind => 'Option Explicit\r\nSub CATMain()\r\n    On Error Resume Next\r\n    '
-    + (kind === 'list' ? 'ListProjects' : 'ExportModules') + '\r\n    FinishResult\r\nEnd Sub\r\n\r\nSub FinishResult()\r\nEnd Sub\r\n';
 const csc = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
 
 test('VBAProject probe parses modes, library and steps', () => {
@@ -21,9 +17,12 @@ test('VBAProject probe parses modes, library and steps', () => {
         ['vbaproj-filename-basename', 'vbaproj-filename-empty', 'vbaproj-filename-project']);
     assert.deepEqual(parseArgs(['--write-bas']), { mode: 'write-bas', library: null, steps: [] });
     assert.throws(() => parseArgs([]), /exactly one mode/);
-    assert.throws(() => parseArgs(['--info', '--call']), /exactly one mode/);
+    assert.throws(() => parseArgs(['--write-bas', '--call']), /exactly one mode/);
+    for (const removed of ['--info', '--install', '--remove']) {
+        assert.throws(() => parseArgs([removed]), new RegExp(`${removed} no longer works.*smoke-catia`), removed);
+    }
     assert.throws(() => parseArgs(['--call', '--library']), /requires a path/);
-    assert.throws(() => parseArgs(['--install', '--library', 'x']), /only for --call/);
+    assert.throws(() => parseArgs(['--write-bas', '--library', 'x']), /only for --call/);
     assert.throws(() => parseArgs(['--call', 'basic']), /Unknown/);
 });
 test('VBAProject probe resolves the library from --library or the info file', t => {
@@ -65,19 +64,6 @@ test('C5D_BridgeTest body is ASCII VBA with the owner marker and no Attribute li
         assert.ok(BRIDGE_BODY.includes('Public ' + name), name);
     }
     assert.ok(BRIDGE_BODY.includes('Dim n As Long'));
-});
-test('the info override is injected into a check operation.catvbs and its result is parsed', () => {
-    const source = withProjectInfo(legacyScript('check'));
-    assert.match(source, /\r\n    ExportModules\r\n    C5DProjectInfo\r\n    FinishResult\r\nEnd Sub\r\n/);
-    assert.match(source, /Sub C5DProjectInfo\(\)/);
-    assert.ok(!/[^\r]\n/.test(source));
-    assert.throws(() => withProjectInfo(legacyScript('list')), /layout changed/);
-    assert.deepEqual(parseInfo(['name=toQI', 'fileName=C:\\a\\toQI.catvba', 'protection=0', 'saved!err=438 x', 'component=Module1:1', 'component=C5D_BridgeTest:1', 'component!err=9 bad']), {
-        properties: { name: 'toQI', fileName: 'C:\\a\\toQI.catvba', protection: '0' },
-        errors: { saved: '438 x', component: '9 bad' },
-        components: [{ name: 'Module1', type: 1 }, { name: 'C5D_BridgeTest', type: 1 }, { name: null, type: null, error: '9 bad' }]
-    });
-    assert.deepEqual(changedModules({ A: '1', B: '2' }, { A: '1', B: '3', C: '4' }), ['B', 'C']);
 });
 test('EvalProbe vbaproj steps take the library path and call ExecuteScript with type 2', { skip: !fs.existsSync(csc) }, t => {
     const exe = path.join(fixture(t), 'eval-probe.exe');

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fixture } = require('./helpers');
-const { readFormatterOptions, tomlTemplate } = require('../out/lintConfig');
+const { readFormatterOptions, readProjectSettings, tomlTemplate } = require('../out/lintConfig');
 
 function writeToml(t, content) {
     const root = fixture(t);
@@ -44,4 +44,19 @@ test('generated template writes format_on_save = false and format_on_pull = fals
         assert.equal(opts.format_on_save, false, lang);
         assert.equal(opts.format_on_pull, false, lang);
     }
+});
+
+test('generated template no longer writes the transfer encoding', () => {
+    for (const lang of ['ja', 'en', 'zh']) {
+        const text = tomlTemplate(lang);
+        assert.doesNotMatch(text, /^encoding\s*=/m, lang);
+        assert.doesNotMatch(text, /shift_jis|gbk/i, lang);
+        assert.match(text, new RegExp(`^language = "${lang}"$`, 'm'));
+    }
+});
+
+test('a leftover [project] encoding is ignored without error', t => {
+    const root = writeToml(t, '[project]\ntarget_project = "Review"\nlanguage = "ja"\nencoding = "shift_jis"\n');
+    assert.deepEqual(readProjectSettings(root), { targetProject: 'Review', language: 'ja' });
+    assert.deepEqual(readProjectSettings(writeToml(t, undefined)), { targetProject: '', language: '' });
 });

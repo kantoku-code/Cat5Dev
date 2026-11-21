@@ -60,7 +60,6 @@ cat5dev.toml
 [project]
 target_project = ""          # 目标 CATIA VBA 项目名称（通过 ⚙️ 按钮设置）
 language = "ja"              # 显示语言 ja / en / zh
-encoding = "shift_jis"       # 与 CATIA 交换数据时使用的字符编码
 
 [lint]
 enabled = false              # true 为启用 Lint
@@ -101,7 +100,9 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 |-----|--------|------|
 | `target_project` | `""` | 要同步的 CATIA VBA 项目名称。通过 ⚙️ 按钮选择后会写入此处 |
 | `language` | `"ja"` | 显示语言（`ja` / `en` / `zh`）。通过 🌐 按钮切换后会写入此处 |
-| `encoding` | `language` 为 `zh` 时为 `"gbk"`，否则为 `"shift_jis"` | 与 CATIA 交换数据时使用的字符编码。参见 [同步](sync.md#字符编码) |
+
+> [!NOTE]
+> 旧版本中的 `encoding`（与 CATIA 交换数据时使用的字符编码）已不再使用。Pull / Push 以 Unicode 形式传输正文。旧的 `cat5dev.toml` 中即使保留该项也会被忽略（参见 [字符编码](sync.md#字符编码)）。
 
 ### [lint] / [lint.rules]
 请参阅 [Lint 与格式化程序](lint-format.md#vba-lint)。
@@ -180,4 +181,5 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 | 位置 | 内容 |
 |------|------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | 同步锁的信息（参见 [同步锁](sync.md#防止并发执行与同步锁)） |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | 临时加载到 CATIA 中的中介项目 `C5D_Bridge` 的文件。每次处理所用的文件会在 CATIA 退出后的下一次处理时删除（参见 [与 CATIA 通信的机制](sync.md#与-catia-通信的机制)） |
 | `%TEMP%\cat5dev-…\` | 与 CATIA 交换数据时使用的临时文件。通常在处理结束时删除 |

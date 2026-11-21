@@ -34,6 +34,8 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 
 CATIA とは、同梱のヘルパー `catia-run.exe` を通じて COM で通信します。このヘルパーは Windows 10/11 に標準搭載の .NET Framework 4.x で動作します。
 
+Pull / Push のときは、CATIA の中に仲介用の VBA プロジェクト `C5D_Bridge` を一時的に読み込み、終わると外します。処理中の短い間だけ VBA エディタに `C5D_Bridge` が表示されることがありますが、保存はされません。VBScript は使いません（[仕組み](sync.md#catia-とのやり取りの仕組み)）。
+
 ---
 
 ## インストール
@@ -96,7 +98,7 @@ VSCode から Push した後は、CATIA の VBA エディタで保存してく�
 
 | ページ | 内容 |
 |--------|------|
-| [CATIA との同期](sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、同期ロックと復旧、文字コード |
+| [CATIA との同期](sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、仕組み（仲介プロジェクト C5D_Bridge）、同期ロックと復旧、文字コード |
 | [IntelliSense](intellisense.md) | 補完・ホバー・定義へ移動・引数のヒント、型ヒント `'@As`、CATIA API の型情報 |
 | [Lint とフォーマッタ](lint-format.md) | Lint のルール一覧、フォーマッタの処理内容とオプション |
 | [設定リファレンス](configuration.md) | `cat5dev.toml` の全項目、表示言語、VSCode の設定、作成されるファイル |

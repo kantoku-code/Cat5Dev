@@ -10,6 +10,7 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 - [Pull（CATIA → VSCode）](#pullcatia--vscode)
 - [Push（VSCode → CATIA）](#pushvscode--catia)
 - [模块树](#模块树)
+- [与 CATIA 通信的机制](#与-catia-通信的机制)
 - [防止并发执行与同步锁](#防止并发执行与同步锁)
 - [字符编码](#字符编码)
 
@@ -136,6 +137,23 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 
 ---
 
+## 与 CATIA 通信的机制
+
+在选择项目、Pull 和 Push 时，随附的辅助程序 `catia-run.exe` 会连接 CATIA，并在 CATIA 中临时加载中介 VBA 项目 **`C5D_Bridge`**。模块的读写通过 `C5D_Bridge` 进行。本扩展不使用 VBScript（`.catvbs` 或 `cscript`）。
+
+- 每次处理结束后，`C5D_Bridge` 都会从 CATIA 中移除（Push 时，在检查差异和写入时分别加载并移除）。
+- 因此，**在处理进行中的短暂时间内，VBA 编辑器的项目列表中可能会显示 `C5D_Bridge`**。请不要操作它。
+- `C5D_Bridge` 以只读方式加载，**不会被保存**，也不会出现在项目选择列表中。
+- 只有 Push 会写入您的 VBA 项目，并且只写入目标项目的模块。
+- `C5D_Bridge` 只能看到已加载到 VBA 编辑器中的项目，因此 **执行 Pull / Push 前需要先打开一次 VBA 编辑器（`Alt+F11`）**。
+- 由于需要加载和移除，每次处理大约多花 1 秒。
+
+### 临时文件
+- 本扩展会在 `%LOCALAPPDATA%\Cat5Dev\bridge\` 中创建中介项目文件（`C5D_Bridge-<8 位>.catvba`）以及每次处理所用的文件（`C5D_Bridge-<8 位>-<编号>-<时间>.catvba`）。
+- 每次处理所用的文件在 CATIA 退出之前一直被 CATIA 占用，因此会保留。CATIA 退出后，会在下一次选择项目、Pull 或 Push 时自动删除。
+
+---
+
 ## 防止并发执行与同步锁
 
 与 CATIA 的通信（选择项目、Pull、Push）在同一 Windows 用户下**同时只能执行一个**。如果在其他 VSCode 窗口或工作区中正在执行，会显示“另一个CATIA操作正在运行…”。
@@ -159,11 +177,7 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 
 ## 字符编码
 
-VSCode 端的文件为 UTF-8，CATIA 端的 VBA 为 Shift-JIS、GBK 等 ANSI 字符编码。在 Pull / Push 时进行转换。
+VSCode 端的文件为 UTF-8。Pull / Push 时，模块正文以 Unicode 形式与 CATIA 交换，不会转换为 Shift-JIS、GBK 等字符编码，因此这些编码无法表示的字符（例如 `🙂`）在传输过程中也不会出现乱码。
 
-| `cat5dev.toml` 的 `language` | 默认字符编码 |
-|------------------------------|--------------|
-| `"zh"` | `gbk` |
-| `"ja"` / `"en"` | `shift_jis` |
-
-可以通过 `[project]` 部分的 `encoding` 进行更改（例如：`encoding = "gb2312"`）。如果出现乱码，请检查此处。
+- `cat5dev.toml` 中 `[project]` 部分的 `encoding` 已不再使用。旧的 `cat5dev.toml` 中即使保留该项也会被忽略（不会报错），也可以将其删除。
+- 发送到 CATIA 之后，VBA 编辑器中的显示以及保存项目时的处理方式取决于 CATIA（VBA）。

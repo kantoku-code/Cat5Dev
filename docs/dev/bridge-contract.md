@@ -375,6 +375,7 @@ node scripts/build-bridge-catvba.js --dry-run       # 計画を JSON で出す�
 node scripts/build-bridge-catvba.js                 # 作り直し → 確認 → resources/bridge/C5D_Bridge.catvba を置き換え
 node scripts/build-bridge-catvba.js --no-install    # 置き換えない
 node scripts/build-bridge-catvba.js --save-method close   # IApcProject.Save が使えないとき、Close(True) で保存する
+node scripts/build-bridge-catvba.js --base <file.catvba>  # 元にするファイル（既定は resources/bridge/C5D_Bridge.catvba。v1 / v2 のどちらでもよい）
 ```
 
 前提（CATIA の状態）:
@@ -425,6 +426,7 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 5. 「デバッグ」→「VBAProject のコンパイル」でエラーが出ないことを確かめ、「上書き保存」。
 6. CATIA を終了する（保存したファイルのロックを外すため）。
 7. CATIA を起動し、`node scripts/build-bridge-catvba.js --verify <手順 2 のファイル> --install` を実行する。
+8. `node scripts/build-bridge-catvba.js --inspect resources/bridge/C5D_Bridge.catvba` が終了コード 0（v2、孤立ストレージなし）になることを確かめてコミットする。
 
 ### 11.4 孤立ストレージ（重要）
 
@@ -433,6 +435,7 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 - このまま VSIX に入れると、そのデータを配布することになる。5.5 MB と大きいのもこのため。
 - 自動の作り直し（11.1）は元のファイルを `Save` するので、これらが残る可能性が高い。その場合は置き換えを止める。
 - **配布用には 11.3 の手作業（新規ライブラリー）で作ったファイルを使うことを勧める**。
+- v1 のままでは `catia-run.exe` が手順 5 で終了コード 13（`bridge v1 is not supported; restart CATIA`）を返すので、Push / Pull・`scripts/smoke-catia.js` は動かない。**v2 に置き換えるまで VSIX を配布しない**。
 
 ---
 

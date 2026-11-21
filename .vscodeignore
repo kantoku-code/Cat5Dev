@@ -9,6 +9,7 @@ tests/**
 temp/**
 .cat5dev-pull-*/**
 scripts/**
+docs/dev/**
 resources/bridge/*.bas
 .claude/**
 CLAUDE.md

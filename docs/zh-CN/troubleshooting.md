@@ -21,11 +21,26 @@
 
 ## 无法连接到 CATIA（Pull / Push / 选择项目失败）
 
-- 请确认 CATIA V5 已启动。CATIA 未启动时，会显示“Pull 失败。”等消息。
+- 如果显示“CATIA 未启动。请启动 CATIA 后重试。”，请启动 CATIA V5 后重试。
+- 如果显示“请先打开一次 CATIA 的 VBA 编辑器（Alt+F11），然后重试。”，请在 CATIA 中打开一次 VBA 编辑器后重试（之后关闭也可以）。在打开 VBA 编辑器之前，本扩展无法看到 VBA 项目。
 - 请确认目标 VBA 项目已在 CATIA 中打开。未打开时，日志中会记录“Target project not found”。
-- **请确认已启动 CATIA 的 VBA 编辑器（`Alt+F11`）。** 未启动 VBA 编辑器时无法执行 Pull / Push。
 - 请确认 `cat5dev.toml` 中的 `target_project` 与 CATIA 中的项目名称一致（区分大小写）。
 - 详细信息请查看输出面板的“CATIA VBA Sync”。
+
+## 显示“Cat5Dev 无法准备中介项目（C5D_Bridge）”
+
+本扩展无法准备要加载到 CATIA 中的中介项目 `C5D_Bridge`（[工作原理](sync.md#与-catia-通信的机制)）。此时，您的 VBA 项目没有被写入任何内容。
+
+1. 请查看输出面板的“CATIA VBA Sync”中的详细信息。
+2. 如果 CATIA 中打开了对话框（MsgBox 等），请将其关闭，稍等片刻后重试。上一次处理尚未结束时，也可能出现此错误。
+3. 请确认可以写入 `%LOCALAPPDATA%\Cat5Dev\bridge\`（权限、杀毒软件等）。
+4. 如果问题仍未解决，请在 CATIA 中保存需要的工作，重新启动 CATIA 后重试。
+
+## VBA 编辑器中显示名为 `C5D_Bridge` 的项目
+
+这是本扩展在处理进行中临时加载的中介项目，处理结束后会被移除。它是只读的，不会被保存。请不要编辑或保存它，保持原样即可。
+
+在处理超时等情况下，它可能在处理结束后仍然保留，但会在下一次选择项目、Pull 或 Push 时自动移除。退出 CATIA 后也会消失。
 
 ## 显示“另一个CATIA操作正在运行…”或“无法确认CATIA操作已完成”
 
@@ -51,7 +66,7 @@ Push 只会写入 CATIA 的内存。请**在 CATIA 的 VBA 编辑器中保存项
 
 ## 出现乱码
 
-请检查 `cat5dev.toml` 中 `[project]` 的 `encoding`。日文版 CATIA 通常使用 `shift_jis`，中文版通常使用 `gbk`。请参阅 [字符编码](sync.md#字符编码)。
+Pull / Push 以 Unicode 形式传输正文，因此传输过程中不会出现乱码。`cat5dev.toml` 中的 `encoding` 已不再使用（即使保留也会被忽略）。如果使用旧版本 Pull 的文件出现乱码，请重新执行 Pull。请参阅 [字符编码](sync.md#字符编码)。
 
 ## Lint 波浪线不显示／格式化程序不工作
 
