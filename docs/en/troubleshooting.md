@@ -57,7 +57,14 @@ For details, see [Files in the `bridge` folder](sync.md#files-in-the-bridge-fold
 
 Only one operation can talk to CATIA at a time. Check that you are not running Pull / Push in another VSCode window.
 
-If an operation does not finish within 60 seconds, the lock stays in place to prevent double writes. Follow the [sync lock recovery steps](sync.md#if-completion-cannot-be-confirmed).
+If the CATIA operation does not finish within 60 seconds (for example, because a MsgBox is left open in CATIA), "CATIA completion could not be confirmed. …" appears and the sync lock is held to prevent double writes.
+
+1. Close any dialog open in CATIA, and make sure the previous operation has finished
+2. In the same VSCode window, run project selection, Pull or Push again
+3. In the warning "The previous CATIA operation could not be confirmed, so the synchronization lock is held. …", click "Release Lock", then click "Release Lock" again in the confirmation dialog
+4. Run the original operation again
+
+Do not release the lock while CATIA may still be working; the changes may be written twice. If "Release Lock" is not shown or the lock cannot be released, see [Releasing the sync lock](sync.md#if-completion-cannot-be-confirmed).
 
 ## Pull stops because of unsaved edits
 

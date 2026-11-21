@@ -172,21 +172,54 @@ The `C5D_Bridge` files that CATIA loads are kept in `%LOCALAPPDATA%\Cat5Dev\brid
 
 ## Preventing concurrent operations and the sync lock
 
-Operations that talk to CATIA (project selection, Pull, Push) can run **only one at a time** per Windows user. If one is already running in another VSCode window or workspace, the message "Another CATIA operation is running…" appears.
+Operations that talk to CATIA (project selection, Pull, Push) can run **only one at a time** per Windows user. If one is already running in another VSCode window or workspace, the following message appears:
+
+> Another CATIA operation is running, or its completion is unconfirmed. Try again after it finishes.
 
 ### If completion cannot be confirmed
-If the CATIA operation does not finish within 60 seconds, or terminates abnormally, it is not treated as a success and the following message appears:
+If the CATIA operation does not finish within 60 seconds (for example, because a MsgBox or another dialog is left open in CATIA), or if `catia-run.exe` exits without returning a result, it is not treated as a success and the following message appears:
 
-> CATIA completion could not be confirmed. Further operations are blocked. Check the state in CATIA.
+> CATIA completion could not be confirmed. Further operations are blocked. After closing any MsgBox in CATIA, use "Release Lock" shown on the next attempt to recover.
 
-In this case, the **sync lock** stays in place to prevent accidental double writes. If the CATIA operation finishes later, the lock is released automatically. If it is not released, recover as follows:
+In this case, CATIA may still be working or may already have written its changes, so the **sync lock** is held to prevent accidental double writes. While it is held, project selection, Pull and Push do not run.
 
-1. Save any necessary work in CATIA
-2. Exit CATIA
-3. In VSCode, run `Developer: Reload Window` from the Command Palette
-4. Run `CATIA: Recover Synchronization Lock / 同期ロックを復旧` from the Command Palette
+- If the CATIA operation finishes later and its result arrives, the lock is released automatically (`[CATIA] Late terminal result received` is logged in "CATIA VBA Sync" in the Output panel). A result that arrives late is not used as the outcome of the Pull or Push, so pull again if you need to check the contents in CATIA.
+- If the operation is known to have failed before anything was written in CATIA, such as when CATIA is not running, the VBA editor has never been opened, or the `C5D_Bridge` helper project cannot be prepared (`catia-run.exe` exit codes 2, 10, 11, 13 and 14), this message does not appear and the lock is released at once. Follow the message shown and try again.
 
-- For safety, recovery is refused if the VSCode window that started the original operation is still running, or if CATIA (`CNEXT.exe`) is still running.
+#### Releasing the lock
+If the lock is not released automatically, release it as follows:
+
+1. Close any MsgBox or other dialog open in CATIA, and make sure the previous operation has finished
+2. In the VSCode window that holds the lock, run project selection, Pull or Push again
+3. The following warning appears; click "Release Lock"
+
+   > The previous CATIA operation could not be confirmed, so the synchronization lock is held. Close any MsgBox in CATIA, then click "Release Lock".
+
+4. A confirmation dialog opens. Read it, then click "Release Lock" (clicking "Cancel" keeps the lock held)
+
+   > Make sure the dialogs in CATIA are closed and the previous operation has finished.
+   >
+   > If the previous operation runs later in CATIA after the lock is released, it may be applied twice. Release the lock?
+
+5. When "The synchronization lock has been recovered." appears, run the original operation again (releasing the lock does not run it)
+
+- Instead of running an operation again, you can also run `CATIA: Recover Synchronization Lock / 同期ロックを復旧` from the Command Palette; it releases the lock through the same confirmation dialog.
+- **Do not release the lock while CATIA may still be working.** Releasing does not check whether CATIA is busy. If you release the lock and run again while a MsgBox is still open or a macro is still running, the previous operation may run later in CATIA and the same changes may be written twice.
+- If the result of the previous operation arrives after you release the lock, it is ignored. It does not affect the lock of a newly started operation.
+- The temporary folder of the released operation (`%TEMP%\cat5dev-…`) is kept for diagnostics.
+
+#### If "Release Lock" is not shown
+The "Release Lock" button appears only in one of the following cases:
+
+- An operation run in that window ended with "CATIA completion could not be confirmed" and the window holds the lock
+- The VSCode window that holds the lock has already been closed or reloaded
+
+If an operation is running in this or another window, or the window that holds the lock is still open, the warning without a button ("Another CATIA operation is running, …") appears instead. If an operation is running, wait for it to finish and try again. If another window holds the lock, follow the steps above in that window, or close that window (or reload it with `Developer: Reload Window`); "Release Lock" then appears in the other windows as well.
+
+If the recovery command shows the following message, do as it says: save any necessary work in CATIA, exit CATIA, reload the VSCode window that holds the lock with `Developer: Reload Window`, and run `CATIA: Recover Synchronization Lock / 同期ロックを復旧` again.
+
+> The synchronization lock cannot be safely released. If the operation does not finish, close CATIA, reload this VSCode window, and run recovery again.
+
 - Lock information is stored in `%LOCALAPPDATA%\Cat5Dev\operation-lock\`.
 
 ---
