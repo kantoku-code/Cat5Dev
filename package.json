@@ -3,7 +3,7 @@
     "displayName": "CATIA V5 VBA",
     "icon": "resources/catia-icon.png",
     "description": "We provide support for CATIA V5 VBA macro development",
-    "version": "0.6.8",
+    "version": "0.7.0",
     "repository": {
         "type": "git",
         "url": "https://github.com/kantoku-code/Cat5Dev.git"
@@ -110,7 +110,9 @@
             {
                 "scopeName": "injection.vba-keywords",
                 "path": "./syntaxes/vba-keywords.tmLanguage.json",
-                "injectTo": ["source.vb"]
+                "injectTo": [
+                    "source.vb"
+                ]
             }
         ],
         "commands": [
@@ -164,8 +166,13 @@
             {
                 "language": "vb",
                 "scopes": {
-                    "type": ["entity.name.type", "support.class"],
-                    "variable": ["variable.other"]
+                    "type": [
+                        "entity.name.type",
+                        "support.class"
+                    ],
+                    "variable": [
+                        "variable.other"
+                    ]
                 }
             }
         ],
