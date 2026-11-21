@@ -22,12 +22,27 @@
 //     各トークンは "b64:<UTF-8 の base64>" でも渡せる（非 ASCII・改行・引用符をコマンドラインで化けさせないため）。
 //     期待値は持たない（match = null）。判定は呼び出し側が行う。--label <name> で出力 JSON の step 名を変えられる（既定 vbacall）。
 //   --no-retry: vbacall の ByRef 再試行をしない（ExecuteScript をちょうど 1 回だけ呼ぶ。アンロード等の副作用がある関数用）
+//   オブジェクト戻り値: vbacall-obj <library> <module> <function> [<action> ...]   （scripts/probe-bridge.js --remove-experiment から呼ぶ）
+//     引数なしの VBA 関数を ExecuteScript で 1 回だけ呼び（ByRef 再試行なし）、戻り値（VT_DISPATCH なら COM プロキシ）を保持したまま、
+//     ExecuteScript が戻った後（VBA の実行が終わった後）に、この exe から IDispatch のレイトバインドで action を順に実行する。
+//     action（各 1 トークン、b64: 可）:
+//       get:<expr>             式の値を読む（例 get:$.Name / get:$.VBProject.Type / get:$.Projects.Item('C5D_Bridge').Mode）
+//       type:<expr>            式のオブジェクトの型名（IDispatch.GetTypeInfo の名前）
+//       call:<expr>            最後の区間がメソッド呼び出しの式（例 call:$.Collection.Remove($) / call:$.Close(false) / call:$.Apc.End()）
+//       let:<expr>=<arg>       プロパティに値を入れる（例 let:$.Mode=0）
+//       sleep:<ms>             待つ（CATIA 側の処理を待つため）
+//     <expr> = $ | $<n>（戻り値が配列ならその n 番目、0 始まり）に .Name または .Name(<arg>, ...) を続けたもの。
+//     <arg> = <expr> | true | false | 整数 | 'text'（'' で ' 自身）| missing（省略引数）
+//     出力: 1 行目は ExecuteScript の結果（resultType = ComObject なら VT_DISPATCH/VT_UNKNOWN で返った。isDispatch / typeInfo / arrayLength も出す）、
+//     続いて action ごとに {"step","action":<番号>,"op","kind","ok","result","resultType","typeInfo","hresult","message","elapsedMs"}。
+//     ExecuteScript が例外ならアクションは実行しない（"skipped" 行を出す）。action の失敗は後続を止めない。
+//   eval-probe.exe --obj-selftest <progid> [<action> ...]   （CATIA に接続せず、CreateObject(progid) を戻り値の代わりにして action を実行する。テスト用）
 //   --byref: iParameters を VT_BYREF で渡す（params / jscript-params は指定がなくても ByVal 失敗時に ByRef で再試行する）
 //   jscript*: 言語 4（JScript）。ES3 構文のみ・全処理を try/catch で囲み、例外は結果文字列に含めて返す。書き込み系 API は呼ばない。
 // Output: ステップごとに 1 行 JSON（UTF-8）
 //   {"step","language","ok","match","result","resultType","hresult","message","paramMode","attempts","elapsedMs"}
 //   ok = Evaluate が例外なく戻った, match = 戻り値が期待どおり（期待値のないステップは null）
-// Exit codes: 0 = 全ステップ ok, 1 = いずれか失敗, 2 = 引数不正, 10 = CATIA 取得失敗, 11 = SystemService 取得失敗
+// Exit codes: 0 = 全ステップ ok（vbacall-obj は全 action も ok）, 1 = いずれか失敗, 2 = 引数不正, 10 = CATIA 取得失敗, 11 = SystemService 取得失敗
 // 注意: VBA のコンパイル/実行時エラーで CATIA がモーダルダイアログを出して止まる恐れがあるため、
 //   コードは全て On Error Resume Next 付き・保守的な構文・MsgBox なしにしている。CATIA は読み取りのみ。
 using System;
@@ -67,6 +82,8 @@ internal static class EvalProbe
         public string Library;        // ExecuteScript: iLibraryName
         public string ProgramName;    // ExecuteScript: iProgramName（モジュール名）
         public string FunctionName;   // ExecuteScript: iFunctionName
+        public List<ObjAction> Actions; // vbacall-obj: 戻り値に対する操作（null = 通常のステップ）
+        public string[] ActionTexts;    // vbacall-obj: 受け取った action の文字列（そのまま）
 
         public bool IsCheck { get { return Method == EvaluateMethod && Code == null; } }
 
@@ -483,6 +500,11 @@ function CATMain() {
             Out.Write(printed[0].Code);
             return Ok;
         }
+        if (args.Length > 0 && args[0] == "--obj-selftest")
+        {
+            // CATIA に接続せず、ローカルに作った COM オブジェクト（例 Scripting.Dictionary）に action を実行する（action 評価器の確認用）
+            return ObjSelfTest(args);
+        }
         bool byRef = false, dryRun = false, noRetry = false;
         string project = "toQI", label = null;
         Step vbaCall = null;
@@ -520,6 +542,37 @@ function CATMain() {
                 vbaCall = VbaCall(label, values[0], values[1], values[2], parameters);
                 break;
             }
+            if (arg == "vbacall-obj")
+            {
+                // vbacall-obj <library> <module> <function> [<action> ...]: 残りの引数は全て vbacall-obj のもの
+                if (i + 3 >= args.Length)
+                {
+                    Console.Error.WriteLine("usage: eval-probe [--label <name>] vbacall-obj <library> <module> <function> [<action> ...]");
+                    return BadArguments;
+                }
+                List<string> values = new List<string>();
+                for (int j = i + 1; j < args.Length; j++)
+                {
+                    string value = DecodeToken(args[j]);
+                    if (value == null) { Console.Error.WriteLine("invalid b64: token at argument " + (j + 1).ToString(CultureInfo.InvariantCulture)); return BadArguments; }
+                    values.Add(value);
+                }
+                List<ObjAction> actions = new List<ObjAction>();
+                string[] texts = new string[values.Count - 3];
+                for (int j = 3; j < values.Count; j++)
+                {
+                    texts[j - 3] = values[j];
+                    string error;
+                    ObjAction action = ObjActions.Parse(values[j], out error);
+                    if (action == null) { Console.Error.WriteLine("invalid action " + (j - 2).ToString(CultureInfo.InvariantCulture) + " '" + values[j] + "': " + error); return BadArguments; }
+                    actions.Add(action);
+                }
+                vbaCall = VbaCall(label ?? "vbacall-obj", values[0], values[1], values[2], new object[0]);
+                vbaCall.RetryByRef = false;
+                vbaCall.Actions = actions;
+                vbaCall.ActionTexts = texts;
+                break;
+            }
             if (arg == "--project")
             {
                 if (i + 1 >= args.Length) { Console.Error.WriteLine("--project requires a project name"); return BadArguments; }
@@ -548,6 +601,7 @@ function CATMain() {
                 Console.Error.WriteLine("usage: eval-probe [--byref] [--project <name>] [--dry-run] <check|basic|sub|typed|params|apc|apc2|apc2-getobject|apc2-catia|apc2-application|jscript|jscript-params|jscript-fso|jscript-apc|jscript-read> ...");
                 Console.Error.WriteLine("       eval-probe <vbaproj-ping|vbaproj-sub|vbaproj-projects|vbaproj-filename|vbaproj-filename-basename|vbaproj-filename-empty|vbaproj-filename-project> <libraryPath> ...");
                 Console.Error.WriteLine("       eval-probe [--label <name>] vbacall <library> <module> <function> [args...]   (tokens may be b64:<UTF-8 base64>)");
+                Console.Error.WriteLine("       eval-probe [--label <name>] vbacall-obj <library> <module> <function> [get:<expr>|type:<expr>|call:<expr>|let:<expr>=<arg>|sleep:<ms> ...]");
                 return BadArguments;
             }
             steps.AddRange(expanded);
@@ -569,7 +623,7 @@ function CATMain() {
             {
                 Out.WriteLine("{\"step\":" + Str(step.Name) + ",\"dryRun\":true,\"language\":" + step.Language.ToString(CultureInfo.InvariantCulture)
                     + StepFields(step) + ",\"parameters\":" + Str(Describe(step.Parameters)) + ",\"expected\":" + Str(step.Expected)
-                    + ",\"retryByRef\":" + (step.RetryByRef ? "true" : "false") + "}");
+                    + ",\"retryByRef\":" + (step.RetryByRef ? "true" : "false") + ActionFields(step) + "}");
             }
             return Ok;
         }
@@ -594,6 +648,7 @@ function CATMain() {
                     WriteJson(step.Name, -1, true, null, "connected", "String", 0, null, null, new List<string>(), connect.ElapsedMilliseconds, StepFields(step));
                     continue;
                 }
+                if (step.Actions != null) { if (!RunObjStep(service, step)) { allOk = false; } continue; }
                 if (!RunStep(service, step, byRef)) { allOk = false; }
             }
             return allOk ? Ok : StepFailed;
@@ -661,6 +716,227 @@ function CATMain() {
         WriteJson(step.Name, step.Language, ok, match, Describe(result), TypeOf(result), hresult, message, paramMode, attempts, watch.ElapsedMilliseconds, StepFields(step));
         if (result != null && Marshal.IsComObject(result)) { Marshal.ReleaseComObject(result); }
         return ok && match != false;
+    }
+
+    /// <summary>
+    /// vbacall-obj: ExecuteScript を 1 回だけ呼び（ByRef 再試行なし）、戻り値を保持したまま action を順に実行する。
+    /// 1 行目 = ExecuteScript の結果、以降 action ごとに 1 行。action の失敗は後続を止めない。COM 参照は最後にまとめて解放する。
+    /// </summary>
+    static bool RunObjStep(object service, Step step)
+    {
+        Stopwatch watch = Stopwatch.StartNew();
+        List<string> attempts = new List<string>();
+        List<object> held = new List<object>();
+        object result = null;
+        bool ok = false;
+        int hresult = 0;
+        string message = null;
+        object[] parameters = new object[] { step.Library, LibraryTypeVbaProject, step.ProgramName, step.FunctionName, new object[0] };
+        try
+        {
+            result = service.GetType().InvokeMember(step.Method, BindingFlags.InvokeMethod, null, service, parameters);
+            ok = true;
+            attempts.Add("byval:ok");
+        }
+        catch (Exception e)
+        {
+            e = Unwrap(e);
+            hresult = e.HResult;
+            message = e.Message;
+            attempts.Add("byval:0x" + e.HResult.ToString("X8") + " " + e.Message);
+        }
+        bool allOk = ok;
+        try
+        {
+            WriteJson(step.Name, step.Language, ok, null, Describe(result), TypeOf(result), hresult, message, "byval", attempts, watch.ElapsedMilliseconds,
+                StepFields(step) + ActionFields(step) + ResultFields(result));
+            for (int i = 0; i < step.Actions.Count; i++)
+            {
+                if (!ok) { WriteAction(step.Name, i, step.Actions[i], false, null, null, 0, "not run: ExecuteScript failed", null, 0, true); allOk = false; continue; }
+                if (!RunAction(step.Name, i, step.Actions[i], result, held)) { allOk = false; }
+            }
+        }
+        finally
+        {
+            ReleaseAll(held, result);
+        }
+        return allOk;
+    }
+
+    /// <summary>--obj-selftest <progid> [<action> ...]: CreateObject(progid) を戻り値の代わりにして action を実行する。CATIA には触れない。</summary>
+    static int ObjSelfTest(string[] args)
+    {
+        if (args.Length < 2) { Console.Error.WriteLine("usage: eval-probe --obj-selftest <progid> [<action> ...]"); return BadArguments; }
+        List<ObjAction> actions = new List<ObjAction>();
+        for (int j = 2; j < args.Length; j++)
+        {
+            string error, text = DecodeToken(args[j]);
+            ObjAction action = text == null ? null : ObjActions.Parse(text, out error);
+            if (action == null) { Console.Error.WriteLine("invalid action " + (j - 1).ToString(CultureInfo.InvariantCulture) + ": " + args[j]); return BadArguments; }
+            actions.Add(action);
+        }
+        object root = null;
+        List<object> held = new List<object>();
+        try
+        {
+            Type type = Type.GetTypeFromProgID(args[1], false);
+            if (type == null) { Console.Error.WriteLine("unknown ProgID " + args[1]); return StepFailed; }
+            root = Activator.CreateInstance(type);
+            Out.WriteLine("{\"step\":\"obj-selftest\",\"progid\":" + Str(args[1]) + ",\"resultType\":" + Str(TypeOf(root)) + ResultFields(root) + "}");
+            bool allOk = true;
+            for (int i = 0; i < actions.Count; i++) { if (!RunAction("obj-selftest", i, actions[i], root, held)) { allOk = false; } }
+            return allOk ? Ok : StepFailed;
+        }
+        finally { ReleaseAll(held, root); }
+    }
+
+    static bool RunAction(string stepName, int index, ObjAction action, object root, List<object> held)
+    {
+        Stopwatch watch = Stopwatch.StartNew();
+        object value = null;
+        bool ok = false;
+        int hresult = 0;
+        string message = null, exception = null;
+        try
+        {
+            switch (action.Kind)
+            {
+                case "sleep":
+                    System.Threading.Thread.Sleep(action.Ms);
+                    break;
+                case "type":
+                    {
+                        object target = ObjActions.Eval(action.Target, root, held);
+                        value = target != null && Marshal.IsComObject(target) ? (TypeInfoName(target) ?? "(no type info)") : TypeOf(target);
+                        break;
+                    }
+                case "let":
+                    ObjActions.Let(action.Target, action.Value, root, held);
+                    break;
+                default: // get / call
+                    value = ObjActions.Eval(action.Target, root, held);
+                    break;
+            }
+            ok = true;
+        }
+        catch (Exception e)
+        {
+            e = Unwrap(e);
+            hresult = e.HResult;
+            message = e.Message;
+            exception = e.GetType().Name;
+        }
+        WriteAction(stepName, index, action, ok, value, value != null && Marshal.IsComObject(value) ? TypeInfoName(value) : null, hresult, message, exception,
+            watch.ElapsedMilliseconds, false);
+        return ok;
+    }
+
+    static void WriteAction(string stepName, int index, ObjAction action, bool ok, object value, string typeInfo, int hresult, string message,
+        string exception, long elapsedMs, bool skipped)
+    {
+        StringBuilder b = new StringBuilder("{");
+        b.Append("\"step\":").Append(Str(stepName));
+        b.Append(",\"action\":").Append(index.ToString(CultureInfo.InvariantCulture));
+        b.Append(",\"op\":").Append(Str(action.Text));
+        b.Append(",\"kind\":").Append(Str(action.Kind));
+        b.Append(",\"ok\":").Append(ok ? "true" : "false");
+        b.Append(",\"skipped\":").Append(skipped ? "true" : "false");
+        b.Append(",\"result\":").Append(Str(Describe(value)));
+        b.Append(",\"resultType\":").Append(Str(TypeOf(value)));
+        b.Append(",\"typeInfo\":").Append(Str(typeInfo));
+        b.Append(",\"hresult\":").Append(Str("0x" + hresult.ToString("X8")));
+        b.Append(",\"message\":").Append(Str(message));
+        b.Append(",\"exception\":").Append(Str(exception));
+        b.Append(",\"elapsedMs\":").Append(elapsedMs.ToString(CultureInfo.InvariantCulture));
+        b.Append('}');
+        Out.WriteLine(b.ToString());
+    }
+
+    /// <summary>vbacall-obj の JSON 追加フィールド: actions（受け取った文字列）と parsed（解釈し直した形。--dry-run での確認用）。</summary>
+    static string ActionFields(Step step)
+    {
+        if (step.Actions == null) { return ""; }
+        StringBuilder b = new StringBuilder(",\"actions\":[");
+        for (int i = 0; i < step.ActionTexts.Length; i++) { if (i > 0) { b.Append(','); } b.Append(Str(step.ActionTexts[i])); }
+        b.Append("],\"parsed\":[");
+        for (int i = 0; i < step.Actions.Count; i++) { if (i > 0) { b.Append(','); } b.Append(Str(ObjActions.Format(step.Actions[i]))); }
+        return b.Append(']').ToString();
+    }
+
+    /// <summary>ExecuteScript の戻り値の詳細: isDispatch（IDispatch を QI できたか）、typeInfo、配列なら要素数と各要素の型。</summary>
+    static string ResultFields(object result)
+    {
+        StringBuilder b = new StringBuilder();
+        bool com = result != null && Marshal.IsComObject(result);
+        b.Append(",\"isDispatch\":").Append(com ? (IsDispatch(result) ? "true" : "false") : "null");
+        b.Append(",\"typeInfo\":").Append(Str(com ? TypeInfoName(result) : null));
+        Array array = result as Array;
+        if (array != null)
+        {
+            b.Append(",\"arrayLength\":").Append(array.Length.ToString(CultureInfo.InvariantCulture)).Append(",\"elements\":[");
+            int k = 0;
+            foreach (object item in array)
+            {
+                if (k++ > 0) { b.Append(','); }
+                bool itemCom = item != null && Marshal.IsComObject(item);
+                b.Append(Str(TypeOf(item) + (itemCom ? ":" + (TypeInfoName(item) ?? "?") : "")));
+            }
+            b.Append(']');
+        }
+        return b.ToString();
+    }
+
+    [ComImport, Guid("00020400-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IDispatchInfo
+    {
+        [PreserveSig] int GetTypeInfoCount(out uint count);
+        [PreserveSig] int GetTypeInfo(uint index, int lcid, out System.Runtime.InteropServices.ComTypes.ITypeInfo info);
+    }
+
+    static bool IsDispatch(object value)
+    {
+        try { IntPtr p = Marshal.GetIDispatchForObject(value); Marshal.Release(p); return true; }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>IDispatch.GetTypeInfo(0) の型名（例 _VBProject / IApcProject）。取れなければ "(...)" の説明、IDispatch でなければ null。</summary>
+    static string TypeInfoName(object value)
+    {
+        try
+        {
+            IDispatchInfo dispatch = value as IDispatchInfo;
+            if (dispatch == null) { return null; }
+            uint count;
+            int hr = dispatch.GetTypeInfoCount(out count);
+            if (hr != 0 || count == 0) { return "(no type info: 0x" + hr.ToString("X8") + ")"; }
+            System.Runtime.InteropServices.ComTypes.ITypeInfo info;
+            hr = dispatch.GetTypeInfo(0, 0, out info);
+            if (hr != 0 || info == null) { return "(GetTypeInfo 0x" + hr.ToString("X8") + ")"; }
+            string name, doc, helpFile;
+            int helpContext;
+            info.GetDocumentation(-1, out name, out doc, out helpContext, out helpFile);
+            Marshal.ReleaseComObject(info);
+            return name;
+        }
+        catch (Exception e) { return "(type info error 0x" + e.HResult.ToString("X8") + ")"; }
+    }
+
+    static void ReleaseAll(List<object> held, object result)
+    {
+        List<object> all = new List<object>(held);
+        Array array = result as Array;
+        if (array != null) { foreach (object item in array) { all.Add(item); } }
+        all.Add(result);
+        List<object> done = new List<object>();
+        foreach (object item in all)
+        {
+            if (item == null || !Marshal.IsComObject(item)) { continue; }
+            bool seen = false;
+            foreach (object d in done) { if (ReferenceEquals(d, item)) { seen = true; break; } }
+            if (seen) { continue; }
+            done.Add(item);
+            try { Marshal.ReleaseComObject(item); } catch (Exception) { }
+        }
     }
 
     static bool? Matches(Step step, object result)
@@ -772,5 +1048,270 @@ function CATMain() {
             }
         }
         return b.Append('"').ToString();
+    }
+}
+
+// ---- vbacall-obj の action（get / type / call / let / sleep）の構文木・構文解析・評価（IDispatch レイトバインド）
+internal sealed class ObjExpr
+{
+    public int Root = -1;                                   // -1 = $（戻り値そのもの）, n = $n（戻り値の配列の n 番目）
+    public List<ObjSegment> Segments = new List<ObjSegment>();
+}
+
+internal sealed class ObjSegment
+{
+    public string Name;
+    public List<ObjArg> Args;                               // null = 括弧なし（プロパティ取得）
+}
+
+internal sealed class ObjArg
+{
+    public ObjExpr Ref;                                     // $... の式
+    public object Value;                                    // bool / int / string
+    public bool Missing;                                    // 省略引数（Type.Missing）
+}
+
+internal sealed class ObjAction
+{
+    public string Kind;                                     // get / type / call / let / sleep
+    public string Text;                                     // 受け取った文字列
+    public ObjExpr Target;
+    public ObjArg Value;                                    // let の右辺
+    public int Ms;                                          // sleep
+}
+
+internal static class ObjActions
+{
+    const char Quote = (char)39; // '
+
+    /// <summary>1 つの action を解釈する。不正なら null と error。</summary>
+    public static ObjAction Parse(string text, out string error)
+    {
+        error = null;
+        int colon = text.IndexOf(':');
+        if (colon <= 0) { error = "expected <get|type|call|let|sleep>:..."; return null; }
+        string kind = text.Substring(0, colon), rest = text.Substring(colon + 1);
+        ObjAction action = new ObjAction { Kind = kind, Text = text };
+        int pos = 0;
+        try
+        {
+            switch (kind)
+            {
+                case "sleep":
+                    {
+                        int ms;
+                        if (!int.TryParse(rest, NumberStyles.None, CultureInfo.InvariantCulture, out ms) || ms > 600000) { throw new FormatException("sleep needs 0..600000 (ms)"); }
+                        action.Ms = ms;
+                        return action;
+                    }
+                case "get":
+                case "type":
+                case "call":
+                    action.Target = ParseExpr(rest, ref pos);
+                    ExpectEnd(rest, ref pos);
+                    if (kind == "call" && (action.Target.Segments.Count == 0 || action.Target.Segments[action.Target.Segments.Count - 1].Args == null))
+                    {
+                        throw new FormatException("call needs a method call at the end (e.g. call:$.Close(false))");
+                    }
+                    return action;
+                case "let":
+                    action.Target = ParseExpr(rest, ref pos);
+                    if (action.Target.Segments.Count == 0 || action.Target.Segments[action.Target.Segments.Count - 1].Args != null)
+                    {
+                        throw new FormatException("let needs a property name at the end (e.g. let:$.Mode=0)");
+                    }
+                    SkipSpaces(rest, ref pos);
+                    if (pos >= rest.Length || rest[pos] != '=') { throw new FormatException("expected '='"); }
+                    pos++;
+                    action.Value = ParseArg(rest, ref pos);
+                    ExpectEnd(rest, ref pos);
+                    return action;
+                default:
+                    error = "unknown action kind '" + kind + "'";
+                    return null;
+            }
+        }
+        catch (FormatException e)
+        {
+            error = e.Message + " (at column " + (colon + 2 + pos).ToString(CultureInfo.InvariantCulture) + ")";
+            return null;
+        }
+    }
+
+    static void SkipSpaces(string s, ref int pos) { while (pos < s.Length && s[pos] == ' ') { pos++; } }
+
+    static void ExpectEnd(string s, ref int pos)
+    {
+        SkipSpaces(s, ref pos);
+        if (pos < s.Length) { throw new FormatException("unexpected '" + s.Substring(pos) + "'"); }
+    }
+
+    static string ParseName(string s, ref int pos)
+    {
+        int start = pos;
+        if (pos < s.Length && (char.IsLetter(s[pos]) || s[pos] == '_')) { pos++; } else { throw new FormatException("expected a name"); }
+        while (pos < s.Length && (char.IsLetterOrDigit(s[pos]) || s[pos] == '_')) { pos++; }
+        return s.Substring(start, pos - start);
+    }
+
+    static ObjExpr ParseExpr(string s, ref int pos)
+    {
+        SkipSpaces(s, ref pos);
+        if (pos >= s.Length || s[pos] != '$') { throw new FormatException("expected '$'"); }
+        pos++;
+        ObjExpr expr = new ObjExpr();
+        int start = pos;
+        while (pos < s.Length && char.IsDigit(s[pos])) { pos++; }
+        if (pos > start) { expr.Root = int.Parse(s.Substring(start, pos - start), CultureInfo.InvariantCulture); }
+        while (pos < s.Length && s[pos] == '.')
+        {
+            pos++;
+            ObjSegment segment = new ObjSegment { Name = ParseName(s, ref pos) };
+            if (pos < s.Length && s[pos] == '(') { segment.Args = ParseArgs(s, ref pos); }
+            expr.Segments.Add(segment);
+        }
+        return expr;
+    }
+
+    static List<ObjArg> ParseArgs(string s, ref int pos)
+    {
+        pos++; // (
+        List<ObjArg> args = new List<ObjArg>();
+        SkipSpaces(s, ref pos);
+        if (pos < s.Length && s[pos] == ')') { pos++; return args; }
+        while (true)
+        {
+            args.Add(ParseArg(s, ref pos));
+            SkipSpaces(s, ref pos);
+            if (pos < s.Length && s[pos] == ',') { pos++; continue; }
+            if (pos < s.Length && s[pos] == ')') { pos++; return args; }
+            throw new FormatException("expected ',' or ')'");
+        }
+    }
+
+    static ObjArg ParseArg(string s, ref int pos)
+    {
+        SkipSpaces(s, ref pos);
+        if (pos >= s.Length) { throw new FormatException("expected an argument"); }
+        char c = s[pos];
+        if (c == '$') { return new ObjArg { Ref = ParseExpr(s, ref pos) }; }
+        if (c == Quote)
+        {
+            StringBuilder b = new StringBuilder();
+            pos++;
+            while (true)
+            {
+                if (pos >= s.Length) { throw new FormatException("unterminated string"); }
+                if (s[pos] == Quote)
+                {
+                    if (pos + 1 < s.Length && s[pos + 1] == Quote) { b.Append(Quote); pos += 2; continue; }
+                    pos++;
+                    return new ObjArg { Value = b.ToString() };
+                }
+                b.Append(s[pos++]);
+            }
+        }
+        if (c == '-' || char.IsDigit(c))
+        {
+            int start = pos;
+            pos++;
+            while (pos < s.Length && char.IsDigit(s[pos])) { pos++; }
+            int value;
+            if (!int.TryParse(s.Substring(start, pos - start), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value)) { throw new FormatException("bad integer"); }
+            return new ObjArg { Value = value };
+        }
+        string word = ParseName(s, ref pos);
+        if (word == "true") { return new ObjArg { Value = true }; }
+        if (word == "false") { return new ObjArg { Value = false }; }
+        if (word == "missing") { return new ObjArg { Missing = true }; }
+        throw new FormatException("unknown argument '" + word + "'");
+    }
+
+    /// <summary>解釈した action を正規形の文字列に戻す（--dry-run での確認用）。</summary>
+    public static string Format(ObjAction action)
+    {
+        switch (action.Kind)
+        {
+            case "sleep": return "sleep:" + action.Ms.ToString(CultureInfo.InvariantCulture);
+            case "let": return "let:" + FormatExpr(action.Target) + "=" + FormatArg(action.Value);
+            default: return action.Kind + ":" + FormatExpr(action.Target);
+        }
+    }
+
+    static string FormatExpr(ObjExpr expr)
+    {
+        StringBuilder b = new StringBuilder("$");
+        if (expr.Root >= 0) { b.Append(expr.Root.ToString(CultureInfo.InvariantCulture)); }
+        foreach (ObjSegment segment in expr.Segments)
+        {
+            b.Append('.').Append(segment.Name);
+            if (segment.Args == null) { continue; }
+            b.Append('(');
+            for (int i = 0; i < segment.Args.Count; i++) { if (i > 0) { b.Append(", "); } b.Append(FormatArg(segment.Args[i])); }
+            b.Append(')');
+        }
+        return b.ToString();
+    }
+
+    static string FormatArg(ObjArg arg)
+    {
+        if (arg.Ref != null) { return FormatExpr(arg.Ref); }
+        if (arg.Missing) { return "missing"; }
+        if (arg.Value is bool) { return (bool)arg.Value ? "true" : "false"; }
+        if (arg.Value is int) { return ((int)arg.Value).ToString(CultureInfo.InvariantCulture); }
+        string q = Quote.ToString();
+        return q + ((string)arg.Value).Replace(q, q + q) + q;
+    }
+
+    /// <summary>式を評価する。途中で得た COM オブジェクトは held に積む（呼び出し側が最後に解放する）。</summary>
+    public static object Eval(ObjExpr expr, object root, List<object> held)
+    {
+        object current = RootOf(expr.Root, root);
+        foreach (ObjSegment segment in expr.Segments) { current = Invoke(current, segment, root, held); }
+        return current;
+    }
+
+    /// <summary>let: 最後の区間のプロパティに値を入れる（DISPATCH_PROPERTYPUT）。</summary>
+    public static void Let(ObjExpr expr, ObjArg value, object root, List<object> held)
+    {
+        object owner = RootOf(expr.Root, root);
+        for (int i = 0; i < expr.Segments.Count - 1; i++) { owner = Invoke(owner, expr.Segments[i], root, held); }
+        string name = expr.Segments[expr.Segments.Count - 1].Name;
+        if (owner == null) { throw new InvalidOperationException("." + name + " = ... on Empty/Nothing"); }
+        owner.GetType().InvokeMember(name, BindingFlags.SetProperty, null, owner, new object[] { ArgValue(value, root, held) }, CultureInfo.InvariantCulture);
+    }
+
+    static object RootOf(int index, object root)
+    {
+        if (index < 0) { return root; }
+        Array array = root as Array;
+        if (array == null) { throw new InvalidOperationException("$" + index.ToString(CultureInfo.InvariantCulture) + " needs an array result (got " + (root == null ? "Empty" : root.GetType().Name) + ")"); }
+        int k = 0;
+        foreach (object item in array) { if (k++ == index) { return item; } }
+        throw new IndexOutOfRangeException("$" + index.ToString(CultureInfo.InvariantCulture) + " is out of range (array length " + array.Length.ToString(CultureInfo.InvariantCulture) + ")");
+    }
+
+    static object Invoke(object target, ObjSegment segment, object root, List<object> held)
+    {
+        if (target == null) { throw new InvalidOperationException("." + segment.Name + " on Empty/Nothing"); }
+        object[] args;
+        BindingFlags flags;
+        if (segment.Args == null) { args = new object[0]; flags = BindingFlags.GetProperty; }
+        else
+        {
+            args = new object[segment.Args.Count];
+            for (int i = 0; i < args.Length; i++) { args[i] = ArgValue(segment.Args[i], root, held); }
+            flags = BindingFlags.InvokeMethod | BindingFlags.GetProperty;
+        }
+        object result = target.GetType().InvokeMember(segment.Name, flags, null, target, args, CultureInfo.InvariantCulture);
+        if (result != null && Marshal.IsComObject(result)) { held.Add(result); }
+        return result;
+    }
+
+    static object ArgValue(ObjArg arg, object root, List<object> held)
+    {
+        if (arg.Missing) { return Type.Missing; }
+        if (arg.Ref != null) { return Eval(arg.Ref, root, held); }
+        return arg.Value;
     }
 }

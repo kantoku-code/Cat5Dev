@@ -37,6 +37,28 @@
 //   with that path as the library, and records time/size/read-only/lock of the file again. A failed step does not stop the run.
 //   --readonly-fresh-check records the same file facts plus the hash (vs the source) and compares them with the latest run's report.
 //   Reports: temp/probe-bridge-readonly-fresh-<time>.json / temp/probe-bridge-readonly-fresh-check-<time>.json.
+//
+// Remove experiment (can C5D_Bridge be taken out of CATIA's VBA editor without quitting CATIA? VBProjects.Remove from inside gave 440):
+//        node scripts/probe-bridge.js --remove-experiment         (freshly started CATIA; leaves CATIA changed -> restart it afterwards)
+//        node scripts/probe-bridge.js --remove-experiment-risky   (CATIA MAY CRASH; freshly started CATIA, nothing unsaved)
+//   Library A = the read-only hash-named copy of --readonly-fresh; --remove-experiment also prepares the read-only copy B
+//   %LOCALAPPDATA%\Cat5Dev\bridge\C5D_Bridge-probe-b.catvba (same project name). C5D_ProbeRemove (REMOVE_SOURCE) is written into A;
+//   "self" = the project that has that module. Steps (REMOVE_STEPS, danger low -> medium):
+//     info: version install alive info-apc info-vbe (apc.Projects / VBE.VBProjects with Mode, Locked, Flags, Type, FileName, storage ...)
+//     objects back to C#: obj-apc obj-apcproject obj-vbproject obj-array (eval-probe.exe vbacall-obj: the VBA function returns the
+//       object, eval-probe.exe reads properties through IDispatch after ExecuteScript has returned)
+//     attempts, each followed by <name>-check (C5D_RmAlive must be gone) and <name>-reload (C5D_Version answers again); once one
+//       removes the project the later ones are skipped (unless): inside-remove (VBProjects.Remove from VBA, known 440), hold + held-remove
+//       (object kept in a module variable, removed in a later call), outside-remove (C#: VBProject.Collection.Remove(VBProject)),
+//       outside-close (C#: ApcProject.Close(False)), outside-design-close (Mode = 0 first), outside-end-close (Apc.End() first)
+//     reinstall after-info-apc after-info-vbe, then (d) b-load b-info-apc b-install b-module-in-b b-module-in-a b-remove b-remove-info
+//       b-close b-close-info b-reload final-info-apc (a second C5D_Bridge: does it load, where does C5D_Install write, can A remove/close B)
+//   --remove-experiment-risky (REMOVE_RISKY_STEPS): inside-close (ApcProject.Close from its own code), then C5D_ProbeTimer
+//     (TIMER_SOURCE: PtrSafe SetTimer + AddressOf): timer-remove / timer-close schedule the Remove / Close for 500 ms after
+//     ExecuteScript returns, wait 3 s, collect C5D_RmTimerResult, check, reload; read-timer-log reads remove-timer.log.
+//   Reports: temp/probe-bridge-remove-<time>.json / temp/probe-bridge-remove-risky-<time>.json (summary.verdict, summary.infos).
+//   NOTE: the after-unload-probe of --unload-experiment called C5D_ProbeModule, which that mode never installs, so its "gone" was
+//   no evidence of an unload; the remove steps check their own module C5D_ProbeRemove (installed and answered by step alive).
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -268,6 +290,715 @@ const READONLY_FRESH_STEPS = [
     { name: 'call', module: READONLY_MODULE, func: 'C5D_Probe', args: [], expected: READONLY_FRESH_RESULT }
 ];
 
+// ---- --remove-experiment / --remove-experiment-risky: can C5D_Bridge be taken out of CATIA's VBA editor without quitting CATIA?
+// Type library findings (node scripts/dump-typelib.js -> temp/typelib-apc71-<time>.txt):
+//   MSAPC.IApcProject.Close([opt] SaveChanges As Boolean = False)  DISPID 0x60020027  "Closes the project (does not remove the project from disk)"
+//   MSAPC.IApcProjects.Close()  DISPID 0x60020009  closes ALL projects (never used here: it would close the user's projects too)
+//   MSAPC.IApcProject.Mode (AxProjectMode: 0 design / 1 run, get+let), Locked, Flags, Dirty, Compiled, Storage(.Name = file name)
+//   MSAPC.IApc.ExecutingProject, Running, End() ("Ends execution")
+//   VBIDE._VBProjects.Remove(lpc As VBProject)  DISPID 0x8A (failed with 440 from inside); VBIDE._VBProject.Type (100 host / 101 stand-alone)
+const REMOVE_MODULE = 'C5D_ProbeRemove';
+const REMOVE_ALIVE = 'alive';
+const B_MODULE = 'C5D_ProbeB';
+const B_ALIVE = 'b-alive';
+const TIMER_MODULE = 'C5D_ProbeTimer';
+/** Second copy of the bridge for the (d) steps (same project name C5D_Bridge, different file). Not a C5D_Bridge-<8 hex> name. */
+const COPY_B_FILE = 'C5D_Bridge-probe-b.catvba';
+/** Log the SetTimer callback (risky mode) appends to, next to the bridge copies. */
+const TIMER_LOG_FILE = 'remove-timer.log';
+/** Placeholder in step args, replaced by the log path at run time (materializeSteps). */
+const TIMER_LOG_TOKEN = '{timer-log}';
+const INFO_APC_PATTERN = /^apc=[^;|]*;.*;count=\d+;err=0/;
+const INFO_VBE_PATTERN = /^vbe=[^;|]*;.*;count=\d+;err=0/;
+
+/** VBA: v = <expr>, then ";<label>=<value>" (or "=!<err>") appended to s. Properties are never read inside an If condition. */
+const propLines = (label, expr, indent = '    ') => [
+    `${indent}Err.Clear`, `${indent}v = "?"`, `${indent}v = ${expr}`, `${indent}e = Err.Number`, `${indent}s = s & ";${label}=" & RmFmt(v, e)`
+];
+/** VBA: s = <prefix> & error text, Exit Function when obj Is Nothing. */
+const nothingGuard = (obj, fn, text) => [
+    `    If ${obj} Is Nothing Then`,
+    `        ${fn} = "${text}" & CStr(Err.Number) & ":" & RmClean(Err.Description)`,
+    '        Exit Function',
+    '    End If'
+];
+/** VBA: "<ok>" when Err.Number = 0 after the operation, else "error:<what>:<n>:<desc>" (+ suffix). */
+const resultLines = (fn, ok, what, suffix = '""') => [
+    '    e = Err.Number',
+    '    d = Err.Description',
+    '    If e = 0 Then',
+    `        ${fn} = "${ok}" & ${suffix}`,
+    '    Else',
+    `        ${fn} = "error:${what}:" & CStr(e) & ":" & RmClean(d) & ${suffix}`,
+    '    End If'
+];
+/**
+ * VBA written into C5D_ProbeRemove (ASCII only, CRLF, On Error Resume Next everywhere, no MsgBox, no Declare).
+ * "Self" = the project that has the module C5D_ProbeRemove (works with two projects named C5D_Bridge).
+ *   C5D_RmAlive()               "alive" (removal check: after a removal + auto-reload this module is gone)
+ *   C5D_RmApcInfo()             "apc=<TypeName>;apcVersion=..;vbaVersion=..;running=..;exec=..;count=N;err=E|name=..;display=..;...|..."
+ *   C5D_RmVbeInfo()             "vbe=<TypeName>;version=..;count=N;err=E|name=..;type=..;mode=..;...|..."
+ *   C5D_RmApc() / C5D_RmSelfApcProject() / C5D_RmSelfVbProject()   the object itself (Set) for vbacall-obj, else "error:..."
+ *   C5D_RmSelfPair()            Array(VBE.VBProjects, self VBProject)
+ *   C5D_RmRemoveSelfInside()    VBE.VBProjects.Remove self -> "removed;err=0" | "error:remove:<n>:<desc>"   (known: 440)
+ *   C5D_RmHold() / C5D_RmRemoveHeld()  keep self VBProject in a module variable, remove it in a later ExecuteScript call
+ *   C5D_RmRemoveOther(key) / C5D_RmCloseOther(key)   the other C5D_Bridge (storage/file name contains key, else the first
+ *                               C5D_Bridge without C5D_ProbeRemove): VBProjects.Remove / ApcProject.Close False
+ *                               -> "removed;via=key|fallback;err=0" / "closed;via=..;err=0" | "error:...;via=.."
+ *   C5D_RmCloseSelfInside()     ApcProject(self).Close False from its own running code (risky mode only)
+ */
+const REMOVE_SOURCE = [
+    'Option Explicit',
+    `Private Const RM_MARKER As String = "${REMOVE_MODULE}"`,
+    `Private Const RM_BMODULE As String = "${B_MODULE}"`,
+    `Private Const RM_PROJECT As String = "${BRIDGE_PROJECT}"`,
+    'Private mHeld As Object',
+    `Public Function C5D_RmAlive() As Variant`,
+    `    C5D_RmAlive = "${REMOVE_ALIVE}"`,
+    'End Function',
+    'Private Function RmClean(ByVal t As String) As String',
+    '    t = Replace(t, "|", "/")',
+    '    t = Replace(t, ";", ",")',
+    '    t = Replace(t, vbCr, " ")',
+    '    t = Replace(t, vbLf, " ")',
+    '    RmClean = t',
+    'End Function',
+    'Private Function RmFmt(ByVal v As Variant, ByVal e As Long) As String',
+    '    On Error Resume Next',
+    '    Dim t As String',
+    '    If e <> 0 Then',
+    '        RmFmt = "!" & CStr(e)',
+    '        Exit Function',
+    '    End If',
+    '    t = "?"',
+    '    t = CStr(v)',
+    '    RmFmt = RmClean(t)',
+    'End Function',
+    'Private Function RmApc() As Object',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Set apc = Nothing',
+    '    Set apc = CreateObject("MSAPC.Apc.7.1")',
+    '    If apc Is Nothing Then',
+    '        Err.Clear',
+    '        Set apc = CreateObject("MSAPC.Apc")',
+    '    End If',
+    '    Set RmApc = apc',
+    'End Function',
+    'Private Function RmHasModule(ByVal vbp As Object, ByVal moduleName As String) As Boolean',
+    '    On Error Resume Next',
+    '    Dim c As Object',
+    '    Set c = Nothing',
+    '    Set c = vbp.VBComponents.Item(moduleName)',
+    '    RmHasModule = Not (c Is Nothing)',
+    '    Err.Clear',
+    'End Function',
+    'Private Function RmSelfApc(ByVal apc As Object) As Object',
+    '    On Error Resume Next',
+    '    Dim aps As Object',
+    '    Dim ap As Object',
+    '    Dim vbp As Object',
+    '    Dim hit As Boolean',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set RmSelfApc = Nothing',
+    '    Set aps = Nothing',
+    '    Set aps = apc.Projects',
+    '    n = -1',
+    '    n = aps.Count',
+    '    For i = 1 To n',
+    '        Set ap = Nothing',
+    '        Set ap = aps.Item(i)',
+    '        Set vbp = Nothing',
+    '        Set vbp = ap.VBProject',
+    '        hit = RmHasModule(vbp, RM_MARKER)',
+    '        If hit Then',
+    '            Set RmSelfApc = ap',
+    '            Exit Function',
+    '        End If',
+    '    Next',
+    'End Function',
+    'Private Function RmSelfVbp(ByVal apc As Object) As Object',
+    '    On Error Resume Next',
+    '    Dim vbps As Object',
+    '    Dim vbp As Object',
+    '    Dim hit As Boolean',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set RmSelfVbp = Nothing',
+    '    Set vbps = Nothing',
+    '    Set vbps = apc.VBE.VBProjects',
+    '    n = -1',
+    '    n = vbps.Count',
+    '    For i = 1 To n',
+    '        Set vbp = Nothing',
+    '        Set vbp = vbps.Item(i)',
+    '        hit = RmHasModule(vbp, RM_MARKER)',
+    '        If hit Then',
+    '            Set RmSelfVbp = vbp',
+    '            Exit Function',
+    '        End If',
+    '    Next',
+    'End Function',
+    "' storage name chain of an ApcProject, innermost first: <name><<parent name>... (Parent is a Storage or the ApcGlobal object)",
+    'Private Function RmStorage(ByVal ap As Object) As String',
+    '    On Error Resume Next',
+    '    Dim st As Object',
+    '    Dim p As Object',
+    '    Dim s As String',
+    '    Dim nm As String',
+    '    Dim tn As String',
+    '    Dim i As Long',
+    '    Set st = Nothing',
+    '    Set st = ap.Storage',
+    '    For i = 1 To 4',
+    '        If st Is Nothing Then Exit For',
+    '        nm = "?"',
+    '        nm = CStr(st.Name)',
+    '        s = s & "<" & nm',
+    '        Set p = Nothing',
+    '        Set p = st.Parent',
+    '        Set st = Nothing',
+    '        tn = ""',
+    '        tn = TypeName(p)',
+    '        If InStr(1, tn, "Storage", vbTextCompare) > 0 Then Set st = p',
+    '    Next',
+    '    Err.Clear',
+    '    RmStorage = Mid(s, 2)',
+    'End Function',
+    'Private Function RmProjInfo(ByVal ap As Object, ByVal ex As Object) As String',
+    '    On Error Resume Next',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    Dim vbp As Object',
+    '    Dim same As Boolean',
+    '    s = ""',
+    ...propLines('name', 'ap.Name'),
+    ...propLines('display', 'ap.DisplayName'),
+    ...propLines('tn', 'TypeName(ap)'),
+    ...propLines('mode', 'ap.Mode'),
+    ...propLines('dirty', 'ap.Dirty'),
+    ...propLines('locked', 'ap.Locked'),
+    ...propLines('flags', 'ap.Flags'),
+    ...propLines('compiled', 'ap.Compiled'),
+    ...propLines('hostProt', 'ap.HostProtection'),
+    ...propLines('userProt', 'ap.UserProtection'),
+    ...propLines('events', 'ap.EventsFrozen'),
+    '    Set vbp = Nothing',
+    '    Set vbp = ap.VBProject',
+    ...propLines('vbName', 'vbp.Name'),
+    ...propLines('vbType', 'vbp.Type'),
+    ...propLines('vbMode', 'vbp.Mode'),
+    ...propLines('vbProt', 'vbp.Protection'),
+    ...propLines('vbFile', 'vbp.FileName'),
+    ...propLines('vbSaved', 'vbp.Saved'),
+    '    s = s & ";marker=" & CStr(RmHasModule(vbp, RM_MARKER))',
+    '    s = s & ";bModule=" & CStr(RmHasModule(vbp, RM_BMODULE))',
+    '    same = False',
+    '    same = (ap Is ex)',
+    '    s = s & ";exec=" & CStr(same)',
+    '    s = s & ";storage=" & RmClean(RmStorage(ap))',
+    '    Err.Clear',
+    '    RmProjInfo = Mid(s, 2)',
+    'End Function',
+    'Private Function RmVbpInfo(ByVal vbp As Object) As String',
+    '    On Error Resume Next',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    s = ""',
+    ...propLines('name', 'vbp.Name'),
+    ...propLines('tn', 'TypeName(vbp)'),
+    ...propLines('type', 'vbp.Type'),
+    ...propLines('mode', 'vbp.Mode'),
+    ...propLines('prot', 'vbp.Protection'),
+    ...propLines('file', 'vbp.FileName'),
+    ...propLines('saved', 'vbp.Saved'),
+    '    s = s & ";marker=" & CStr(RmHasModule(vbp, RM_MARKER))',
+    '    s = s & ";bModule=" & CStr(RmHasModule(vbp, RM_BMODULE))',
+    '    Err.Clear',
+    '    RmVbpInfo = Mid(s, 2)',
+    'End Function',
+    'Public Function C5D_RmApcInfo() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim aps As Object',
+    '    Dim ap As Object',
+    '    Dim ex As Object',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmApcInfo', 'apc=Nothing;err='),
+    '    s = "apc=" & TypeName(apc)',
+    ...propLines('apcVersion', 'apc.APCVersion'),
+    ...propLines('vbaVersion', 'apc.VBAVersion'),
+    ...propLines('running', 'apc.Running'),
+    '    Set ex = Nothing',
+    '    Set ex = apc.ExecutingProject',
+    ...propLines('exec', 'ex.Name'),
+    '    Err.Clear',
+    '    Set aps = Nothing',
+    '    Set aps = apc.Projects',
+    '    n = -1',
+    '    n = aps.Count',
+    '    s = s & ";count=" & CStr(n) & ";err=" & CStr(Err.Number)',
+    '    For i = 1 To n',
+    '        Set ap = Nothing',
+    '        Err.Clear',
+    '        Set ap = aps.Item(i)',
+    '        If ap Is Nothing Then',
+    '            s = s & "|#" & CStr(i) & ":err=" & CStr(Err.Number)',
+    '        Else',
+    '            s = s & "|" & RmProjInfo(ap, ex)',
+    '        End If',
+    '    Next',
+    '    C5D_RmApcInfo = s',
+    'End Function',
+    'Public Function C5D_RmVbeInfo() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ide As Object',
+    '    Dim vbps As Object',
+    '    Dim vbp As Object',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmVbeInfo', 'vbe=Nothing;apcErr='),
+    '    Set ide = Nothing',
+    '    Set ide = apc.VBE',
+    ...nothingGuard('ide', 'C5D_RmVbeInfo', 'vbe=Nothing;err='),
+    '    s = "vbe=" & TypeName(ide)',
+    ...propLines('version', 'ide.Version'),
+    '    Err.Clear',
+    '    Set vbps = Nothing',
+    '    Set vbps = ide.VBProjects',
+    '    n = -1',
+    '    n = vbps.Count',
+    '    s = s & ";count=" & CStr(n) & ";err=" & CStr(Err.Number)',
+    '    For i = 1 To n',
+    '        Set vbp = Nothing',
+    '        Err.Clear',
+    '        Set vbp = vbps.Item(i)',
+    '        If vbp Is Nothing Then',
+    '            s = s & "|#" & CStr(i) & ":err=" & CStr(Err.Number)',
+    '        Else',
+    '            s = s & "|" & RmVbpInfo(vbp)',
+    '        End If',
+    '    Next',
+    '    C5D_RmVbeInfo = s',
+    'End Function',
+    'Public Function C5D_RmApc() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmApc', 'error:apc:'),
+    '    Set C5D_RmApc = apc',
+    'End Function',
+    'Public Function C5D_RmSelfApcProject() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ap As Object',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmSelfApcProject', 'error:apc:'),
+    '    Set ap = RmSelfApc(apc)',
+    ...nothingGuard('ap', 'C5D_RmSelfApcProject', 'error:notfound:'),
+    '    Set C5D_RmSelfApcProject = ap',
+    'End Function',
+    'Public Function C5D_RmSelfVbProject() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim vbp As Object',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmSelfVbProject', 'error:apc:'),
+    '    Set vbp = RmSelfVbp(apc)',
+    ...nothingGuard('vbp', 'C5D_RmSelfVbProject', 'error:notfound:'),
+    '    Set C5D_RmSelfVbProject = vbp',
+    'End Function',
+    'Public Function C5D_RmSelfPair() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim vbp As Object',
+    '    Dim vbps As Object',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmSelfPair', 'error:apc:'),
+    '    Set vbp = RmSelfVbp(apc)',
+    ...nothingGuard('vbp', 'C5D_RmSelfPair', 'error:notfound:'),
+    '    Set vbps = apc.VBE.VBProjects',
+    '    C5D_RmSelfPair = Array(vbps, vbp)',
+    'End Function',
+    'Public Function C5D_RmRemoveSelfInside() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim vbp As Object',
+    '    Dim vbps As Object',
+    '    Dim e As Long',
+    '    Dim d As String',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmRemoveSelfInside', 'error:apc:'),
+    '    Set vbp = RmSelfVbp(apc)',
+    ...nothingGuard('vbp', 'C5D_RmRemoveSelfInside', 'error:notfound:'),
+    '    Set vbps = apc.VBE.VBProjects',
+    '    Err.Clear',
+    '    vbps.Remove vbp',
+    ...resultLines('C5D_RmRemoveSelfInside', 'removed;err=0', 'remove'),
+    'End Function',
+    'Public Function C5D_RmHold() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmHold', 'error:apc:'),
+    '    Set mHeld = Nothing',
+    '    Set mHeld = RmSelfVbp(apc)',
+    ...nothingGuard('mHeld', 'C5D_RmHold', 'error:notfound:'),
+    '    C5D_RmHold = "held;name=" & CStr(mHeld.Name)',
+    'End Function',
+    'Public Function C5D_RmRemoveHeld() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim vbps As Object',
+    '    Dim e As Long',
+    '    Dim d As String',
+    ...nothingGuard('mHeld', 'C5D_RmRemoveHeld', 'error:notheld:'),
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmRemoveHeld', 'error:apc:'),
+    '    Set vbps = apc.VBE.VBProjects',
+    '    Err.Clear',
+    '    vbps.Remove mHeld',
+    ...resultLines('C5D_RmRemoveHeld', 'removed;err=0', 'remove'),
+    '    Set mHeld = Nothing',
+    'End Function',
+    'Private Function RmFindOther(ByVal apc As Object, ByVal key As String, ByRef via As String) As Object',
+    '    On Error Resume Next',
+    '    Dim aps As Object',
+    '    Dim ap As Object',
+    '    Dim vbp As Object',
+    '    Dim fallback As Object',
+    '    Dim hit As Boolean',
+    '    Dim nm As String',
+    '    Dim st As String',
+    '    Dim fl As String',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set RmFindOther = Nothing',
+    '    Set fallback = Nothing',
+    '    via = "none"',
+    '    Set aps = Nothing',
+    '    Set aps = apc.Projects',
+    '    n = -1',
+    '    n = aps.Count',
+    '    For i = 1 To n',
+    '        Set ap = Nothing',
+    '        Set ap = aps.Item(i)',
+    '        Set vbp = Nothing',
+    '        Set vbp = ap.VBProject',
+    '        nm = ""',
+    '        nm = CStr(ap.Name)',
+    '        hit = RmHasModule(vbp, RM_MARKER)',
+    '        If (Not hit) And nm = RM_PROJECT Then',
+    '            st = ""',
+    '            st = RmStorage(ap)',
+    '            fl = ""',
+    '            fl = CStr(vbp.FileName)',
+    '            If InStr(1, st, key, vbTextCompare) > 0 Or InStr(1, fl, key, vbTextCompare) > 0 Then',
+    '                via = "key"',
+    '                Set RmFindOther = ap',
+    '                Exit Function',
+    '            End If',
+    '            If fallback Is Nothing Then Set fallback = ap',
+    '        End If',
+    '    Next',
+    '    If Not fallback Is Nothing Then',
+    '        via = "fallback"',
+    '        Set RmFindOther = fallback',
+    '    End If',
+    'End Function',
+    'Public Function C5D_RmRemoveOther(ByVal key As Variant) As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ap As Object',
+    '    Dim vbp As Object',
+    '    Dim vbps As Object',
+    '    Dim via As String',
+    '    Dim e As Long',
+    '    Dim d As String',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmRemoveOther', 'error:apc:'),
+    '    Set ap = RmFindOther(apc, CStr(key), via)',
+    ...nothingGuard('ap', 'C5D_RmRemoveOther', 'error:notfound:'),
+    '    Set vbp = Nothing',
+    '    Set vbp = ap.VBProject',
+    '    Set vbps = apc.VBE.VBProjects',
+    '    Err.Clear',
+    '    vbps.Remove vbp',
+    ...resultLines('C5D_RmRemoveOther', 'removed;err=0', 'remove', '";via=" & via'),
+    'End Function',
+    'Public Function C5D_RmCloseOther(ByVal key As Variant) As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ap As Object',
+    '    Dim via As String',
+    '    Dim e As Long',
+    '    Dim d As String',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmCloseOther', 'error:apc:'),
+    '    Set ap = RmFindOther(apc, CStr(key), via)',
+    ...nothingGuard('ap', 'C5D_RmCloseOther', 'error:notfound:'),
+    '    Err.Clear',
+    '    ap.Close False',
+    ...resultLines('C5D_RmCloseOther', 'closed;err=0', 'close', '";via=" & via'),
+    'End Function',
+    'Public Function C5D_RmCloseSelfInside() As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ap As Object',
+    '    Dim e As Long',
+    '    Dim d As String',
+    '    Set apc = RmApc()',
+    ...nothingGuard('apc', 'C5D_RmCloseSelfInside', 'error:apc:'),
+    '    Set ap = RmSelfApc(apc)',
+    ...nothingGuard('ap', 'C5D_RmCloseSelfInside', 'error:notfound:'),
+    '    Err.Clear',
+    '    ap.Close False',
+    ...resultLines('C5D_RmCloseSelfInside', 'closed;err=0', 'close'),
+    'End Function',
+    ''
+].join('\r\n');
+/** VBA written into C5D_ProbeB through the copy B (shows which of two projects named C5D_Bridge C5D_Install writes into). */
+const B_SOURCE = [
+    'Option Explicit',
+    'Public Function C5D_BAlive() As Variant',
+    `    C5D_BAlive = "${B_ALIVE}"`,
+    'End Function',
+    ''
+].join('\r\n');
+/**
+ * VBA written into C5D_ProbeTimer (risky mode only; a separate module so the Declare lines never touch the safe mode).
+ *   C5D_RmSchedule(mode, logPath, delayMs)  SetTimer(0, 0, delayMs, AddressOf C5D_RmTimerProc) -> "scheduled;mode=..;timer=<id>;err=0"
+ *   C5D_RmTimerProc  (WM_TIMER, after ExecuteScript has returned) KillTimer, then mode "remove": VBE.VBProjects.Remove self /
+ *                    mode "close": ApcProject(self).Close False; result kept in a module variable and appended to logPath
+ *   C5D_RmTimerResult()  "result=<scheduled:..|remove:ok|close:ok|error:<mode>:<n>:<desc>|...>;pending=<True|False>"
+ * Self = the project that has the module C5D_ProbeTimer.
+ */
+const TIMER_SOURCE = [
+    'Option Explicit',
+    'Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hWnd As LongPtr, ByVal nIDEvent As LongPtr, ByVal uElapse As Long, ByVal lpTimerFunc As LongPtr) As LongPtr',
+    'Private Declare PtrSafe Function KillTimer Lib "user32" (ByVal hWnd As LongPtr, ByVal nIDEvent As LongPtr) As Long',
+    `Private Const TM_MARKER As String = "${TIMER_MODULE}"`,
+    'Private mTimer As LongPtr',
+    'Private mMode As String',
+    'Private mLog As String',
+    'Private mResult As String',
+    'Private Sub TmLog(ByVal t As String)',
+    '    On Error Resume Next',
+    '    Dim f As Integer',
+    '    If Len(mLog) = 0 Then Exit Sub',
+    '    f = FreeFile',
+    '    Open mLog For Append As #f',
+    '    Print #f, Format(Now, "yyyy-mm-dd hh:nn:ss") & " " & t',
+    '    Close #f',
+    'End Sub',
+    'Private Function TmSelf(ByVal apc As Object) As Object',
+    '    On Error Resume Next',
+    '    Dim aps As Object',
+    '    Dim ap As Object',
+    '    Dim c As Object',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    Set TmSelf = Nothing',
+    '    Set aps = Nothing',
+    '    Set aps = apc.Projects',
+    '    n = -1',
+    '    n = aps.Count',
+    '    For i = 1 To n',
+    '        Set ap = Nothing',
+    '        Set ap = aps.Item(i)',
+    '        Set c = Nothing',
+    '        Set c = ap.VBProject.VBComponents.Item(TM_MARKER)',
+    '        If Not c Is Nothing Then',
+    '            Set TmSelf = ap',
+    '            Exit Function',
+    '        End If',
+    '    Next',
+    'End Function',
+    'Public Function C5D_RmSchedule(ByVal mode As Variant, ByVal logPath As Variant, ByVal delayMs As Variant) As Variant',
+    '    On Error Resume Next',
+    '    mMode = CStr(mode)',
+    '    mLog = CStr(logPath)',
+    '    mResult = "scheduled:" & mMode',
+    '    TmLog "schedule:" & mMode',
+    '    If mTimer <> 0 Then',
+    '        KillTimer 0, mTimer',
+    '        mTimer = 0',
+    '    End If',
+    '    Err.Clear',
+    '    mTimer = SetTimer(0, 0, CLng(delayMs), AddressOf C5D_RmTimerProc)',
+    '    C5D_RmSchedule = "scheduled;mode=" & mMode & ";timer=" & CStr(mTimer) & ";err=" & CStr(Err.Number)',
+    'End Function',
+    'Public Sub C5D_RmTimerProc(ByVal hWnd As LongPtr, ByVal uMsg As Long, ByVal idEvent As LongPtr, ByVal dwTime As Long)',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ap As Object',
+    '    Dim vbp As Object',
+    '    Dim vbps As Object',
+    '    Dim e As Long',
+    '    Dim d As String',
+    '    KillTimer 0, idEvent',
+    '    mTimer = 0',
+    '    TmLog "fired:" & mMode',
+    '    Set apc = Nothing',
+    '    Set apc = CreateObject("MSAPC.Apc.7.1")',
+    '    If apc Is Nothing Then',
+    '        Err.Clear',
+    '        Set apc = CreateObject("MSAPC.Apc")',
+    '    End If',
+    '    If apc Is Nothing Then',
+    '        mResult = "error:apc:" & CStr(Err.Number)',
+    '        TmLog mResult',
+    '        Exit Sub',
+    '    End If',
+    '    Set ap = TmSelf(apc)',
+    '    If ap Is Nothing Then',
+    '        mResult = "error:notfound"',
+    '        TmLog mResult',
+    '        Exit Sub',
+    '    End If',
+    '    TmLog "before:" & mMode',
+    '    Err.Clear',
+    '    If mMode = "close" Then',
+    '        ap.Close False',
+    '    Else',
+    '        Set vbp = ap.VBProject',
+    '        Set vbps = apc.VBE.VBProjects',
+    '        Err.Clear',
+    '        vbps.Remove vbp',
+    '    End If',
+    '    e = Err.Number',
+    '    d = Err.Description',
+    '    If e = 0 Then',
+    '        mResult = mMode & ":ok"',
+    '    Else',
+    '        mResult = "error:" & mMode & ":" & CStr(e) & ":" & Replace(Replace(d, ";", ","), "|", "/")',
+    '    End If',
+    '    TmLog "after:" & mResult',
+    'End Sub',
+    'Public Function C5D_RmTimerResult() As Variant',
+    '    C5D_RmTimerResult = "result=" & mResult & ";pending=" & CStr(mTimer <> 0)',
+    'End Function',
+    ''
+].join('\r\n');
+
+const rmStep = (name, func, extra = {}) => ({ name, module: REMOVE_MODULE, func, args: [], ...extra });
+const installRemoveStep = (name, requires) => ({ name, module: BRIDGE_MODULE, func: 'C5D_Install', args: [REMOVE_MODULE, REMOVE_SOURCE], expected: 'ok', requires });
+const infoApcStep = (name, requires, extra = {}) => rmStep(name, 'C5D_RmApcInfo', { pattern: INFO_APC_PATTERN, requires, info: 'apc', ...extra });
+const infoVbeStep = (name, requires) => rmStep(name, 'C5D_RmVbeInfo', { pattern: INFO_VBE_PATTERN, requires, info: 'vbe' });
+/**
+ * vbacall-obj step: the VBA function returns an object; eval-probe.exe runs actions on it after ExecuteScript returned.
+ * match: the call returned resultType (default ComObject) and every action index in mustSucceed is ok.
+ */
+const objStep = (name, func, actions, extra = {}) => rmStep(name, func, { actions, mustSucceed: [], resultType: 'ComObject', ...extra });
+/** After a removal attempt: C5D_RmAlive must NOT answer "alive" (module gone = project removed and auto-reloaded from disk, or CATIA lost it). */
+const removalCheck = attempt => rmStep(`${attempt}-check`, 'C5D_RmAlive', { expectFailure: REMOVE_ALIVE, after: [attempt], checkOf: attempt });
+/** Only when the check says removed: does ExecuteScript still load the bridge (C5D_Version)? */
+const reloadAfter = attempt => ({ ...versionStep(`${attempt}-reload`), requires: [`${attempt}-check`], reloadOf: attempt });
+/** attempt + its check + its reload. */
+const attemptSteps = step => [{ ...step, attempt: true }, removalCheck(step.name), reloadAfter(step.name)];
+/** Checks of the attempts listed (an attempt is skipped once an earlier one removed the project). */
+const checksOf = (...attempts) => attempts.map(name => `${name}-check`);
+
+/**
+ * --remove-experiment, in run order (danger: low < medium < high). Library = the read-only hash-named copy (A) unless library: 'b'
+ * (the second copy COPY_B_FILE). requires: skipped unless those matched; unless: skipped when any of those matched (an earlier
+ * attempt removed the project); after: skipped when that step was skipped. Never closes or removes a project other than C5D_Bridge.
+ */
+const REMOVE_STEPS = [
+    versionStep('version'),
+    installRemoveStep('install', ['version']),
+    rmStep('alive', 'C5D_RmAlive', { expected: REMOVE_ALIVE, requires: ['install'] }),
+    infoApcStep('info-apc', ['alive']),
+    infoVbeStep('info-vbe', ['alive']),
+    objStep('obj-apc', 'C5D_RmApc', ['type:$', 'get:$.APCVersion', 'get:$.VBAVersion', 'get:$.Running', 'get:$.Projects.Count', 'type:$.Projects',
+        'type:$.VBE', 'get:$.VBE.VBProjects.Count', 'type:$.ExecutingProject'], { requires: ['alive'] }),
+    objStep('obj-apcproject', 'C5D_RmSelfApcProject', ['type:$', 'get:$.Name', 'get:$.Mode', 'get:$.Locked', 'get:$.Flags', 'get:$.Dirty',
+        'get:$.Compiled', 'get:$.Storage.Name', 'type:$.VBProject', 'get:$.VBProject.Name', 'get:$.VBProject.Type', 'get:$.VBProject.Mode',
+        'get:$.Apc.Running', 'get:$.Apc.Projects.Count'], { requires: ['alive'] }),
+    objStep('obj-vbproject', 'C5D_RmSelfVbProject', ['type:$', 'get:$.Name', 'get:$.Type', 'get:$.Mode', 'get:$.Protection', 'get:$.FileName',
+        'get:$.Saved', 'type:$.Collection', 'get:$.Collection.Count'], { requires: ['alive'] }),
+    objStep('obj-array', 'C5D_RmSelfPair', ['type:$0', 'type:$1', 'get:$0.Count', 'get:$1.Name'], { resultType: 'Object[]', requires: ['alive'] }),
+    ...attemptSteps(rmStep('inside-remove', 'C5D_RmRemoveSelfInside', { expected: 'removed;err=0', requires: ['alive'], danger: 'low (known: 440)' })),
+    rmStep('hold', 'C5D_RmHold', { pattern: /^held;/, requires: ['alive'], unless: checksOf('inside-remove') }),
+    ...attemptSteps(rmStep('held-remove', 'C5D_RmRemoveHeld', { expected: 'removed;err=0', requires: ['hold'], unless: checksOf('inside-remove'), danger: 'low' })),
+    ...attemptSteps(objStep('outside-remove', 'C5D_RmSelfVbProject', ['get:$.Name', 'get:$.Type', 'get:$.Collection.Count', 'call:$.Collection.Remove($)',
+        'sleep:300', 'get:$.VBE.VBProjects.Count', 'get:$.Name'], { mustSucceed: [3], requires: ['obj-vbproject'],
+        unless: checksOf('inside-remove', 'held-remove'), danger: 'low' })),
+    ...attemptSteps(objStep('outside-close', 'C5D_RmSelfApcProject', ['get:$.Name', 'get:$.Mode', 'get:$.Apc.Projects.Count', 'call:$.Close(false)',
+        'sleep:300', 'get:$.Apc.Projects.Count', 'get:$.Name'], { mustSucceed: [3], requires: ['obj-apcproject'],
+        unless: checksOf('inside-remove', 'held-remove', 'outside-remove'), danger: 'medium' })),
+    ...attemptSteps(objStep('outside-design-close', 'C5D_RmSelfApcProject', ['get:$.Mode', 'let:$.Mode=0', 'get:$.Mode', 'call:$.Close(false)',
+        'sleep:300', 'get:$.Apc.Projects.Count', 'get:$.Name'], { mustSucceed: [3], requires: ['obj-apcproject'],
+        unless: checksOf('inside-remove', 'held-remove', 'outside-remove', 'outside-close'), danger: 'medium' })),
+    ...attemptSteps(objStep('outside-end-close', 'C5D_RmSelfApcProject', ['call:$.Apc.End()', 'sleep:300', 'get:$.Mode', 'call:$.Close(false)',
+        'sleep:300', 'get:$.Apc.Projects.Count', 'get:$.Name'], { mustSucceed: [3], requires: ['obj-apcproject'],
+        unless: checksOf('inside-remove', 'held-remove', 'outside-remove', 'outside-close', 'outside-design-close'),
+        danger: 'medium (Apc.End resets module-level variables of every VBA project)' })),
+    installRemoveStep('reinstall'),
+    infoApcStep('after-info-apc', ['reinstall']),
+    infoVbeStep('after-info-vbe', ['reinstall']),
+    // (d) a second project with the same name C5D_Bridge (copy B): what CATIA does, which one C5D_Install writes into, and whether A can take B out
+    { ...versionStep('b-load'), library: 'b' },
+    infoApcStep('b-info-apc', ['reinstall', 'b-load']),
+    { name: 'b-install', library: 'b', module: BRIDGE_MODULE, func: 'C5D_Install', args: [B_MODULE, B_SOURCE], expected: 'ok', requires: ['b-load'] },
+    { name: 'b-module-in-b', library: 'b', module: B_MODULE, func: 'C5D_BAlive', args: [], expected: B_ALIVE, requires: ['b-install'] },
+    { name: 'b-module-in-a', module: B_MODULE, func: 'C5D_BAlive', args: [], expected: B_ALIVE, requires: ['b-install'] },
+    rmStep('b-remove', 'C5D_RmRemoveOther', { args: [COPY_B_FILE], pattern: /^removed;err=0;via=/, requires: ['reinstall', 'b-load'], danger: 'low' }),
+    infoApcStep('b-remove-info', ['reinstall'], { after: ['b-remove'] }),
+    rmStep('b-close', 'C5D_RmCloseOther', { args: [COPY_B_FILE], pattern: /^closed;err=0;via=/, requires: ['reinstall', 'b-load'], unless: ['b-remove'], danger: 'medium' }),
+    infoApcStep('b-close-info', ['reinstall'], { after: ['b-close'] }),
+    { ...versionStep('b-reload'), library: 'b', requires: ['b-load'] },
+    infoApcStep('final-info-apc', ['reinstall'])
+];
+
+/**
+ * --remove-experiment-risky (CATIA may crash; run on a freshly started CATIA, after --remove-experiment found nothing):
+ * (c) ApcProject.Close from the project's own running code, then (e) SetTimer + AddressOf: Remove / Close run from a WM_TIMER
+ * callback after ExecuteScript has returned. The callback's result stays in a module variable (collected by C5D_RmTimerResult)
+ * and is appended to TIMER_LOG_FILE (read by the local step read-timer-log).
+ */
+const timerAttempt = (mode, unless) => [
+    { name: `timer-${mode}`, module: TIMER_MODULE, func: 'C5D_RmSchedule', args: [mode, TIMER_LOG_TOKEN, '500'], pattern: /^scheduled;.*;timer=[1-9]\d*;err=0$/,
+        requires: ['timer-alive'], unless, attempt: true, danger: mode === 'close' ? 'highest' : 'high' },
+    { name: `timer-${mode}-wait`, local: 'wait', ms: 3000, after: [`timer-${mode}`] },
+    // informational: answers only while C5D_ProbeTimer still exists (i.e. the callback's Remove / Close did NOT take effect);
+    // after a real removal it fails with "macro program unknown" and the callback's outcome is only in the timer log
+    { name: `timer-${mode}-result`, module: TIMER_MODULE, func: 'C5D_RmTimerResult', args: [], pattern: /^result=/, after: [`timer-${mode}`] },
+    removalCheck(`timer-${mode}`),
+    reloadAfter(`timer-${mode}`)
+];
+const REMOVE_RISKY_STEPS = [
+    versionStep('version'),
+    installRemoveStep('install', ['version']),
+    rmStep('alive', 'C5D_RmAlive', { expected: REMOVE_ALIVE, requires: ['install'] }),
+    { name: 'install-timer', module: BRIDGE_MODULE, func: 'C5D_Install', args: [TIMER_MODULE, TIMER_SOURCE], expected: 'ok', requires: ['alive'] },
+    { name: 'timer-alive', module: TIMER_MODULE, func: 'C5D_RmTimerResult', args: [], pattern: /^result=;pending=False$/, requires: ['install-timer'] },
+    infoApcStep('info-apc', ['alive']),
+    ...attemptSteps(rmStep('inside-close', 'C5D_RmCloseSelfInside', { expected: 'closed;err=0', requires: ['alive'], danger: 'high' })),
+    ...timerAttempt('remove', checksOf('inside-close')),
+    ...timerAttempt('close', checksOf('inside-close', 'timer-remove')),
+    { name: 'read-timer-log', local: 'read-timer-log' },
+    installRemoveStep('reinstall'),
+    infoApcStep('final-info-apc', ['reinstall'])
+];
+/** Steps with TIMER_LOG_TOKEN in args replaced by the log path. */
+function materializeSteps(steps, values) {
+    return steps.map(step => step.args?.includes(TIMER_LOG_TOKEN) ? { ...step, args: step.args.map(arg => arg === TIMER_LOG_TOKEN ? values.timerLog : arg) } : step);
+}
+
 const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + '       node scripts/probe-bridge.js --check-only\n'
     + '       node scripts/probe-bridge.js --unload-experiment | --unload-cleanup\n'
@@ -278,11 +1009,20 @@ const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + `  --readonly-fresh: read-only hash-named copy (${BRIDGE_PROJECT}-<sha256 8>.catvba), then ${READONLY_FRESH_STEPS.map(s => s.name).join(' ')}\n`
     + '    (run right after a CATIA start, before the VBA editor is opened)\n'
     + '  --readonly-fresh-check: only records the hash-named copy (time, size, read-only, lock, hash); CATIA is not called\n'
+    + '       node scripts/probe-bridge.js --remove-experiment | --remove-experiment-risky\n'
+    + `  --remove-experiment: ${REMOVE_STEPS.map(s => s.name).join(' ')}\n`
+    + '    (read-only hash-named copy A + read-only copy B; run on a freshly started CATIA; leaves CATIA changed, restart it afterwards)\n'
+    + `  --remove-experiment-risky: ${REMOVE_RISKY_STEPS.map(s => s.name).join(' ')}\n`
+    + '    (CATIA MAY CRASH: Close from its own code and SetTimer callbacks; only on a freshly started CATIA with nothing unsaved)\n'
     + '  Never runs a .catvbs/.CATScript. --check-only only reads CNEXT.exe modules and the bridge files.';
 
 const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup',
-    '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check' };
-/** { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'help', steps }. Throws on bad arguments. */
+    '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check',
+    '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky' };
+/**
+ * { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'remove-experiment'
+ *   | 'remove-experiment-risky' | 'help', steps }. Throws on bad arguments.
+ */
 function parseArgs(args) {
     if (args.some(arg => arg === '--help' || arg === '-h')) return { mode: 'help', steps: [] };
     const modes = new Set();
@@ -298,6 +1038,8 @@ function parseArgs(args) {
     if (option === '--unload-experiment') return { mode: 'unload-experiment', steps: UNLOAD_STEPS.map(s => s.name) };
     if (option === '--unload-cleanup') return { mode: 'unload-cleanup', steps: CLEANUP_STEPS.map(s => s.name) };
     if (option === '--readonly-fresh') return { mode: 'readonly-fresh', steps: READONLY_FRESH_STEPS.map(s => s.name) };
+    if (option === '--remove-experiment') return { mode: 'remove-experiment', steps: REMOVE_STEPS.map(s => s.name) };
+    if (option === '--remove-experiment-risky') return { mode: 'remove-experiment-risky', steps: REMOVE_RISKY_STEPS.map(s => s.name) };
     if (option) return { mode: MODE_OPTIONS[option], steps: [] };
     return { mode: 'run', steps: steps.size ? STEP_NAMES.filter(name => steps.has(name)) : [...STEP_NAMES] };
 }
@@ -307,8 +1049,10 @@ const encodeToken = text => 'b64:' + Buffer.from(String(text), 'utf8').toString(
 /**
  * eval-probe.exe arguments of a step: [--no-retry] --label <name> vbacall <library> <module> <function> [args...].
  * noRetry: exactly one ExecuteScript call (no ByRef retry after an exception), for calls with side effects such as unloading.
+ * A step with actions (objStep) uses vbacall-obj <library> <module> <function> [actions...] instead (always one call, no VBA args).
  */
 function callArgs(step, library, options = {}) {
+    if (step.actions) return ['--label', step.name, 'vbacall-obj', ...[library, step.module, step.func, ...step.actions].map(encodeToken)];
     return [...(options.noRetry ? ['--no-retry'] : []), '--label', step.name, 'vbacall', ...[library, step.module, step.func, ...step.args].map(encodeToken)];
 }
 /** Whether a step's VBA return value is the expected one. */
@@ -316,10 +1060,17 @@ function matchStep(step, result) {
     if (typeof result !== 'string') return false;
     return step.pattern ? step.pattern.test(result) : result === step.expected;
 }
-/** Whether an eval-probe.exe result line matches the step (expectFailure: anything but exactly that return value, incl. an exception). */
-function matchCall(step, line) {
+/**
+ * Whether an eval-probe.exe result line matches the step (expectFailure: anything but exactly that return value, incl. an exception).
+ * Steps with actions: the call returned step.resultType (ComObject = an object came back) and every action in mustSucceed is ok.
+ */
+function matchCall(step, line, actions = []) {
     if (!line) return false;
     if (step.expectFailure !== undefined) return !(line.ok === true && line.result === step.expectFailure);
+    if (step.actions) {
+        return line.ok === true && line.resultType === step.resultType
+            && (step.mustSucceed ?? []).every(index => actions.find(a => a.action === index)?.ok === true);
+    }
     return line.ok === true && matchStep(step, line.result);
 }
 /** "U+XXXX" of every non-ASCII code point (to see how a Unicode text came back). */
@@ -466,13 +1217,15 @@ function runCallStep(exe, step, library, options = {}) {
         execFile(exe, args, { windowsHide: true, timeout: STEP_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
             const parsed = parseProbeOutput(stdout || '');
             const timedOut = Boolean(error && error.killed);
-            const result = parsed.lines.find(line => line.step === step.name) ?? parsed.lines[0] ?? null;
+            const result = parsed.lines.find(line => line.step === step.name && line.action === undefined) ?? parsed.lines.find(line => line.action === undefined) ?? null;
+            const actions = step.actions ? parsed.lines.filter(line => line.step === step.name && line.action !== undefined) : undefined;
             resolve({
-                step: step.name, call: `${step.module}.${step.func}`, exitCode: error ? (typeof error.code === 'number' ? error.code : null) : 0, timedOut,
+                step: step.name, call: `${step.module}.${step.func}`, library, exitCode: error ? (typeof error.code === 'number' ? error.code : null) : 0, timedOut,
                 error: error && !timedOut && typeof error.code !== 'number' ? String(error) : null,
-                result, match: matchCall(step, result),
+                result, ...(actions ? { actions } : {}), match: matchCall(step, result, actions),
                 // what eval-probe.exe actually passed to ExecuteScript, compared with what was meant (node -> exe command line)
-                argumentsIntact: result ? result.library === library && JSON.stringify(result.arguments ?? null) === JSON.stringify(step.args) : null,
+                argumentsIntact: result ? result.library === library && JSON.stringify(result.arguments ?? null) === JSON.stringify(step.args)
+                    && (!step.actions || JSON.stringify(result.actions ?? null) === JSON.stringify(step.actions)) : null,
                 stdoutOther: parsed.other, stderr: (stderr || '').trim(), durationMs: Date.now() - started
             });
         });
@@ -734,9 +1487,26 @@ async function runUnload(report, options) {
 }
 
 /**
+ * Why a step is not run (null = run it): an earlier abort; requires (a listed step did not match); unless (a listed step matched,
+ * e.g. an earlier attempt already removed the project); after (a listed step was skipped or is not in this run).
+ */
+function skipReason(step, entries, aborted) {
+    if (aborted) return aborted;
+    const find = name => entries.find(e => e.step === name);
+    const failed = (step.requires ?? []).filter(dep => !find(dep)?.match);
+    if (failed.length) return `requires ${failed.join(', ')}`;
+    const done = (step.unless ?? []).filter(dep => find(dep)?.match);
+    if (done.length) return `not needed: ${done.join(', ')} matched`;
+    const notRun = (step.after ?? []).filter(dep => !find(dep) || find(dep).skipped);
+    if (notRun.length) return `${notRun.join(', ')} not run`;
+    return null;
+}
+
+/**
  * Runs steps one CATIA call (--no-retry) at a time, with a module snapshot and a CATIA-alive check after each. A timeout, a vanished
- * CNEXT.exe or an unreachable CATIA aborts the rest; a COM exception does not (requires skips dependent steps).
- * local(step, entries) runs a local step and returns { run, entry } (step/call are added here). Fills report.runs; returns { entries, aborted }.
+ * CNEXT.exe or an unreachable CATIA aborts the rest; a COM exception does not (requires / unless / after skip dependent steps).
+ * library: the .catvba path, or a function(step) returning it. local(step, entries) runs a local step (may be async) and returns
+ * { run, entry } (step/call are added here). Fills report.runs; returns { entries, aborted }.
  */
 async function runSequence(report, steps, library, pids, local) {
     report.runs = [];
@@ -744,23 +1514,23 @@ async function runSequence(report, steps, library, pids, local) {
     let aborted = null;
     for (const step of steps) {
         const call = step.local ? `(local) ${step.local}` : `${step.module}.${step.func}`;
-        const failed = (step.requires ?? []).filter(dep => !entries.find(e => e.step === dep)?.match);
-        if (aborted || failed.length) {
-            const skipped = aborted ?? `requires ${failed.join(', ')}`;
+        const skipped = skipReason(step, entries, aborted);
+        if (skipped) {
             entries.push({ step: step.name, skipped });
             report.runs.push({ step: step.name, call, skipped });
             continue;
         }
         let run, entry;
         if (step.local) {
-            ({ run, entry } = local(step, entries));
+            ({ run, entry } = await local(step, entries));
             run = { step: step.name, call, ...run };
             entry = { step: step.name, ...entry };
         } else {
             // one ExecuteScript call per step: a ByRef retry after an exception would auto-load C5D_Bridge again behind an unload
-            run = await runCallStep(report.exe, step, library, { noRetry: true });
+            run = await runCallStep(report.exe, step, typeof library === 'function' ? library(step) : library, { noRetry: true });
             const r = run.result;
             entry = { step: step.name, ok: r?.ok === true, match: run.match, result: r?.result ?? null, hresult: r?.hresult ?? null, message: r?.message ?? null, timedOut: run.timedOut };
+            if (run.actions) entry.actions = run.actions;
         }
         report.runs.push(run);
         const after = trySnapshot(report, 'after:' + step.name);
@@ -792,7 +1562,10 @@ function sequenceSummary(report, entries) {
             exitCode: run.exitCode ?? null, ok: run.local ? run.ok : run.result?.ok ?? null, match: run.skipped ? null : run.match,
             result: run.result?.result ?? null, hresult: run.result?.hresult ?? null, message: run.local ? run.message : run.result?.message ?? null,
             elapsedMs: run.local ? run.durationMs : run.result?.elapsedMs ?? null, processMs: run.durationMs ?? null,
-            catiaAlive: run.catiaAlive ?? null, vbscriptLoaded: entries.find(e => e.step === run.step)?.loadedAfter ?? null }))
+            catiaAlive: run.catiaAlive ?? null, vbscriptLoaded: entries.find(e => e.step === run.step)?.loadedAfter ?? null,
+            ...(run.actions ? { resultType: run.result?.resultType ?? null, isDispatch: run.result?.isDispatch ?? null, typeInfo: run.result?.typeInfo ?? null,
+                actions: run.actions.map(a => ({ action: a.action, op: a.op, ok: a.ok, result: a.result, resultType: a.resultType, typeInfo: a.typeInfo,
+                    hresult: a.hresult, message: a.message })) } : {}) }))
     };
 }
 
@@ -907,6 +1680,207 @@ function runReadonlyFreshCheck(report, deps = {}) {
 const describeLock = lock => !lock ? 'lock not probed' : lock.skipped ? `lock probe skipped (${lock.skipped})`
     : lock.inUse === true ? 'open in another process' : lock.inUse === false ? 'not open elsewhere' : `lock probe failed (${lock.code})`;
 
+/**
+ * C5D_RmApcInfo / C5D_RmVbeInfo text -> { header: { key: value }, count, projects: [{ key: value }] } (null for a non-string).
+ * Format: "<k>=<v>;<k>=<v>...|<project fields>|...". Values never contain | or ; (RmClean); the first = splits key and value.
+ */
+function parseInfo(text) {
+    if (typeof text !== 'string') return null;
+    const fields = part => Object.fromEntries(part.split(';').filter(Boolean).map(kv => {
+        const i = kv.indexOf('=');
+        return i < 0 ? [kv, ''] : [kv.slice(0, i), kv.slice(i + 1)];
+    }));
+    const [head, ...rest] = text.split('|');
+    const header = fields(head);
+    const count = /^\d+$/.test(header.count ?? '') ? Number(header.count) : null;
+    return { header, count, projects: rest.map(fields) };
+}
+/** Projects named C5D_Bridge in a parsed info. */
+const bridgeProjects = info => (info?.projects ?? []).filter(p => p.name === BRIDGE_PROJECT);
+/** "N projects, C5D_Bridge x M [<storage file>, marker/B-module flags]" for verdicts. */
+function describeInfo(entry) {
+    if (!entry || entry.skipped) return entry ? `not run (${entry.skipped})` : 'not run';
+    if (!entry.ok) return describeOutcome(entry);
+    const info = parseInfo(entry.result);
+    if (!info || info.count === null) return `unexpected ${JSON.stringify(entry.result)}`;
+    const bridges = bridgeProjects(info).map(p => {
+        const file = (p.storage || p.vbFile || p.file || '').split('<').pop().split(/[\\/]/).pop() || '?';
+        const flags = [p.marker === 'True' && 'probe', p.bModule === 'True' && 'B-module', p.exec === 'True' && 'executing',
+            p.vbType !== undefined && `type=${p.vbType}`, p.type !== undefined && `type=${p.type}`, p.mode !== undefined && `mode=${p.mode}`].filter(Boolean);
+        return `${file}${flags.length ? ` (${flags.join(',')})` : ''}`;
+    });
+    return `${info.count} projects, ${BRIDGE_PROJECT} x${bridges.length}${bridges.length ? ` [${bridges.join('; ')}]` : ''}`;
+}
+/** "op=value" of the get/type actions of an object step (error -> "op=ERR <hresult>"). */
+function describeActions(actions, kinds = ['get', 'type']) {
+    return (actions ?? []).filter(a => kinds.includes(a.kind ?? a.op.split(':')[0])).map(a => {
+        const op = a.op.replace(/^(get|type):/, (m, k) => k === 'type' ? 'type ' : '');
+        return `${op}=${a.ok ? a.result ?? 'Empty' : `ERR ${a.hresult}${a.message ? ' ' + a.message.split(/\r?\n/)[0] : ''}`}`;
+    }).join(', ');
+}
+/** Outcome of one removal attempt (+ its -check / -reload steps). */
+function describeAttempt(step, get) {
+    const e = get(step.name);
+    if (!e) return `${step.name}: not in this run`;
+    if (e.skipped) return `${step.name}: not run (${e.skipped})`;
+    let outcome;
+    if (e.timedOut) outcome = 'timed out (CATIA may be stopped at a dialog)';
+    else if (step.actions) {
+        if (!e.ok) outcome = `ExecuteScript failed (${e.hresult} ${e.message ?? ''})`.trim();
+        else if (e.resultType !== step.resultType) outcome = `no object came back (resultType ${e.resultType ?? '?'}, result ${JSON.stringify(e.result)})`;
+        else {
+            const target = (e.actions ?? []).find(a => a.action === step.mustSucceed[0]);
+            outcome = !target ? 'destructive action not run' : target.ok ? `${target.op} ok` : `${target.op} FAILED ${target.hresult} ${target.message ?? ''}`.trim();
+            const counts = (e.actions ?? []).filter(a => /Count$/.test(a.op) || /\.Name$/.test(a.op)).map(a => `${a.op.replace(/^get:/, '')}=${a.ok ? a.result : 'ERR ' + a.hresult}`);
+            if (counts.length) outcome += ` [${counts.join(', ')}]`;
+        }
+    } else outcome = describeOutcome(e);
+    const check = get(`${step.name}-check`);
+    const verdict = !check || check.skipped ? 'removal not checked' : check.timedOut ? 'check timed out'
+        : check.match ? `REMOVED (C5D_RmAlive ${check.ok ? `returned ${JSON.stringify(check.result)}` : 'not found'})` : 'still loaded';
+    const reload = get(`${step.name}-reload`);
+    const reloaded = !reload || reload.skipped ? '' : reload.match ? ', bridge re-loads afterwards' : `, bridge does NOT re-load (${describeOutcome(reload)})`;
+    return `${step.name}: ${outcome} -> ${verdict}${reloaded}`;
+}
+
+/**
+ * Verdict of --remove-experiment / --remove-experiment-risky. entries as in judgeUnload (object steps also have resultType,
+ * typeInfo, actions); steps = the step definitions of the run (attempt / actions / mustSucceed / resultType).
+ */
+function judgeRemove(beforeLoaded, entries, steps) {
+    const get = name => entries.find(entry => entry.step === name);
+    const ran = e => e && !e.skipped;
+    const parts = [];
+    for (const name of ['version', 'install', 'alive', 'install-timer', 'timer-alive', 'reinstall']) {
+        const e = get(name);
+        if (ran(e) && !e.match) parts.push(`${name}: ${describeOutcome(e)}`);
+    }
+    for (const name of ['info-apc', 'info-vbe']) {
+        if (ran(get(name))) parts.push(`${name}: ${describeInfo(get(name))}`);
+    }
+    for (const name of ['obj-apc', 'obj-apcproject', 'obj-vbproject', 'obj-array']) {
+        const e = get(name);
+        if (!ran(e)) continue;
+        if (e.timedOut || !e.ok) { parts.push(`${name}: ${describeOutcome(e)}`); continue; }
+        const what = e.resultType === 'ComObject' ? `object came back (${e.typeInfo ?? 'no type info'}${e.isDispatch === false ? ', not IDispatch' : ''})`
+            : `no object (resultType ${e.resultType}, result ${JSON.stringify(e.result)})`;
+        parts.push(`${name}: ${what}; ${describeActions(e.actions)}`);
+    }
+    const attempts = steps.filter(step => step.attempt);
+    for (const step of attempts) parts.push(describeAttempt(step, get));
+    const removed = attempts.filter(step => get(`${step.name}-check`)?.match);
+    parts.push(removed.length ? `C5D_Bridge REMOVED by ${removed.map(s => s.name).join(', ')}` : 'C5D_Bridge was not removed by any attempt');
+    for (const name of ['timer-remove-result', 'timer-close-result']) {
+        const e = get(name);
+        if (ran(e)) parts.push(`${name}: ${describeOutcome(e)}`);
+    }
+    const log = get('read-timer-log');
+    if (ran(log)) parts.push(`timer log: ${log.log === null ? 'missing' : JSON.stringify(log.log.trim().split(/\r?\n/).map(line => line.replace(/^\S+ \S+ /, '')).join(' / '))}`);
+    for (const name of ['after-info-apc', 'after-info-vbe']) {
+        if (ran(get(name))) parts.push(`${name}: ${describeInfo(get(name))}`);
+    }
+    const bLoad = get('b-load');
+    if (ran(bLoad)) {
+        parts.push(bLoad.match ? 'b-load: copy B auto-loaded and answers' : `b-load: ${describeOutcome(bLoad)}`);
+        if (ran(get('b-info-apc'))) parts.push(`b-info-apc: ${describeInfo(get('b-info-apc'))}`);
+        const inB = get('b-module-in-b'), inA = get('b-module-in-a');
+        if (ran(inB) || ran(inA)) {
+            const where = [inA?.match && 'A (first C5D_Bridge)', inB?.match && 'B'].filter(Boolean);
+            parts.push(`C5D_Install through copy B wrote into: ${where.length ? where.join(' and ') : 'neither (or not callable)'}`);
+        }
+        const bRemove = get('b-remove'), bClose = get('b-close');
+        if (bRemove) parts.push(`b-remove (A removes B): ${bRemove.skipped ? `not run (${bRemove.skipped})` : describeOutcome(bRemove)}; after: ${describeInfo(get('b-remove-info'))}`);
+        if (bClose) parts.push(`b-close (A closes B): ${bClose.skipped ? `not run (${bClose.skipped})` : describeOutcome(bClose)}; after: ${describeInfo(get('b-close-info'))}`);
+        const bReload = get('b-reload');
+        if (ran(bReload)) parts.push(bReload.match ? 'b-reload: copy B answers again' : `b-reload: ${describeOutcome(bReload)}`);
+    }
+    if (ran(get('final-info-apc'))) parts.push(`final-info-apc: ${describeInfo(get('final-info-apc'))}`);
+    const crashed = entries.find(e => e.crashed);
+    if (crashed) parts.push(`CATIA crashed after step ${crashed.step}`);
+    const timedOut = entries.find(e => e.timedOut);
+    if (timedOut) parts.push(`timed out at step ${timedOut.step} (CATIA may be stopped at a dialog)`);
+    parts.push(describeVbscript(beforeLoaded, entries));
+    return parts.join(' | ');
+}
+
+/** report.bridge-shaped facts of a prepareHashedBridge result (as in --readonly-fresh). */
+function preparedReport(prepared, target) {
+    return { action: prepared.action, ok: prepared.ok, locked: prepared.locked, code: prepared.code, message: prepared.message, source: prepared.source,
+        before: prepared.before, readOnly: prepared.readOnly, target: prepared.after, lock: lockProbe(target), targetAtEnd: null, lockAtEnd: null };
+}
+const readTextOrNull = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+
+/**
+ * --remove-experiment / --remove-experiment-risky. A = the read-only hash-named copy (as --readonly-fresh, reused when the hash
+ * matches); safe mode also prepares copy B (COPY_B_FILE, read-only); risky mode empties TIMER_LOG_FILE. Then REMOVE_STEPS /
+ * REMOVE_RISKY_STEPS one --no-retry call at a time (a timeout, a vanished CNEXT.exe or an unreachable CATIA aborts the rest).
+ */
+async function runRemove(report, options) {
+    const risky = options.mode === 'remove-experiment-risky';
+    const paths = hashedPaths();
+    const folder = path.dirname(paths.target);
+    const copyB = path.join(folder, COPY_B_FILE);
+    const timerLog = path.join(folder, TIMER_LOG_FILE);
+    report.cnext = cnextProcesses();
+    if (!report.cnext.error && !report.cnext.processes.length) throw new Error('CNEXT.exe is not running');
+    const prepared = prepareHashedBridge(paths.source, paths.target);
+    report.bridge = preparedReport(prepared, paths.target);
+    report.library = paths.target;
+    if (prepared.locked) throw new Error(`${paths.target} exists, differs from the source and cannot be replaced (${prepared.code}); CATIA may have it loaded. Close CATIA and re-run.`);
+    if (!prepared.ok) throw new Error(`Preparing ${paths.target} failed: ${prepared.message}`);
+    if (report.bridge.lock.inUse) report.notes.push(`${paths.target} is already open in another process (CATIA has C5D_Bridge loaded from an earlier run?); restart CATIA for a clean run.`);
+    if (!risky) {
+        const preparedB = prepareHashedBridge(paths.source, copyB);
+        report.bridgeB = preparedReport(preparedB, copyB);
+        report.libraryB = copyB;
+        if (preparedB.locked) throw new Error(`${copyB} exists, differs from the source and cannot be replaced (${preparedB.code}); restart CATIA and re-run.`);
+        if (!preparedB.ok) throw new Error(`Preparing ${copyB} failed: ${preparedB.message}`);
+        if (report.bridgeB.lock.inUse) report.notes.push(`${copyB} is already open in another process (loaded by an earlier run?); restart CATIA for a clean run.`);
+    } else {
+        fs.mkdirSync(folder, { recursive: true });
+        fs.writeFileSync(timerLog, '');
+        report.timerLog = timerLog;
+    }
+    report.exe = buildProbe(ROOT);
+    const first = trySnapshot(report, 'before');
+    if (first.error) throw new Error(`module snapshot failed: ${first.error}`);
+    checkCnext(report, first.snapshot);
+    const pids = first.snapshot.cnextPids;
+    report.cnextPids = pids;
+    report.vbscriptBefore = first.snapshot.loaded;
+    if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step.');
+    const steps = materializeSteps(risky ? REMOVE_RISKY_STEPS : REMOVE_STEPS, { timerLog });
+    const { entries, aborted } = await runSequence(report, steps, step => step.library === 'b' ? copyB : paths.target, pids, async step => {
+        if (step.local === 'wait') {
+            await new Promise(resolve => setTimeout(resolve, step.ms));
+            return { run: { local: true, kind: 'wait', ok: true, match: true, durationMs: step.ms }, entry: { ok: true, match: true } };
+        }
+        if (step.local === 'read-timer-log') {
+            const log = readTextOrNull(timerLog);
+            return { run: { local: true, kind: 'read-timer-log', ok: log !== null, match: log !== null, log, durationMs: 0, message: log === null ? `${timerLog} missing` : null },
+                entry: { ok: log !== null, match: log !== null, log } };
+        }
+        throw new Error(`unknown local step ${step.local}`);
+    });
+    for (const entry of entries) {
+        const run = report.runs.find(r => r.step === entry.step);
+        if (run?.actions) Object.assign(entry, { resultType: run.result?.resultType ?? null, typeInfo: run.result?.typeInfo ?? null, isDispatch: run.result?.isDispatch ?? null });
+    }
+    report.bridge.targetAtEnd = fileState(paths.target);
+    report.bridge.lockAtEnd = lockProbe(paths.target);
+    if (report.bridgeB) { report.bridgeB.targetAtEnd = fileState(copyB); report.bridgeB.lockAtEnd = lockProbe(copyB); }
+    for (const b of [report.bridge, report.bridgeB].filter(Boolean)) {
+        if (b.target?.sha256 && b.targetAtEnd.sha256 && b.target.sha256 !== b.targetAtEnd.sha256) report.notes.push(`${b.targetAtEnd.path} changed during the run (CATIA saved the project?).`);
+        if (b.targetAtEnd.exists && b.targetAtEnd.readOnly !== true) report.notes.push(`${b.targetAtEnd.path} is NOT read-only at the end.`);
+    }
+    report.notes.push('CATIA was changed by this run (probe modules in C5D_Bridge, maybe a second C5D_Bridge from copy B or a closed project). '
+        + 'Quit CATIA without saving C5D_Bridge and restart it before any other probe run.');
+    report.summary = { ...sequenceSummary(report, entries),
+        infos: Object.fromEntries(steps.filter(s => s.info).map(s => [s.name, parseInfo(entries.find(e => e.step === s.name)?.result)])),
+        verdict: judgeRemove(first.snapshot.loaded, entries, steps) };
+    if (aborted) process.exitCode = 1;
+}
+
 /** temp/<prefix>-<time>.json; never overwrites an earlier report. */
 function uniqueReportPath(directory, prefix = 'probe-bridge') {
     const base = path.join(directory, `${prefix}-${timestamp()}`);
@@ -999,6 +1973,13 @@ function formatUnloadSummary(report) {
         if (b.targetAtEnd) lines.push(`  at end: ${fileLine(b.targetAtEnd)}${b.targetAtEnd.sha256 === b.target.sha256 ? ' (unchanged)' : ' (CHANGED)'}`);
         if (b.targetAtEnd && b.action) lines.push(`  ${factsLine(b.targetAtEnd)}, ${describeLock(b.lockAtEnd)}`);
     }
+    const bb = report.bridgeB;
+    if (bb) {
+        lines.push(`bridge copy B: ${bb.target?.path ?? bb.before.path} prepared: ${bb.action}${bb.locked ? ` LOCKED (${bb.code})` : ''}, `
+            + `read-only before CATIA: ${yn(bb.target?.readOnly)}, ${describeLock(bb.lock)}${bb.message ? `, ${bb.message}` : ''}`);
+        if (bb.targetAtEnd) lines.push(`  at end: ${fileLine(bb.targetAtEnd)}${bb.targetAtEnd.sha256 === bb.target?.sha256 ? ' (unchanged)' : ' (CHANGED)'}, ${describeLock(bb.lockAtEnd)}`);
+    }
+    if (report.timerLog) lines.push(`timer log: ${report.timerLog}`);
     if (report.error) lines.push(`error: ${report.error}`);
     if (report.cnext) {
         if (report.cnext.error) lines.push(`CNEXT.exe start time: ERROR ${report.cnext.error}`);
@@ -1012,7 +1993,11 @@ function formatUnloadSummary(report) {
             const tail = `catia=${run.catiaAlive === true ? 'alive' : run.catiaAlive === false ? 'GONE' : '?'} vbscript.dll=${yn(report.snapshots['after:' + run.step]?.loaded)}`;
             const r = run.result;
             if (run.skipped) lines.push(`  ${run.step}: SKIPPED (${run.skipped})`);
-            else if (run.local) {
+            else if (run.kind === 'wait') lines.push(`  ${run.step}: waited ${run.durationMs}ms  ${tail}`);
+            else if (run.kind === 'read-timer-log') {
+                lines.push(`  ${run.step}: ${run.log === null ? 'log MISSING' : `${run.log.split(/\r?\n/).filter(Boolean).length} lines`}  ${tail}`);
+                for (const line of (run.log ?? '').split(/\r?\n/).filter(Boolean)) lines.push(`    | ${line}`);
+            } else if (run.local) {
                 const lock = !run.lockProbe ? '-' : run.lockProbe.skipped ? run.lockProbe.skipped
                     : run.lockProbe.writable ? 'writable (not locked)' : `LOCKED (${run.lockProbe.code}: ${run.lockProbe.message})`;
                 lines.push(`  ${run.step}: ok=${yn(run.ok)} readOnly ${yn(run.before?.readOnly)} -> ${yn(run.after?.readOnly)}  lock probe: ${lock}  ${run.durationMs}ms  ${tail}`);
@@ -1022,6 +2007,14 @@ function formatUnloadSummary(report) {
             else {
                 lines.push(`  ${run.step}: ok=${yn(r.ok)} match=${yn(run.match)} result=${JSON.stringify(r.result)} elapsed=${r.elapsedMs}ms (process ${run.durationMs}ms)  ${tail}`);
                 lines.push(`    ${run.call}  hresult=${r.hresult}${r.message ? ' message=' + r.message : ''}${run.argumentsIntact === false ? '  ARGUMENTS NOT INTACT' : ''}`);
+                if (run.actions) {
+                    lines.push(`    returned ${r.resultType}${r.typeInfo ? ' ' + r.typeInfo : ''}${r.isDispatch !== undefined && r.isDispatch !== null ? ` isDispatch=${yn(r.isDispatch)}` : ''}`
+                        + `${r.arrayLength !== undefined ? ` array[${r.arrayLength}] ${(r.elements ?? []).join(', ')}` : ''}`);
+                    for (const a of run.actions) {
+                        lines.push(`      [${a.action}] ${a.op} -> ${a.skipped ? 'not run' : a.ok ? `ok ${JSON.stringify(a.result)} (${a.resultType}${a.typeInfo ? ' ' + a.typeInfo : ''})`
+                            : `FAILED ${a.hresult} ${(a.message ?? '').split(/\r?\n/)[0]}${a.exception ? ` [${a.exception}]` : ''}`} ${a.elapsedMs}ms`);
+                    }
+                }
             }
         }
     }
@@ -1063,7 +2056,8 @@ function formatReadonlyCheck(report) {
 }
 
 const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup',
-    'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check' };
+    'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check',
+    'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky' };
 /** Runner, summary formatter and report prefix of a parsed mode (not 'help'). */
 function dispatch(options) {
     switch (options.mode) {
@@ -1071,6 +2065,7 @@ function dispatch(options) {
         case 'unload-experiment': case 'unload-cleanup': return { run: runUnload, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'readonly-fresh': return { run: runReadonlyFresh, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'readonly-fresh-check': return { run: runReadonlyFreshCheck, format: formatReadonlyCheck, prefix: REPORT_PREFIXES[options.mode] };
+        case 'remove-experiment': case 'remove-experiment-risky': return { run: runRemove, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'run': return { run: runBridge, format: formatSummary, prefix: 'probe-bridge' };
         default: throw new Error(`no runner for mode ${options.mode}`);
     }
@@ -1098,4 +2093,6 @@ module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codep
     judgeUnload, describeStart, formatUnloadSummary, STEPS, STEP_NAMES, UNLOAD_STEPS, CLEANUP_STEPS, PROBE_SOURCE, UNLOAD_SOURCE, READONLY_SOURCE, ECHO_ARGUMENT,
     BRIDGE_MODULE, PROBE_MODULE, UNLOAD_MODULE, READONLY_MODULE, UNLOAD_RESULT,
     hashedBridgeName, hashedBridgePath, lockProbe, prepareHashedBridge, judgeReadonlyFresh, runReadonlyFresh, runReadonlyFreshCheck, formatReadonlyCheck,
-    dispatch, READONLY_FRESH_STEPS, READONLY_FRESH_SOURCE, READONLY_FRESH_RESULT };
+    dispatch, READONLY_FRESH_STEPS, READONLY_FRESH_SOURCE, READONLY_FRESH_RESULT,
+    REMOVE_STEPS, REMOVE_RISKY_STEPS, REMOVE_SOURCE, B_SOURCE, TIMER_SOURCE, REMOVE_MODULE, B_MODULE, TIMER_MODULE, COPY_B_FILE, TIMER_LOG_FILE,
+    TIMER_LOG_TOKEN, materializeSteps, skipReason, parseInfo, describeInfo, judgeRemove, runRemove, runSequence };
