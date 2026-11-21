@@ -32,7 +32,7 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 - **Pull / Push の前に、CATIA の VBA エディタ（`Alt+F11`）が起動していること**
 - VSCode 1.85 以降
 
-CATIA とは、Windows 標準の `cscript.exe`（32 ビット版）を通じて COM で通信します。
+CATIA とは、同梱のヘルパー `catia-run.exe` を通じて COM で通信します。このヘルパーは Windows 10/11 に標準搭載の .NET Framework 4.x で動作します。
 
 ---
 

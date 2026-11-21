@@ -32,7 +32,7 @@ Cat5Dev 是一款用于在 VSCode 中开发 CATIA V5 VBA 宏的扩展。
 - **执行 Pull / Push 前，已启动 CATIA 的 VBA 编辑器（`Alt+F11`）**
 - VSCode 1.85 或更高版本
 
-本扩展通过 Windows 自带的 `cscript.exe`（32 位版）以 COM 方式与 CATIA 通信。
+本扩展通过随附的辅助程序 `catia-run.exe` 以 COM 方式与 CATIA 通信。该程序运行于 Windows 10/11 自带的 .NET Framework 4.x。
 
 ---
 

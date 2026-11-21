@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { fixture, result } = require('./helpers');
 const { validateCatiaResult, catiaSucceeded, normalizeModuleText } = require('../out/catiaTypes');
-const { createCatiaRequest, runCatiaRequest, CatiaExecutionError } = require('../out/catiaExecution');
+const { createCatiaRequest, runCatiaRequest, CatiaExecutionError, CATIA_SCRIPT_NAME } = require('../out/catiaExecution');
 const { SyncOperationManager } = require('../out/syncOperation');
 function setup(t) {
     const root = fixture(t);
@@ -55,6 +55,29 @@ test('missing, malformed or unrelated results quarantine lock and temporary file
 test('known pre-dispatch failure releases lock without result', async t => {
     const { context, request } = setup(t);
     await assert.rejects(runCatiaRequest(context, request, { execute: async () => ({ error: Object.assign(Error('no CATIA'), { code: 10 }), stdout: '', stderr: '' }) }), e => !e.uncertain);
+    context.close(); assert.ok(!fs.existsSync(context.tempDir));
+});
+test('executor receives the request directory and script name; no runner script is written', async t => {
+    const { context, request } = setup(t);
+    let args;
+    await runCatiaRequest(context, request, { execute: async (...received) => {
+        args = received;
+        fs.writeFileSync(path.join(request.directory, 'result.json'), JSON.stringify(result(request)));
+        return { stdout: '', stderr: '' };
+    } });
+    assert.deepEqual(args.slice(0, 2), [request.directory, CATIA_SCRIPT_NAME]);
+    assert.ok(fs.existsSync(path.join(request.directory, CATIA_SCRIPT_NAME)));
+    assert.ok(!fs.readdirSync(request.directory).some(name => name.endsWith('.vbs')));
+    context.close();
+});
+test('missing bridge executable is a known pre-dispatch failure', async t => {
+    const { root, context, request } = setup(t);
+    await assert.rejects(runCatiaRequest(context, request, { bridgePath: path.join(root, 'missing', 'catia-run.exe') }), e => e instanceof CatiaExecutionError && !e.uncertain);
+    context.close(); assert.ok(!fs.existsSync(context.tempDir));
+});
+test('without bridge path or executor nothing is dispatched', async t => {
+    const { context, request } = setup(t);
+    await assert.rejects(runCatiaRequest(context, request), e => e instanceof CatiaExecutionError && !e.uncertain);
     context.close(); assert.ok(!fs.existsSync(context.tempDir));
 });
 test('export manifest requires all files', async t => {

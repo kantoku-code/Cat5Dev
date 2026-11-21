@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { fixture } = require('./helpers');
-const { buildCatiaScript, buildRunnerScript, vbString } = require('../out/catiaScripts');
+const { buildCatiaScript, vbString } = require('../out/catiaScripts');
 const { validateCatiaResult, catiaSucceeded } = require('../out/catiaTypes');
 const cscript = path.join(process.env.SystemRoot || 'C:\\Windows', 'SysWOW64', 'cscript.exe');
 
@@ -111,13 +111,12 @@ function run(t, kind, { failure = '', source = 'old', modules = [], deletions = 
     const result = validateCatiaResult(fs.readFileSync(path.join(directory, 'result.json'), 'utf8'), request);
     return { result, calls, request };
 }
-test('generated source and runner are ASCII and never clean C5D_ prefixes', () => {
+test('generated source is ASCII and never cleans C5D_ prefixes', () => {
     const req = { operationId: 'op', stepId: 'step', kind: 'push', targetProject: '日本語"\\\n项目', encoding: 'gbk', directory: 'C:\\日本語', modules: [{ name: 'C5D_UserModule', type: 1, file: 'm0.txt' }] };
     const script = buildCatiaScript(req);
-    assert.ok(/^[\x00-\x7f]*$/.test(script)); assert.ok(/^[\x00-\x7f]*$/.test(buildRunnerScript(req)));
+    assert.ok(/^[\x00-\x7f]*$/.test(script));
     assert.match(script, /ApplyModule "C5D_UserModule"/);
     assert.doesNotMatch(script, /CLEANUP INJECTED|Left\(.*C5D_|Polling timeout/);
-    assert.doesNotMatch(buildRunnerScript(req), /DeleteFile|Sleep/);
 });
 test('real VBScript list and export preserve C5D_ modules including empty code', { skip: !fs.existsSync(cscript) }, t => {
     assert.deepEqual(run(t, 'list').result.projects, ['Review']);
@@ -156,5 +155,23 @@ test('real VBScript errors abort later steps of the failed module', { skip: !fs.
 test('reference templates are generated from the runtime implementation', () => {
     const request = { operationId: '{{OPERATION_ID}}', stepId: '{{STEP_ID}}', kind: 'push', targetProject: '{{TARGET_PROJECT}}', encoding: '{{ENCODING}}', directory: '{{TEMP_DIR}}', modules: [{ name: '{{MODULE_NAME}}', type: 1, file: 'module.txt' }], deletions: [] };
     assert.equal(fs.readFileSync(path.join(__dirname, '../scripts/c5d_push.catvbs.bas_utf'), 'utf8'), buildCatiaScript(request));
-    assert.equal(fs.readFileSync(path.join(__dirname, '../scripts/c5d_run_push.vbs.bas_utf'), 'utf8'), buildRunnerScript(request));
+});
+test('B0 probe scripts compile and CATIA-independent sections run under VBScript', { skip: !fs.existsSync(cscript) }, t => {
+    const { buildProbeScript, SECTIONS } = require('../scripts/probe-catscript');
+    const directory = fixture(t), file = path.join(directory, 'probe.vbs');
+    // Compile only: top level has no calls, so APC/VBE sections are never executed.
+    for (const names of [undefined, ...Object.keys(SECTIONS).map(name => [name])]) {
+        fs.writeFileSync(file, buildProbeScript(directory, names));
+        execFileSync(cscript, ['//nologo', file], { windowsHide: true, timeout: 10000 });
+    }
+    fs.writeFileSync(file, buildProbeScript(directory, ['stream', 'objfunc', 'byref', 'builtins', 'err']) + 'CATMain\r\n');
+    execFileSync(cscript, ['//nologo', file], { windowsHide: true, timeout: 10000 });
+    const steps = Object.fromEntries(fs.readFileSync(path.join(directory, 'probe-result.txt'), 'utf8').replace(/^﻿/, '').trim().split('\r\n')
+        .map(line => line.split('\t')).map(([name, err, detail]) => [name, { err: Number(err), detail }]));
+    for (const [name, step] of Object.entries(steps)) if (name !== 'err.createobject') assert.equal(step.err, 0, name);
+    assert.equal(steps['err.createobject'].err, 429);
+    assert.equal(steps['stream.roundtrip'].detail, 'equal');
+    assert.equal(steps['byref.global'].detail, 'a,b'); assert.equal(steps['byref.function'].detail, 'True/True');
+    assert.equal(steps['builtin.chrw.negative'].detail, '-24691'); assert.equal(steps['builtin.selectcase'].detail, 'backslash');
+    assert.equal(steps['objfunc.object'].detail, 'True'); assert.equal(steps['func.ifnot'].detail, 'True');
 });

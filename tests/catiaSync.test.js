@@ -42,8 +42,8 @@ function setup(t, options = {}) {
     const steps = [], applies = [], deletes = [];
     const manager = new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root });
     const output = { appendLine: () => {}, show: () => {} };
-    const execute = async script => {
-        const directory = path.dirname(script), source = fs.readFileSync(path.join(directory, 'operation.catvbs'), 'utf8');
+    const execute = async (directory, scriptName) => {
+        const source = fs.readFileSync(path.join(directory, scriptName), 'utf8');
         const get = name => new RegExp(`${name} = "([^"]*)"`).exec(source)[1];
         const request = { operationId: get('gOperationId'), stepId: get('gStepId'), kind: get('gKind'), targetProject: get('gTargetProject'), directory };
         steps.push(request.kind);

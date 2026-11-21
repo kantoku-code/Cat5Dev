@@ -25,29 +25,6 @@ function checked(statement: string, phase: string, target = 'gTargetProject', ex
     End If`;
 }
 const crlf = (source: string): string => source.trimStart().replace(/[ \t]+$/gm, '').replace(/\r?\n/g, '\r\n');
-export function buildRunnerScript(request: CatiaRequest): string {
-    return crlf(`
-Option Explicit
-Dim app, service, args
-On Error Resume Next
-Err.Clear
-Set app = GetObject(, "CATIA.Application")
-If Err.Number <> 0 Then WScript.Quit 10
-If app Is Nothing Then WScript.Quit 10
-Err.Clear
-Set service = app.SystemService
-If Err.Number <> 0 Then WScript.Quit 11
-If service Is Nothing Then WScript.Quit 11
-args = Array()
-Err.Clear
-Call service.ExecuteScript(${vbString(request.directory)}, 1, "operation.catvbs", "CATMain", args)
-If Err.Number <> 0 Then
-    WScript.StdErr.WriteLine CStr(Err.Number) & ": " & Err.Description
-    WScript.Quit 12
-End If
-WScript.Quit 0
-`);
-}
 export function buildCatiaScript(request: CatiaRequest): string {
     for (const item of request.modules ?? []) {
         if (!safeFileName(item.name) || !safeFileName(item.file) || ![1, 2, 3].includes(item.type)) { throw new Error('Invalid transfer item'); }

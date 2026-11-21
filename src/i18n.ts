@@ -163,8 +163,6 @@ export const messages = {
         'log.push.fileCount': '[Push] 転送ファイル数: {0}',
         'log.push.catscriptGenerated': '[Push] CATScript生成: {0}',
         'log.push.vbsGenerated': '[Push] VBS生成: {0}',
-        'log.push.cscriptStart': '[Push] cscript実行開始...',
-        'log.push.cscriptEnd': '[Push] cscript終了 error={0} stdout="{1}" stderr="{2}"',
     },
     en: {
         'sync.busy': 'Another CATIA operation is running, or its completion is unconfirmed. Try again after it finishes.',
@@ -288,8 +286,6 @@ export const messages = {
         'log.push.fileCount': '[Push] Transfer files count: {0}',
         'log.push.catscriptGenerated': '[Push] CATScript generated: {0}',
         'log.push.vbsGenerated': '[Push] VBS generated: {0}',
-        'log.push.cscriptStart': '[Push] Starting cscript execution...',
-        'log.push.cscriptEnd': '[Push] cscript finished error={0} stdout="{1}" stderr="{2}"',
     },
     zh: {
         'sync.busy': '另一个CATIA操作正在运行，或无法确认其已结束。请在操作结束后重试。',
@@ -413,8 +409,6 @@ export const messages = {
         'log.push.fileCount': '[Push] 传输文件数: {0}',
         'log.push.catscriptGenerated': '[Push] 生成 CATScript: {0}',
         'log.push.vbsGenerated': '[Push] 生成 VBS: {0}',
-        'log.push.cscriptStart': '[Push] cscript 开始运行...',
-        'log.push.cscriptEnd': '[Push] cscript 结束 error={0} stdout="{1}" stderr="{2}"',
     }
 };
 

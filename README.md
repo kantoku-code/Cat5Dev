@@ -32,7 +32,7 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 - **The CATIA VBA editor (`Alt+F11`) open before you Pull / Push**
 - VSCode 1.85 or later
 
-Cat5Dev communicates with CATIA over COM through the Windows built-in `cscript.exe` (32-bit).
+Cat5Dev communicates with CATIA over COM through its bundled helper `catia-run.exe`, which runs on .NET Framework 4.x (preinstalled on Windows 10/11).
 
 ---
 

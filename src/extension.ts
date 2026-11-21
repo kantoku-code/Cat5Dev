@@ -21,7 +21,8 @@ export function activate(context: vscode.ExtensionContext) {
     const vbaServer = new VbaServer(context, outputChannel);
     context.subscriptions.push(vbaServer);
     vbaServer.start();
-    const sync = new CatiaSync(vbaServer, outputChannel);
+    // bin/catia-run.exe は npm run compile:bridge で生成し、vsix に同梱する
+    const sync = new CatiaSync(vbaServer, outputChannel, undefined, { bridgePath: path.join(context.extensionPath, 'bin', 'catia-run.exe') });
 
     let pullCmd = vscode.commands.registerCommand('cat5dev.pullFromCatia', () => {
         return sync.pull();

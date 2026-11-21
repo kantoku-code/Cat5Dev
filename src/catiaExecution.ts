@@ -4,11 +4,14 @@ import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { OperationContext } from './syncOperation';
 import { CatiaRequest, CatiaResult, CatiaStep, catiaSucceeded, validateCatiaResult } from './catiaTypes';
-import { buildCatiaScript, buildRunnerScript } from './catiaScripts';
+import { buildCatiaScript } from './catiaScripts';
 
 export interface ExecutionOutput { error?: (Error & { code?: string | number | null }) | null; stdout: string; stderr: string }
-export type CscriptExecutor = (script: string, timeoutMs: number) => Promise<ExecutionOutput>;
-export interface ExecutionOptions { execute?: CscriptExecutor; timeoutMs?: number; log?: (text: string) => void }
+/** Script that CATIA runs from the request directory (switch here to operation.CATScript). */
+export const CATIA_SCRIPT_NAME = 'operation.catvbs';
+export type CatiaExecutor = (directory: string, scriptName: string, timeoutMs: number) => Promise<ExecutionOutput>;
+/** bridgePath: bin/catia-run.exe, used unless a custom executor is given. */
+export interface ExecutionOptions { execute?: CatiaExecutor; bridgePath?: string; timeoutMs?: number; log?: (text: string) => void }
 export class CatiaExecutionError extends Error {
     constructor(message: string, public readonly result?: CatiaResult, public readonly uncertain = false) { super(message); }
 }
@@ -18,12 +21,14 @@ export function createCatiaRequest(context: OperationContext, kind: CatiaStep, t
     fs.mkdirSync(directory);
     return { operationId: context.id, stepId, kind, targetProject, encoding, directory };
 }
-const executeCscript: CscriptExecutor = (script, timeoutMs) => new Promise(resolve => {
-    const root = process.env.SystemRoot ?? 'C:\\Windows';
-    execFile(path.join(root, 'SysWOW64', 'cscript.exe'), ['//nologo', script], {
-        windowsHide: true, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8'
-    }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
-});
+/** catia-run.exe calls SystemService.ExecuteScript. Exit 10/11: CATIA/SystemService unavailable, 12: ExecuteScript failed. */
+export function bridgeExecutor(bridgePath: string): CatiaExecutor {
+    return (directory, scriptName, timeoutMs) => new Promise(resolve => {
+        execFile(bridgePath, [directory, scriptName], {
+            windowsHide: true, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8'
+        }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+    });
+}
 function readResult(resultPath: string, request: CatiaRequest): CatiaResult {
     const stat = fs.lstatSync(resultPath);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024) { throw new Error('Invalid result file'); }
@@ -48,10 +53,10 @@ export async function runCatiaRequest(context: OperationContext, request: CatiaR
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || request.operationId !== context.id) {
         throw new Error('Request does not belong to this operation');
     }
-    const scriptPath = path.join(request.directory, 'run.vbs');
+    const execute = options.execute ?? (options.bridgePath ? bridgeExecutor(options.bridgePath) : undefined);
+    if (!execute) { throw new CatiaExecutionError('CATIA bridge path is not configured'); }
     const resultPath = path.join(request.directory, 'result.json');
-    fs.writeFileSync(path.join(request.directory, 'operation.catvbs'), buildCatiaScript(request), 'utf8');
-    fs.writeFileSync(scriptPath, buildRunnerScript(request), 'utf8');
+    fs.writeFileSync(path.join(request.directory, CATIA_SCRIPT_NAME), buildCatiaScript(request), 'utf8');
     const timeoutMs = options.timeoutMs ?? 60000;
     const deadline = Date.now() + timeoutMs;
     context.markExternalRunning(resultPath, request);
@@ -59,7 +64,7 @@ export async function runCatiaRequest(context: OperationContext, request: CatiaR
     let output: ExecutionOutput;
     try {
         output = await Promise.race([
-            (options.execute ?? executeCscript)(scriptPath, timeoutMs),
+            execute(request.directory, CATIA_SCRIPT_NAME, timeoutMs),
             new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('CATIA execution timeout')), timeoutMs); })
         ]);
     } catch (e) {

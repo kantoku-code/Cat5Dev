@@ -194,7 +194,8 @@
     },
     "scripts": {
         "compile:go": "cd tools/vbafmt && go build -ldflags=\"-s -w\" -o ../../bin/vbafmt.exe . && cd ../vba-ls && go build -ldflags=\"-s -w\" -o ../../bin/vba-ls.exe .",
-        "vscode:prepublish": "npm run compile:go && npm run compile",
+        "compile:bridge": "node scripts/build-bridge.js",
+        "vscode:prepublish": "npm run compile:go && npm run compile:bridge && npm run compile",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "test:unit": "npm run compile && node --test tests/*.test.js",
