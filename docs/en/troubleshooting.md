@@ -42,6 +42,17 @@ This is the helper project that Cat5Dev loads temporarily while an operation is 
 
 It can remain after an operation (for example after a timeout); it is removed automatically at the next project selection, Pull or Push, and also disappears when CATIA exits.
 
+## Files remain or keep increasing in `%LOCALAPPDATA%\Cat5Dev\bridge\`
+
+This is normal. Each time Cat5Dev talks to CATIA, it creates a file named `C5D_Bridge-<8 characters>-<number>-<date and time>.catvba` in this folder and has CATIA load it. CATIA keeps this file in use until CATIA exits, even after the operation ends, so the files cannot be deleted while CATIA is running and a new one is added at each operation.
+
+- After CATIA exits, they are deleted automatically at the next project selection, Pull or Push.
+- Most of them are hard links to the original file, so they use almost no disk space (File Explorer shows each of them as about 155 KB).
+- To delete them right away, exit CATIA and delete them yourself. You can even delete the whole folder; the files that are needed are created again at the next operation. While CATIA is running, files in use cannot be deleted.
+- If they are not deleted even after CATIA exits, check the lines starting with `[bridge]` in "CATIA VBA Sync" in the Output panel. Files recorded as `kept (locked)` were kept because they were still in use.
+
+For details, see [Files in the `bridge` folder](sync.md#files-in-the-bridge-folder).
+
 ## "Another CATIA operation is running…" or "CATIA completion could not be confirmed" appears
 
 Only one operation can talk to CATIA at a time. Check that you are not running Pull / Push in another VSCode window.

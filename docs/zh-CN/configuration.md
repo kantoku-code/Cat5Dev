@@ -181,5 +181,5 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 | 位置 | 内容 |
 |------|------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | 同步锁的信息（参见 [同步锁](sync.md#防止并发执行与同步锁)） |
-| `%LOCALAPPDATA%\Cat5Dev\bridge\` | 临时加载到 CATIA 中的中介项目 `C5D_Bridge` 的文件。每次处理所用的文件会在 CATIA 退出后的下一次处理时删除（参见 [与 CATIA 通信的机制](sync.md#与-catia-通信的机制)） |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | 临时加载到 CATIA 中的中介项目 `C5D_Bridge` 的文件（随附文件的只读副本，以及每次处理时创建的硬链接）。每次处理所用的文件会在 CATIA 退出后的下一次处理时自动删除。只要 CATIA 已退出，也可以手动删除（参见 [`bridge` 文件夹中的文件](sync.md#bridge-文件夹中的文件)） |
 | `%TEMP%\cat5dev-…\` | 与 CATIA 交换数据时使用的临时文件。通常在处理结束时删除 |

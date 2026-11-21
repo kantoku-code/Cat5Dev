@@ -29,12 +29,13 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 
 - Windows（64 ビット）
 - CATIA V5 が起動しており、同期したい VBA プロジェクトが開かれていること
-- **Pull / Push の前に、CATIA の VBA エディタ（`Alt+F11`）が起動していること**
+- **Pull / Push の前に、CATIA の VBA エディタ（`Alt+F11`）を一度開いていること**（その後は閉じてもかまいません）
 - VSCode 1.85 以降
 
 CATIA とは、同梱のヘルパー `catia-run.exe` を通じて COM で通信します。このヘルパーは Windows 10/11 に標準搭載の .NET Framework 4.x で動作します。
 
-Pull / Push のときは、CATIA の中に仲介用の VBA プロジェクト `C5D_Bridge` を一時的に読み込み、終わると外します。処理中の短い間だけ VBA エディタに `C5D_Bridge` が表示されることがありますが、保存はされません。VBScript は使いません（[仕組み](sync.md#catia-とのやり取りの仕組み)）。
+プロジェクト選択や Pull / Push のときは、CATIA の中に仲介用の VBA プロジェクト `C5D_Bridge` を一時的に読み込み、終わると外します。処理中の短い間だけ VBA エディタに `C5D_Bridge` が表示されることがありますが、保存はされません。VBScript は使いません（[仕組み](sync.md#catia-とのやり取りの仕組み)）。
+`C5D_Bridge` のファイルは `%LOCALAPPDATA%\Cat5Dev\bridge\` に置き、処理のたびにそこへリンク（ディスクはほとんど使いません）を作ります。リンクは CATIA の起動中は使用中のため残りますが、CATIA を終了した後の次の処理のときに自動で削除されます（[`bridge` フォルダのファイル](sync.md#bridge-フォルダのファイル)）。
 
 ---
 
@@ -70,7 +71,7 @@ Cat5Dev は `.vsix` ファイルで配布しています。
 2. コマンドパレット（`Ctrl+Shift+P`）から **`CATIA: Initialize Project (cat5dev.toml)`** を実行します。\
    設定ファイル `cat5dev.toml` と `.gitignore` が作成されます。
 3. CATIA V5 を起動し、同期したい VBA プロジェクトを開きます。\
-   **VBA エディタ（`Alt+F11`）も起動しておいてください。** VBA エディタが起動していないと Pull / Push はできません。
+   **VBA エディタ（`Alt+F11`）も一度開いてください。** VBA エディタを一度も開いていないと Pull / Push はできません（その後は閉じてもかまいません）。
 4. アクティビティバーの **CATIA V5 VBA** アイコンを押してパネルを開きます。
 5. ⚙️ ボタンを押し、対象の VBA プロジェクトを選びます。
 6. ☁️↓ ボタン（Pull）を押すと、モジュールが `modules/` フォルダに取り込まれます。
@@ -98,7 +99,7 @@ VSCode から Push した後は、CATIA の VBA エディタで保存してく�
 
 | ページ | 内容 |
 |--------|------|
-| [CATIA との同期](sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、仕組み（仲介プロジェクト C5D_Bridge）、同期ロックと復旧、文字コード |
+| [CATIA との同期](sync.md) | Pull / Push の動作と確認ダイアログ、モジュールツリー、仕組み（仲介プロジェクト C5D_Bridge と `bridge` フォルダ）、同期ロックと復旧、文字コード |
 | [IntelliSense](intellisense.md) | 補完・ホバー・定義へ移動・引数のヒント、型ヒント `'@As`、CATIA API の型情報 |
 | [Lint とフォーマッタ](lint-format.md) | Lint のルール一覧、フォーマッタの処理内容とオプション |
 | [設定リファレンス](configuration.md) | `cat5dev.toml` の全項目、表示言語、VSCode の設定、作成されるファイル |

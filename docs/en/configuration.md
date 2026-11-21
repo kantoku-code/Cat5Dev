@@ -181,5 +181,5 @@ Restart VSCode after changing environment variables.
 | Location | Contents |
 |----------|----------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | Sync lock information (see [Sync lock](sync.md#preventing-concurrent-operations-and-the-sync-lock)) |
-| `%LOCALAPPDATA%\Cat5Dev\bridge\` | Files of `C5D_Bridge`, the helper project loaded into CATIA temporarily. The per-operation files are deleted at the next operation after CATIA exits (see [How Cat5Dev talks to CATIA](sync.md#how-cat5dev-talks-to-catia)) |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | Files of `C5D_Bridge`, the helper project loaded into CATIA temporarily (a read-only copy of the bundled file and a hard link made for each operation). The per-operation files are deleted automatically at the next operation after CATIA exits. You may delete them yourself while CATIA is not running (see [Files in the `bridge` folder](sync.md#files-in-the-bridge-folder)) |
 | `%TEMP%\cat5dev-…\` | Temporary files used to exchange data with CATIA. Normally deleted when the operation ends |

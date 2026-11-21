@@ -148,9 +148,25 @@ For project selection, Pull and Push, the bundled helper `catia-run.exe` connect
 - `C5D_Bridge` can see only the projects loaded in the VBA editor, so **open the VBA editor (`Alt+F11`) once before you Pull / Push**.
 - Loading and removing `C5D_Bridge` adds about one second to each operation.
 
-### Temporary files
-- Cat5Dev creates the helper project file (`C5D_Bridge-<8 characters>.catvba`) and a file for each operation (`C5D_Bridge-<8 characters>-<number>-<time>.catvba`) in `%LOCALAPPDATA%\Cat5Dev\bridge\`.
-- CATIA keeps the per-operation files in use until it exits, so they remain until then. After CATIA exits, they are deleted automatically at the next project selection, Pull or Push.
+### Files in the `bridge` folder
+The `C5D_Bridge` files that CATIA loads are kept in `%LOCALAPPDATA%\Cat5Dev\bridge\`.
+
+#### What the folder contains
+| File | Contents |
+|------|----------|
+| `C5D_Bridge-<8 characters>.catvba` | A read-only copy of the `C5D_Bridge` bundled with the extension (about 155 KB), the original file. `<8 characters>` changes with each version of `C5D_Bridge`. The same file is reused as long as the version stays the same |
+| `C5D_Bridge-<8 characters>-<CATIA process ID>-<date and time>.catvba` | Created each time Cat5Dev talks to CATIA (twice for Push: once for the change check and once for the write) and loaded into CATIA. It is a hard link to the original file (a read-only copy if a hard link cannot be created) |
+
+- A hard link shares its contents with the original file, so it uses almost no extra disk space. File Explorer shows each of them as about 155 KB, but together they use the space of one file. A copy uses about 155 KB each.
+
+#### When the files are deleted
+- When an operation ends, `C5D_Bridge` is removed from CATIA (it also disappears from the VBA editor). However, CATIA keeps the file in use until CATIA exits, so it cannot be deleted right away. While CATIA is running, a new file is therefore added at each operation.
+- After CATIA exits, Cat5Dev automatically deletes the files that are no longer in use when the next project selection, Pull or Push starts.
+- When an extension update changes the version of `C5D_Bridge`, the original file of the old version is deleted at the same time. The original file of the current version is kept.
+
+#### Can I delete them myself?
+- Yes, as long as CATIA is not running (you can even delete the whole folder). The original file is created again at the next operation.
+- While CATIA is running, files in use cannot be deleted. There is no need to force it.
 
 ---
 

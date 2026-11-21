@@ -29,12 +29,13 @@ Cat5Dev 是一款用于在 VSCode 中开发 CATIA V5 VBA 宏的扩展。
 
 - Windows（64 位）
 - CATIA V5 已启动，并已打开要同步的 VBA 项目
-- **执行 Pull / Push 前，已启动 CATIA 的 VBA 编辑器（`Alt+F11`）**
+- **执行 Pull / Push 前，已至少打开过一次 CATIA 的 VBA 编辑器（`Alt+F11`）**（之后关闭也可以）
 - VSCode 1.85 或更高版本
 
 本扩展通过随附的辅助程序 `catia-run.exe` 以 COM 方式与 CATIA 通信。该程序运行于 Windows 10/11 自带的 .NET Framework 4.x。
 
-执行 Pull / Push 时，会在 CATIA 中临时加载中介 VBA 项目 `C5D_Bridge`，操作结束后将其移除。操作进行中的短暂时间内，VBA 编辑器中可能会显示 `C5D_Bridge`，但它不会被保存。本扩展不使用 VBScript（[工作原理](sync.md#与-catia-通信的机制)）。
+选择项目或执行 Pull / Push 时，会在 CATIA 中临时加载中介 VBA 项目 `C5D_Bridge`，操作结束后将其移除。操作进行中的短暂时间内，VBA 编辑器中可能会显示 `C5D_Bridge`，但它不会被保存。本扩展不使用 VBScript（[工作原理](sync.md#与-catia-通信的机制)）。
+`C5D_Bridge` 的文件存放在 `%LOCALAPPDATA%\Cat5Dev\bridge\` 中，每次处理时会在其中创建指向它的链接（几乎不占用磁盘空间）。CATIA 运行期间这些链接被占用而会保留，但会在 CATIA 退出后的下一次处理时自动删除（[`bridge` 文件夹中的文件](sync.md#bridge-文件夹中的文件)）。
 
 ---
 
@@ -70,7 +71,7 @@ Cat5Dev 以 `.vsix` 文件形式分发。
 2. 在命令面板（`Ctrl+Shift+P`）中运行 **`CATIA: Initialize Project (cat5dev.toml)`**。\
    这会创建配置文件 `cat5dev.toml` 和 `.gitignore`。
 3. 启动 CATIA V5，并打开要同步的 VBA 项目。\
-   **同时请启动 VBA 编辑器（`Alt+F11`）。** 未启动 VBA 编辑器时无法执行 Pull / Push。
+   **同时请打开一次 VBA 编辑器（`Alt+F11`）。** 从未打开过 VBA 编辑器时无法执行 Pull / Push（之后关闭也可以）。
 4. 单击活动栏中的 **CATIA V5 VBA** 图标打开面板。
 5. 单击 ⚙️ 按钮，选择目标 VBA 项目。
 6. 单击 ☁️↓ 按钮（Pull），模块会被导入到 `modules/` 文件夹。
@@ -98,7 +99,7 @@ Push 只会写入 CATIA 内存中的 VBA 项目。**如果不保存就关闭 CAT
 
 | 页面 | 内容 |
 |------|------|
-| [与 CATIA 同步](sync.md) | Pull / Push 的行为与确认对话框、模块树、与 CATIA 通信的机制（中介项目 C5D_Bridge）、同步锁及其恢复、字符编码 |
+| [与 CATIA 同步](sync.md) | Pull / Push 的行为与确认对话框、模块树、与 CATIA 通信的机制（中介项目 C5D_Bridge 与 `bridge` 文件夹）、同步锁及其恢复、字符编码 |
 | [IntelliSense](intellisense.md) | 补全、悬停、转到定义、参数提示，类型提示 `'@As`，CATIA API 的类型信息 |
 | [Lint 与格式化程序](lint-format.md) | Lint 规则列表、格式化程序的处理内容与选项 |
 | [配置参考](configuration.md) | `cat5dev.toml` 的全部选项、显示语言、VSCode 设置、生成的文件 |

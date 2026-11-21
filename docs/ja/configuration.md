@@ -181,5 +181,5 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 | 場所 | 内容 |
 |------|------|
 | `%LOCALAPPDATA%\Cat5Dev\operation-lock\` | 同期ロックの情報（[同期ロック](sync.md#同時実行の防止と同期ロック) を参照） |
-| `%LOCALAPPDATA%\Cat5Dev\bridge\` | CATIA に一時的に読み込む仲介プロジェクト `C5D_Bridge` のファイル。処理ごとのファイルは、CATIA の終了後、次の処理のときに削除されます（[仕組み](sync.md#catia-とのやり取りの仕組み) を参照） |
+| `%LOCALAPPDATA%\Cat5Dev\bridge\` | CATIA に一時的に読み込む仲介プロジェクト `C5D_Bridge` のファイル（同梱ファイルの読み取り専用コピーと、処理ごとに作るハードリンク）。処理ごとのファイルは、CATIA の終了後、次の処理のときに自動で削除されます。CATIA を終了していれば手動で削除してもかまいません（[`bridge` フォルダのファイル](sync.md#bridge-フォルダのファイル) を参照） |
 | `%TEMP%\cat5dev-…\` | CATIA とのやり取りに使う一時ファイル。通常は処理の終了時に削除されます |

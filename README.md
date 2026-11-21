@@ -29,12 +29,13 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 
 - Windows (64-bit)
 - CATIA V5 running, with the VBA project you want to sync open
-- **The CATIA VBA editor (`Alt+F11`) open before you Pull / Push**
+- **The CATIA VBA editor (`Alt+F11`) opened at least once before you Pull / Push** (you may close it afterwards)
 - VSCode 1.85 or later
 
 Cat5Dev communicates with CATIA over COM through its bundled helper `catia-run.exe`, which runs on .NET Framework 4.x (preinstalled on Windows 10/11).
 
-For Pull / Push, Cat5Dev temporarily loads a helper VBA project, `C5D_Bridge`, into CATIA and removes it when the operation ends. You may briefly see `C5D_Bridge` in the VBA editor while an operation is running; it is never saved. VBScript is not used ([how it works](docs/en/sync.md#how-cat5dev-talks-to-catia)).
+For project selection and Pull / Push, Cat5Dev temporarily loads a helper VBA project, `C5D_Bridge`, into CATIA and removes it when the operation ends. You may briefly see `C5D_Bridge` in the VBA editor while an operation is running; it is never saved. VBScript is not used ([how it works](docs/en/sync.md#how-cat5dev-talks-to-catia)).
+The `C5D_Bridge` file is kept in `%LOCALAPPDATA%\Cat5Dev\bridge\`, and a link to it (using almost no disk space) is added there at each operation. CATIA keeps these links in use while it is running; they are deleted automatically at the next operation after CATIA exits ([files in the `bridge` folder](docs/en/sync.md#files-in-the-bridge-folder)).
 
 ---
 
@@ -70,7 +71,7 @@ Cat5Dev is distributed as a `.vsix` file.
 2. Run **`CATIA: Initialize Project (cat5dev.toml)`** from the Command Palette (`Ctrl+Shift+P`).\
    This creates the settings file `cat5dev.toml` and a `.gitignore`.
 3. Start CATIA V5 and open the VBA project you want to sync.\
-   **Also open the VBA editor (`Alt+F11`).** Pull / Push does not work unless the VBA editor is open.
+   **Also open the VBA editor (`Alt+F11`) once.** Pull / Push does not work until the VBA editor has been opened (you may close it afterwards).
 4. Click the **CATIA V5 VBA** icon in the Activity Bar to open the panel.
 5. Click the ⚙️ button and select the target VBA project.
 6. Click the ☁️↓ button (Pull) to import the modules into the `modules/` folder.
@@ -98,7 +99,7 @@ Push may also ask **whether to delete modules from CATIA that do not exist in VS
 
 | Page | Contents |
 |------|----------|
-| [Syncing with CATIA](docs/en/sync.md) | How Pull / Push work and their confirmation dialogs, the module tree, how Cat5Dev talks to CATIA (the C5D_Bridge helper project), the sync lock and recovery, character encoding |
+| [Syncing with CATIA](docs/en/sync.md) | How Pull / Push work and their confirmation dialogs, the module tree, how Cat5Dev talks to CATIA (the C5D_Bridge helper project and the `bridge` folder), the sync lock and recovery, character encoding |
 | [IntelliSense](docs/en/intellisense.md) | Completion, hover, Go to Definition, parameter hints, the `'@As` type hint, CATIA API type information |
 | [Lint and Formatter](docs/en/lint-format.md) | Lint rules, formatter operations and options |
 | [Configuration Reference](docs/en/configuration.md) | All `cat5dev.toml` settings, display language, VSCode settings, files that are created |
