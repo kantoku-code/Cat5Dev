@@ -330,7 +330,7 @@ ok
 - 新しく作ったモジュールに VBE が自動で入れる `Option Explicit` は、`DeleteLines` で消えてから本文が入る（今と同じ）。
 - 途中で失敗したときに残るもの（今と同じ・改善しない）: `Add` の後で名前の設定に失敗すると `Module1` などが残る。`DeleteLines` の後で `AddFromString` に失敗すると中身が空のまま残る。
 - 大きな本文: 引数・戻り値の BSTR に大きさの上限は設けていない。どこまで通るかは実機で確かめる（目安として 1 MiB の本文の往復を試す。13 章）。
-- 名前・本文の文字: UTF-16 のまま往復する（日本語・🙂 を含む）。ブリッジの .bas 自体は ASCII だけ。
+- 名前・本文の文字: ExecuteScript の引数・戻り値（BSTR）としては UTF-16 のまま運ぶ（一時ファイル・ADODB・Shift-JIS への変換は使わない。🙂 も引数・戻り値の往復では保たれる）。ただし VBA の `CodeModule` はモジュール本文をシステムの ANSI コードページ（日本語版 Windows では CP932）で保持するため、`AddFromString` の時点で ANSI コードページで表せない文字（🙂 などの絵文字・サロゲートペア）は `?` になる。VBA エディタで直接入力しても同じで、避けられない（VBA の仕様）。日本語など ANSI コードページで表せる文字は本文としても確実に往復する（実機スモークで確認: `' smoke 日本語 🙂` を Push して Pull すると `' smoke 日本語 ??`）。ブリッジの .bas 自体は ASCII だけ。
 
 ### 9.2 モジュールの種類（`VBComponent.Type`）
 
@@ -377,13 +377,13 @@ node scripts/build-bridge-catvba.js --dry-run       # 計画を JSON で出す�
 node scripts/build-bridge-catvba.js                 # 作り直し → 確認 → resources/bridge/C5D_Bridge.catvba を置き換え
 node scripts/build-bridge-catvba.js --no-install    # 置き換えない
 node scripts/build-bridge-catvba.js --save-method close   # IApcProject.Save が使えないとき、Close(True) で保存する
-node scripts/build-bridge-catvba.js --base <file.catvba>  # 元にするファイル（既定は resources/bridge/C5D_Bridge.catvba。v1 / v2 のどちらでもよい）
+node scripts/build-bridge-catvba.js --base <file.catvba>  # 元にするファイル（既定は resources/bridge/C5D_Bridge.catvba（v2）。v1 / v2 のどちらでもよい）
 ```
 
 前提（CATIA の状態）:
 
 - CATIA が起動していて、ダイアログが出ていない。
-- 元の `.catvba` が v1 のとき（今の同梱品）は、**CATIA を起動し直した直後**（Push もしていない）。v1 の `C5D_Install` は「名前が `C5D_Bridge` の先頭のプロジェクト」に書くので、他の `C5D_Bridge` が読み込まれていないことを、bridge / bridge-build フォルダのファイルのロックで確かめる（ロック中が 1 つでもあれば止まる）。
+- 元の `.catvba` が v1 のときは、**CATIA を起動し直した直後**（Push もしていない）。v1 の `C5D_Install` は「名前が `C5D_Bridge` の先頭のプロジェクト」に書くので、他の `C5D_Bridge` が読み込まれていないことを、bridge / bridge-build フォルダのファイルのロックで確かめる（ロック中が 1 つでもあれば止まる）。
 - VBA エディタは開かなくてよい。利用者のプロジェクトには書き込まない（確認で一覧を読むだけ）。
 
 処理の流れ（各段階は 1 回の ExecuteScript。60 秒で打ち切り。CNEXT.exe の消失・0x800ADF09 などの致命的なエラーで以降を止める）:
@@ -394,7 +394,7 @@ node scripts/build-bridge-catvba.js --base <file.catvba>  # 元にするファ�
 4. ExecuteScript が戻った後で、外から（`eval-probe.exe vbacall-obj`）`C5D_Self` の戻り値を guard（Name・DisplayName）してから `VBProject.VBComponents.Remove(VBComponents.Item("C5D_Builder"))`。実行中でないモジュールを外から消すので、自分で自分を消す問題が起きない。v2 に一時的な削除関数を持たせる必要もない。
 5. `C5D_Who` で部品がちょうど `C5D_Bridge_Push` と `C5D_Bridge_Runtime` であることを確かめ、`IApcProject.Save(True)`（型情報（`scripts/dump-typelib.js` で確認）: `Save([opt] ForceSave As BOOL = False)`）→ `Close(False)`。途中で失敗しても、自分を特定できていれば guard 付きで `Close(False)` する（壊れた状態は保存しない）。
 6. 保存されたファイルを `temp/bridge-build-<時刻>/C5D_Bridge.catvba` に写し、オフラインで検査する（`scripts/lib/catvba-read.js` で MS-CFB / MS-OVBA を読む）: プロジェクト名、モジュールがちょうど 2 つで本文が `.bas` と同じ、v2、runtime の版、**孤立したストレージ**（どのモジュールにも属さないフォーム等のデータ）。
-7. 写したファイルを**新しい**読み取り専用のパス（`...-v.catvba`）で読み込み、`C5D_Version` / `C5D_Who` / `C5D_List` / `C5D_RT_Version` / `C5D_RT_ListProjects` / `C5D_Install`（試験モジュールを書いて呼び、日本語と 🙂 が往復すること）/ `C5D_Install("C5D_Bridge_Push")` = `error:self` を確かめ、guard 付きで `Close(False)`。
+7. 写したファイルを**新しい**読み取り専用のパス（`...-v.catvba`）で読み込み、`C5D_Version` / `C5D_Who` / `C5D_List` / `C5D_RT_Version` / `C5D_RT_ListProjects` / `C5D_Install`（試験モジュールを書いて呼び、引数で渡した日本語と 🙂 が戻り値でそのまま返ること。ExecuteScript の引数・戻り値の往復で、モジュール本文の往復ではない）/ `C5D_Install("C5D_Bridge_Push")` = `error:self` を確かめ、guard 付きで `Close(False)`。
 8. すべて通れば、`resources/bridge/C5D_Bridge.catvba` を `temp/C5D_Bridge.catvba.bak-<時刻>` に退避して置き換える。孤立したストレージがあれば**置き換えない**（`--allow-orphans` で上書き可。11.4 参照）。
 
 結果の読み方: 標準出力に 1 段階 1 行（`ok` / `FAIL` / `-`（実行しなかった理由））と最後の判定、詳細は `temp/build-bridge-catvba-<日付>-<時刻>.json`（`entries` が各段階、`facts.inspect` がオフライン検査の結果）。
@@ -432,12 +432,13 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 
 ### 11.4 孤立ストレージ（重要）
 
-今の `resources/bridge/C5D_Bridge.catvba`（v1、5,529,088 バイト）は、モジュールは `C5D_Bridge_Push` 1 つだけだが、ファイルの中に**他のプロジェクトのユーザーフォームのストレージ**（`frmMain`、`frmSelectSeal`、`frmVaridation`、`UserForm1aa` など 25 個前後）と、別のプロジェクトのモジュールの断片が残っている（`node scripts/build-bridge-catvba.js --inspect resources/bridge/C5D_Bridge.catvba` で確認できる）。別のプロジェクトを元に作ったためと思われる。
+同梱の `resources/bridge/C5D_Bridge.catvba` は、11.3 の手作業（新規ライブラリー）で作り直した v2（155,648 バイト、モジュールは `C5D_Bridge_Push` と `C5D_Bridge_Runtime` の 2 つ、孤立ストレージ 0）に置き換え済み。`npm run check:bridge` と `--verify`（実機）に合格している。
 
-- このまま VSIX に入れると、そのデータを配布することになる。5.5 MB と大きいのもこのため。
-- 自動の作り直し（11.1）は元のファイルを `Save` するので、これらが残る可能性が高い。その場合は置き換えを止める。
-- **配布用には 11.3 の手作業（新規ライブラリー）で作ったファイルを使うことを勧める**。
-- v1 のままでは `catia-run.exe` が手順 5 で終了コード 13（`bridge v1 is not supported; restart CATIA`）を返すので、Push / Pull・`scripts/smoke-catia.js` は動かない。**v2 に置き換えるまで VSIX を配布しない**。
+経緯: 以前の同梱品（v1、5,529,088 バイト）は別のプロジェクトを元に作ったため、他のプロジェクトのユーザーフォームのストレージ（25 個前後）やモジュールの断片が残っており、そのまま配布するとそのデータも配布することになっていた。
+
+- 自動の作り直し（11.1）は元のファイルを `Save` するので、元のファイルに孤立ストレージがあれば残る可能性が高い。その場合は置き換えを止める（`--allow-orphans` で上書き可）。
+- **配布用のファイルを作り直すときも、11.3 の手作業（新規ライブラリー）を勧める**。
+- v1 のファイルでは `catia-run.exe` が手順 5 で終了コード 13（`bridge v1 is not supported; restart CATIA`）を返すので、Push / Pull・`scripts/smoke-catia.js` は動かない。v2 でない、または孤立ストレージのある `.catvba` では VSIX を作れない（`npm run check:bridge`）。
 
 ---
 
@@ -449,7 +450,7 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 | VBA | `resources/bridge/*.bas` | `tests/bridgeBas.test.js`: 9.3 の静的検査 |
 | 拡張機能 | 10 章のファイル | `tests/catiaExecution.test.js`、`tests/catiaSync.test.js`、`tests/bridgeFiles.test.js` |
 | ブリッジの作り直し | `scripts/build-bridge-catvba.js`、`scripts/lib/catvba-read.js` | `tests/buildBridgeCatvba.test.js` |
-| 実機スモーク | `scripts/smoke-catia.js` | `tests/smokeCatia.test.js`（偽の exe）。実機で動かすには v2 の `.catvba`（11 章）が要る |
+| 実機スモーク | `scripts/smoke-catia.js` | `tests/smokeCatia.test.js`（偽の exe） |
 
 - 拡張機能のテストでは、exe を偽の executor（`ExecutionOptions.execute`）で置き換える。偽の executor は request.json を読み、この文書どおりの result.json と `m<i>.txt` を書く。
 - この文書と `resources/bridge/*.bas` を変えるときは、TS・C#・VBA の 3 つを合わせて直す。
@@ -462,7 +463,7 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 |---|---|---|
 | 残骸が正本と同じ実ファイル（ハードリンク）のとき | 自分も同じ実ファイル。読み込みと読み出しは実機で問題なかったが、「同じ実ファイルが 2 つ読み込まれた状態で一方を Close する」ことは未検証 | 7 章の手順 7 のとおり、書き込む前に外す。実機で、exe を途中で止めて残骸を作り、次の実行で外れることを確かめる。問題があれば 13 にして CATIA の再起動を求める |
 | `IApcProject.Save` の動き | CATIA が読み込んだプロジェクトで `Save(True)` がダイアログなしで保存するかは未検証 | 11.1。だめなら `--save-method close`、それでもだめなら 11.3 |
-| 孤立ストレージ | 11.4 | 配布用は 11.3 で作る |
+| 孤立ストレージ | 11.4（同梱品は解消済み） | 作り直すときは 11.3 で作る |
 | 大きな本文 | ExecuteScript の引数・戻り値の大きさの上限は未確認 | 実機で 1 MiB を往復させる |
 | 呼び出し回数 | Pull はモジュール数＋数回、Push は件数＋数回の ExecuteScript | 1 回数 ms なので当面そのまま |
 | 一覧の失敗の細かさ | 今の `ExportModules` は名前の読み出しに失敗した部品だけを失敗にして続けたが、`C5D_RT_ListModules` は一覧全体を失敗にする | 実害は小さいので許容 |

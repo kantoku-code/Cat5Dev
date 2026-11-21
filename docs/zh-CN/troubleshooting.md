@@ -66,7 +66,7 @@ Push 只会写入 CATIA 的内存。请**在 CATIA 的 VBA 编辑器中保存项
 
 ## 出现乱码
 
-Pull / Push 以 Unicode 形式传输正文，因此传输过程中不会出现乱码。`cat5dev.toml` 中的 `encoding` 已不再使用（即使保留也会被忽略）。如果使用旧版本 Pull 的文件出现乱码，请重新执行 Pull。请参阅 [字符编码](sync.md#字符编码)。
+Pull / Push 以 Unicode 形式传输正文，因此 Windows 系统 ANSI 代码页（例如简体中文版 Windows 为 GBK）能够表示的字符（如中文）不会出现乱码。表情符号（例如 `🙂`）等 ANSI 代码页无法表示的字符，会在 VBA 将其保存到模块时被替换为 `?`。这是 VBA 的规格，与在 VBA 编辑器中直接输入时相同，无法避免。`cat5dev.toml` 中的 `encoding` 已不再使用（即使保留也会被忽略）。如果使用旧版本 Pull 的文件出现乱码，请重新执行 Pull。请参阅 [字符编码](sync.md#字符编码)。
 
 ## Lint 波浪线不显示／格式化程序不工作
 

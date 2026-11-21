@@ -66,7 +66,7 @@ If CATIA has no UserForm with the same name, it cannot be created and is skipped
 
 ## Text is garbled
 
-Pull / Push carry the text as Unicode, so it is not garbled on the way. `encoding` in `cat5dev.toml` is no longer used (it is ignored if present). If files pulled with an earlier version are garbled, pull again. See [Character encoding](sync.md#character-encoding).
+Pull / Push carry the text as Unicode, so characters that the system ANSI code page of Windows can represent (for example Japanese on Japanese Windows, where it is Shift-JIS) are not garbled. Characters that the ANSI code page cannot represent, such as emoji (for example `🙂`), are replaced with `?` when VBA stores them in the module. This is how VBA works and the same happens when you type them in the VBA editor, so it cannot be avoided. `encoding` in `cat5dev.toml` is no longer used (it is ignored if present). If files pulled with an earlier version are garbled, pull again. See [Character encoding](sync.md#character-encoding).
 
 ## No Lint squiggles / the formatter does not run
 

@@ -110,17 +110,21 @@ test('--dry-run prints the plan without CATIA, without building eval-probe.exe a
     assert.deepEqual(fs.readdirSync(local), []);
 });
 
-test('offline inspection: the shipped .catvba is bridge v1 and carries orphan form storages of other projects', () => {
-    const facts = b.inspectCatvba(SHIPPED, b.readSources());
+test('offline inspection: the shipped .catvba is bridge v2, its modules match resources/bridge/*.bas and it has no orphan storage', () => {
+    const sources = b.readSources();
+    const facts = b.inspectCatvba(SHIPPED, sources);
+    assert.deepEqual(facts.problems, []);
+    assert.equal(facts.ok, true);
     assert.equal(facts.projectName, 'C5D_Bridge');
-    assert.equal(facts.version, 'c5d-bridge:1');
-    assert.deepEqual(facts.modules.map(m => m.name), ['C5D_Bridge_Push']);
-    assert.equal(facts.ok, false);
-    assert.ok(facts.problems.some(x => /c5d-bridge:2/.test(x)));
-    assert.ok(facts.orphans.length > 0, 'leftover storages are reported');
-    const source = readCatvba(SHIPPED).modules[0].source;
-    assert.match(source, /^Attribute VB_Name = "C5D_Bridge_Push"\r\n/);
-    assert.ok(!codeOf(source).startsWith('Attribute'));
+    assert.equal(facts.version, 'c5d-bridge:2');
+    assert.equal(facts.runtimeVersion, sources.runtimeVersion);
+    assert.deepEqual(facts.modules.map(m => [m.name, m.type, m.same]).sort(),
+        [['C5D_Bridge_Push', 'procedural', true], ['C5D_Bridge_Runtime', 'procedural', true]]);
+    assert.deepEqual(facts.orphans, []);
+    for (const module of readCatvba(SHIPPED).modules) {
+        assert.match(module.source, new RegExp(`^Attribute VB_Name = "${module.name}"\\r\\n`));
+        assert.ok(!codeOf(module.source).startsWith('Attribute'), module.name);
+    }
     assert.match(b.inspectCatvba(__filename).problems[0], /catvba: not an OLE compound file/);
     assert.equal(b.comparable('a  \r\nb\r\n\r\n'), b.comparable('a\nb'));
 });

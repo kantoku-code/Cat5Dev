@@ -177,7 +177,9 @@ Cat5Dev 在 CATIA V5 的 VBA 项目与工作区的 `modules/` 文件夹之间传
 
 ## 字符编码
 
-VSCode 端的文件为 UTF-8。Pull / Push 时，模块正文以 Unicode 形式与 CATIA 交换，不会转换为 Shift-JIS、GBK 等字符编码，因此这些编码无法表示的字符（例如 `🙂`）在传输过程中也不会出现乱码。
+VSCode 端的文件为 UTF-8。Pull / Push 时，模块正文以 Unicode 形式与 CATIA 交换（不使用临时文件，也不转换为 Shift-JIS、GBK 等字符编码）。因此，Windows 系统 ANSI 代码页（例如简体中文版 Windows 为 GBK，日文版 Windows 为 Shift-JIS）能够表示的字符（如中文、日文）一定能原样往返。
+
+但是，ANSI 代码页无法表示的字符（例如表情符号 `🙂`）会在 VBA 将其保存到模块时被替换为 `?`。这是 VBA 的规格，与在 VBA 编辑器中直接输入时相同。Push 此类字符后再 Pull，该字符会变为 `?`。
 
 - `cat5dev.toml` 中 `[project]` 部分的 `encoding` 已不再使用。旧的 `cat5dev.toml` 中即使保留该项也会被忽略（不会报错），也可以将其删除。
 - 发送到 CATIA 之后，VBA 编辑器中的显示以及保存项目时的处理方式取决于 CATIA（VBA）。

@@ -23,7 +23,7 @@
 //         inspect    offline (scripts/lib/catvba-read.js): project C5D_Bridge, modules exactly C5D_Bridge_Push = the .bas and
 //                    C5D_Bridge_Runtime = the .bas, and no orphan storages (leftover form storages of other projects)
 //         verify     a NEW read-only copy C5D_Bridge-build-<stamp>-v.catvba is loaded: C5D_Version = c5d-bridge:2, C5D_Who, C5D_List,
-//                    C5D_RT_Version, C5D_RT_ListProjects, C5D_Install + a call of the installed probe module (Unicode round trip),
+//                    C5D_RT_Version, C5D_RT_ListProjects, C5D_Install + a call of the installed probe module (Unicode round trip of the argument / return value),
 //                    C5D_Install(C5D_Bridge_Push) = "error:self", then a guarded Close(False)
 //         install    resources/bridge/C5D_Bridge.catvba is copied to temp/C5D_Bridge.catvba.bak-<stamp> and replaced by the collected
 //                    file (skipped with --no-install; refused while the inspect found orphan storages, unless --allow-orphans)
@@ -50,7 +50,11 @@ const BUILDER_MODULE = 'C5D_Builder';
 const PROBE_MODULE = 'C5D_BuildProbe';
 const V1 = 'c5d-bridge:1';
 const V2 = 'c5d-bridge:2';
-/** Japanese, U+2713 and U+1F642 (a surrogate pair, not in Shift-JIS): must come back unchanged. */
+/**
+ * Japanese, U+2713 and U+1F642 (a surrogate pair, not in Shift-JIS): must come back unchanged through the ExecuteScript
+ * argument and return value (a BSTR). This is not a module-text round trip: text stored in a module by AddFromString
+ * keeps only the characters of the system ANSI code page (U+1F642 becomes "?").
+ */
 const PROBE_ARGUMENT = '日本語テスト✓🙂';
 const LEFTOVER = /^C5D_Bridge.*\.catvba$/i;
 /** Storages / streams of a VBA project storage that are not modules (MS-OVBA 2.2). */

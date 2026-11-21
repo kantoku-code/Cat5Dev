@@ -177,7 +177,9 @@ In this case, the **sync lock** stays in place to prevent accidental double writ
 
 ## Character encoding
 
-Files on the VSCode side are UTF-8. Pull / Push exchange the module text with CATIA as Unicode, without converting it to Shift-JIS, GBK or any other code page, so characters that such code pages cannot represent (for example `🙂`) are not garbled on the way.
+Files on the VSCode side are UTF-8. Pull / Push exchange the module text with CATIA as Unicode (no temporary files, no conversion to Shift-JIS or any other code page). Characters that the system ANSI code page of Windows can represent (for example Japanese on Japanese Windows, where it is Shift-JIS) therefore always make the round trip unchanged.
+
+Characters that the ANSI code page cannot represent (for example the emoji `🙂`), however, are replaced with `?` when VBA stores them in the module. This is how VBA works, and the same happens when you type them in the VBA editor. If you push such a character and pull again, it comes back as `?`.
 
 - `encoding` in the `[project]` section of `cat5dev.toml` is no longer used. If an old `cat5dev.toml` still has it, it is ignored (no error). You may delete it.
 - How the VBA editor displays the text after it reaches CATIA, and how it is stored when you save the project, depend on CATIA (VBA).

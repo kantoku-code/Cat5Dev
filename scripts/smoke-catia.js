@@ -4,10 +4,14 @@
 //   opened once (Alt+F11), and the project toQI has the standard module C5D_BridgeTest whose first line is
 //   "' Cat5Dev-bridge-test-owner" (node scripts/probe-vbaproject.js --write-bas writes a body to paste).
 // Only toQI/C5D_BridgeTest is written, and the project is never saved:
-//   list -> pull -> push (original + "' smoke 日本語 🙂") -> pull (round trip) -> push (original) -> pull (restored) -> list
+//   list -> pull -> push (original + SMOKE_LINE + NON_ANSI_LINE) -> pull (round trip) -> push (original) -> pull (restored) -> list
 // Each step is one catia-run.exe (same request.json / result.json route as the extension, under the extension's lock).
-// Checks: exit code 0 for every step, the round trip of Japanese and 🙂, the restore, the other modules of toQI and the
-// project list unchanged, and vbscript.dll not loaded in CNEXT.exe (Process.Modules / tasklist /M, before and after).
+// Checks: exit code 0 for every step, the exact round trip of Japanese that CP932 can represent (SMOKE_LINE), the restore,
+// the other modules of toQI and the project list unchanged, and vbscript.dll not loaded in CNEXT.exe (Process.Modules /
+// tasklist /M, before and after).
+// Recorded, not judged: what became of a character CP932 cannot represent (NON_ANSI_LINE, U+1F642). The VBA CodeModule keeps
+// the module text in the system ANSI code page, so AddFromString stores it as "?" (one per UTF-16 unit: "??"), the same as
+// typing it in the VBA editor. The request.json / ExecuteScript route itself keeps it (build-bridge-catvba.js --verify echo).
 // The bundled resources/bridge/C5D_Bridge.catvba must be bridge v2 (checked offline first; a v1 bridge cannot be closed again
 // and would stay loaded in CATIA until it restarts). Rebuild it with docs/dev/bridge-contract.md 11 when the check fails.
 // Writes temp/catia-smoke-<yyyyMMdd-HHmmss>.json. Exit: 0 passed, 1 failed, 2 bad arguments, missing build or bundled bridge not v2,
@@ -26,7 +30,13 @@ const PROJECT = 'toQI';
 const MODULE = 'C5D_BridgeTest';
 /** First line of C5D_BridgeTest (scripts/probe-vbaproject.js BRIDGE_BODY); nothing else is ever written. */
 const OWNER_MARKER = "' Cat5Dev-bridge-test-owner";
-const SMOKE_LINE = "' smoke 日本語 🙂";
+/** CP932 can represent all of it (kanji, kana, NEC special U+2460, half-width katakana): must come back unchanged. */
+const SMOKE_LINE = "' smoke 日本語テスト①ｱ";
+/** Start of the line with a character CP932 cannot represent (a surrogate pair); used to find it after the pull. */
+const NON_ANSI_PREFIX = "' smoke non-ANSI ";
+const NON_ANSI_LINE = NON_ANSI_PREFIX + '\u{1F642}';
+/** What VBA stores for NON_ANSI_LINE on a CP932 system: each UTF-16 unit of U+1F642 becomes "?" (seen on real CATIA). */
+const NON_ANSI_EXPECTED = NON_ANSI_PREFIX + '??';
 const BRIDGE_PROJECT = 'C5D_Bridge';
 const DEFAULT_TIMEOUT_MS = 60000;
 const USAGE = 'Usage: node scripts/smoke-catia.js [--dry-run] [--timeout <ms>]\n'
@@ -48,8 +58,23 @@ function parseArgs(args) {
     return options;
 }
 const normalize = text => text.replace(/\r\n?/g, '\n').trimEnd();
-/** The pushed text: the original (as pulled) plus the smoke line, CRLF like the VBE. */
-const withSmokeLine = original => original.trimEnd() + '\r\n' + SMOKE_LINE;
+/** The pushed text: the original (as pulled) plus the smoke lines, CRLF like the VBE. */
+const withSmokeLine = original => original.trimEnd() + '\r\n' + SMOKE_LINE + '\r\n' + NON_ANSI_LINE;
+/**
+ * Splits a pulled C5D_BridgeTest into the part that must round-trip exactly (everything but the last line) and the last line,
+ * which should be the non-ANSI line. { rest, nonAnsi } with nonAnsi null when the last line is not it.
+ */
+function splitPulled(text) {
+    const lines = normalize(text).split('\n');
+    const last = lines[lines.length - 1];
+    if (!last.startsWith(NON_ANSI_PREFIX)) return { rest: lines.join('\n'), nonAnsi: null };
+    return { rest: lines.slice(0, -1).join('\n'), nonAnsi: last };
+}
+/** Information on the non-ANSI line after the round trip (not a pass / fail check). */
+function describeNonAnsi(got) {
+    const outcome = got === NON_ANSI_EXPECTED ? 'replaced-with-question-marks' : got === NON_ANSI_LINE ? 'kept' : got === null ? 'missing' : 'other';
+    return { sent: NON_ANSI_LINE, expected: NON_ANSI_EXPECTED, got, outcome };
+}
 /** Modules other than C5D_BridgeTest: [{ name, type, sha256 of the normalized text }] sorted by name. */
 function otherModules(modules) {
     return modules.filter(m => m.name.toLowerCase() !== MODULE.toLowerCase())
@@ -67,7 +92,10 @@ function refuseReason(found) {
     if (!found) return `${MODULE} is not in ${PROJECT}; add it by hand (node scripts/probe-vbaproject.js --write-bas) and re-run`;
     if (found.type !== 1) return `${MODULE} is not a standard module (type ${found.type})`;
     if (!found.text.startsWith(OWNER_MARKER)) return `${MODULE} does not start with the owner marker ${JSON.stringify(OWNER_MARKER)}`;
-    if (found.text.includes(SMOKE_LINE)) return `${MODULE} already contains ${JSON.stringify(SMOKE_LINE)} (left by an interrupted run); remove that line in the VBA editor and re-run`;
+    if (found.text.includes(SMOKE_LINE) || found.text.split(/\r\n|\n/).some(line => line.startsWith(NON_ANSI_PREFIX))) {
+        return `${MODULE} already contains a smoke line (${JSON.stringify(SMOKE_LINE)} or ${JSON.stringify(NON_ANSI_PREFIX)}..., left by an interrupted run); `
+            + 'remove those lines in the VBA editor and re-run';
+    }
     return null;
 }
 /** Overall verdict from report.checks and the vbscript.dll snapshots: { passed, exitCode, verdict }. */
@@ -130,7 +158,7 @@ async function run(report, options, deps = {}) {
     if (options.dryRun) {
         report.plan = {
             runner: RUNNER, bundledBridge: BUNDLED_BRIDGE, bundledSha256: bridge.bundledHash(), master: bridge.masterPath(),
-            project: PROJECT, module: MODULE, smokeLine: SMOKE_LINE, timeoutMs: options.timeoutMs,
+            project: PROJECT, module: MODULE, smokeLines: [SMOKE_LINE, NON_ANSI_LINE], nonAnsiExpected: NON_ANSI_EXPECTED, timeoutMs: options.timeoutMs,
             steps: ['list', 'pull', 'push (+smoke line)', 'pull (verify)', 'push (original)', 'pull (verify restore)', 'list'],
             sampleRequest: JSON.parse(m.buildRequestJson({ operationId: '<operation>', stepId: '<step>', kind: 'push', targetProject: PROJECT,
                 directory: '', modules: [{ name: MODULE, type: 1, text: withSmokeLine(OWNER_MARKER) }] }))
@@ -201,9 +229,16 @@ async function run(report, options, deps = {}) {
             await push('push', modified);
             const roundTrip = await pull('pull (verify)');
             const got = testModule(roundTrip);
-            checks.roundTrip = Boolean(got) && normalize(got.text) === normalize(modified);
-            checks.unicodeKept = Boolean(got) && got.text.includes(SMOKE_LINE);
+            const split = got ? splitPulled(got.text) : { rest: null, nonAnsi: null };
+            // Everything but the non-ANSI line (original + SMOKE_LINE) must come back exactly.
+            checks.roundTrip = Boolean(got) && split.nonAnsi !== null && split.rest === normalize(original.text.trimEnd() + '\r\n' + SMOKE_LINE);
+            checks.japaneseKept = Boolean(got) && got.text.includes(SMOKE_LINE);
             if (!checks.roundTrip) report.roundTripText = got ? got.text : null;
+            report.nonAnsi = describeNonAnsi(split.nonAnsi);
+            if (report.nonAnsi.outcome === 'replaced-with-question-marks') {
+                report.notes.push(`${JSON.stringify(NON_ANSI_LINE)} came back as ${JSON.stringify(split.nonAnsi)}: VBA keeps module text in the `
+                    + 'system ANSI code page, so characters it cannot represent become "?" (expected, the same as typing them in the VBA editor).');
+            }
             report.otherModulesChangedByPush = diffModules(others, otherModules(roundTrip));
         } finally {
             if (pushed) {
@@ -217,7 +252,7 @@ async function run(report, options, deps = {}) {
                     checks.otherModulesUnchanged = report.otherModulesChanged.length === 0 && (report.otherModulesChangedByPush ?? []).length === 0;
                 } catch (error) {
                     checks.restored = false;
-                    report.notes.push(`Restore failed: ${error}. ${PROJECT}/${MODULE} may still end with ${JSON.stringify(SMOKE_LINE)}; `
+                    report.notes.push(`Restore failed: ${error}. ${PROJECT}/${MODULE} may still end with the smoke lines (${JSON.stringify(SMOKE_LINE)}, ${JSON.stringify(NON_ANSI_PREFIX)}...); `
                         + `its original text is in "original.text" of this report (remove the line by hand, do not save).`);
                     throw error;
                 }
@@ -245,6 +280,7 @@ function formatSummary(report) {
             + (entry.expected !== undefined ? `  ${entry.succeeded}/${entry.expected}` : '') + (entry.error ? `  ${entry.error}` : ''));
     }
     for (const [name, ok] of Object.entries(report.checks ?? {})) lines.push(`  check ${name}: ${ok === true ? 'ok' : ok === false ? 'FAIL' : '-'}`);
+    if (report.nonAnsi) lines.push(`  info nonAnsi: ${report.nonAnsi.outcome} (sent ${JSON.stringify(report.nonAnsi.sent)}, got ${JSON.stringify(report.nonAnsi.got)})`);
     for (const label of ['before', 'after']) {
         const state = dllState(report.snapshots[label]);
         if (state) lines.push(`  ${label}: ${Object.entries(state).map(([dll, loaded]) => `${dll}=${loaded ? 'loaded' : 'no'}`).join(' ')}`);
@@ -283,4 +319,5 @@ async function main() {
     console.log(formatSummary(report));
 }
 if (require.main === module) main();
-module.exports = { run, parseArgs, withSmokeLine, otherModules, diffModules, refuseReason, judge, SMOKE_LINE, OWNER_MARKER, PROJECT, MODULE };
+module.exports = { run, parseArgs, withSmokeLine, splitPulled, describeNonAnsi, otherModules, diffModules, refuseReason, judge, SMOKE_LINE,
+    NON_ANSI_PREFIX, NON_ANSI_LINE, NON_ANSI_EXPECTED, OWNER_MARKER, PROJECT, MODULE };
