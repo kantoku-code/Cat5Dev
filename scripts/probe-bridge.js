@@ -104,6 +104,29 @@
 //   Info steps never require anything; a close requires its who (self-identified). Only a timeout, an unreachable CATIA or a
 //   vanished CNEXT.exe stops the run. User projects are only read (start list vs last list compared).
 //   Report: temp/probe-bridge-selfclose-<time>.json (summary.verdictLines: one fact per line; summary.selfClose / summary.lists as data).
+//   RESULT of that run: t1-t4 (independent copies, lower-case path) closed, but the put into t5 (A as \.\) gave RPC_E_SERVERFAULT and
+//   from then on every call into B gave 0x800ADF09 Unknown VBA error: never load one real file under several path strings at once.
+//
+// Cycle experiment (the production idea "one Push = one NEW path, loaded alone, self-identified, closed from outside", repeated, on a
+// freshly RESTARTED CATIA with the VBA editor opened once):
+//        node scripts/probe-bridge.js --cycle-experiment [--cycle-method hardlink|copy|both] [--cycle-rounds N]   (default both, N = 5)
+//   Local first (no CATIA call): every C5D_Bridge*.catvba in %LOCALAPPDATA%\Cat5Dev\bridge must be free (lock probe), else the run
+//   stops at once ("CATIA を再起動してください": a closed C5D_Bridge keeps its file until CATIA exits). Then the old files of earlier
+//   probes (all but A = C5D_Bridge-<8 hex>.catvba and the old name C5D_Bridge.catvba) are deleted (read-only cleared; for a hard link of
+//   A the read-only attribute of A is set again) = production's cleanup at the next start; A is prepared read-only (--readonly-fresh).
+//   A is never loaded through its own path. Rounds (buildCycleRound), each on a NEW file next to A:
+//     copy: C5D_Bridge-<8 hex>-c<yyyyMMddHHmmss>-<n>.catvba (read-only copy of A), hardlink: ...-h<yyyyMMddHHmmss>-<n>.catvba (fs.linkSync)
+//     <r>-prepare (local, ms) <r>-load (C5D_Version, auto-load) <r>-install (C5D_Install C5D_Cy = CY_SOURCE: C5D_CySelf / C5D_CyWho /
+//     C5D_CyList / C5D_CyRead) <r>-who (ExecutingProject = this path?) <r>-list (C5D_Bridge x1 = this path, user projects as at the
+//     start) <r>-read (toQI.C5D_BridgeTest: CountOfLines and Lines(1, 1), READ ONLY) <r>-close (C5D_CySelf; guards Name / DisplayName,
+//     then Close(false)) <r>-recall (same path again: 0x80004005 expected) <r>-lock (local).
+//   Order: start round s (copy; its list = user projects at the start; another C5D_Bridge or no user project stops), the rounds of each
+//   method (both: copy c1..cN first, then hardlink h1..hN), final round z (copy; the list at the end). No module snapshot between the
+//   calls of a round (only at its lock step), so the calls follow each other as in a Push. Any failed round stops all later rounds
+//   (a C5D_Bridge may be left loaded and the next C5D_Install would write into it); 0x800ADF09 / RPC_E_SERVERFAULT / an RPC failure /
+//   a timeout / a vanished CNEXT.exe stop at once (fatal: CATIA may be unstable). The reason is in the verdict.
+//   At the end the files of this run that are not locked are deleted (normally all are locked; the next run deletes them).
+//   Report: temp/probe-bridge-cycle-<time>.json (summary.verdictLines: one fact per line; summary.cycle: per round facts).
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
@@ -1067,29 +1090,46 @@ const USAGE = 'Usage: node scripts/probe-bridge.js [<step> ...]\n'
     + '    C5D_SxB into B, C5D_Sx into each copy by its path, self-identification by apc.ExecutingProject through the own path,\n'
     + '    guarded Close from outside (Name/DisplayName/FileName must match) of every copy, then B; then the production idea x3 (+1 final\n'
     + '    check): a new hard link of A per round, auto-load, C5D_Install, self-identify, close from outside. User projects are never written.\n'
+    + '       node scripts/probe-bridge.js --cycle-experiment [--cycle-method hardlink|copy|both] [--cycle-rounds N]\n'
+    + '  --cycle-experiment: right after a CATIA RESTART (VBA editor opened once): stops at once when a C5D_Bridge*.catvba of the bridge\n'
+    + '    folder is in use; deletes the old ones, then per Push one NEW path (read-only copy of A or hard link of A; default both = copy\n'
+    + '    first, N = 5 each) loaded alone: load install who list read (toQI.C5D_BridgeTest, read only) close recall lock; start round s\n'
+    + '    and final round z (copies) list the user projects. 0x800ADF09 / RPC_E_SERVERFAULT / timeout / CATIA gone stop everything.\n'
     + '  Never runs a .catvbs/.CATScript. --check-only only reads CNEXT.exe modules and the bridge files.';
 
 const MODE_OPTIONS = { '--check-only': 'check-only', '--unload-experiment': 'unload-experiment', '--unload-cleanup': 'unload-cleanup',
     '--readonly-fresh': 'readonly-fresh', '--readonly-fresh-check': 'readonly-fresh-check',
     '--remove-experiment': 'remove-experiment', '--remove-experiment-risky': 'remove-experiment-risky', '--reload-experiment': 'reload-experiment',
-    '--self-close-experiment': 'self-close-experiment' };
+    '--self-close-experiment': 'self-close-experiment', '--cycle-experiment': 'cycle-experiment' };
+/** Options that take a value (only with --cycle-experiment). */
+const VALUE_OPTIONS = ['--cycle-method', '--cycle-rounds'];
 /**
  * { mode: 'run' | 'check-only' | 'unload-experiment' | 'unload-cleanup' | 'readonly-fresh' | 'readonly-fresh-check' | 'remove-experiment'
- *   | 'remove-experiment-risky' | 'reload-experiment' | 'self-close-experiment' | 'help', steps }. Throws on bad arguments.
- * (--self-close-experiment: steps = [], its step names depend on the copies found in CATIA and are recorded in the report.)
+ *   | 'remove-experiment-risky' | 'reload-experiment' | 'self-close-experiment' | 'cycle-experiment' | 'help', steps }. Throws on bad arguments.
+ * (--self-close-experiment: steps = [], its step names depend on the copies found in CATIA and are recorded in the report.
+ *  --cycle-experiment: steps = [] and cycle = { methods, rounds }.)
  */
 function parseArgs(args) {
     if (args.some(arg => arg === '--help' || arg === '-h')) return { mode: 'help', steps: [] };
     const modes = new Set();
     const steps = new Set();
-    for (const arg of args) {
-        if (MODE_OPTIONS[arg]) modes.add(arg);
+    const values = {};
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (VALUE_OPTIONS.includes(arg)) {
+            if (i + 1 >= args.length) throw new Error(`${arg} needs a value\n${USAGE}`);
+            if (values[arg] !== undefined) throw new Error(`${arg} given twice\n${USAGE}`);
+            values[arg] = args[++i];
+        } else if (MODE_OPTIONS[arg]) modes.add(arg);
         else if (STEP_NAMES.includes(arg)) steps.add(arg);
         else throw new Error(`Unknown option or step: ${arg}\n${USAGE}`);
     }
     if (modes.size > 1) throw new Error(`${[...modes].join(' and ')} cannot be combined\n${USAGE}`);
     const [option] = modes;
     if (option && steps.size) throw new Error(`${option} takes no steps\n${USAGE}`);
+    const given = Object.keys(values);
+    if (given.length && option !== '--cycle-experiment') throw new Error(`${given.join(', ')} only with --cycle-experiment\n${USAGE}`);
+    if (option === '--cycle-experiment') return { mode: 'cycle-experiment', steps: [], cycle: parseCycleOptions(values) };
     if (option === '--unload-experiment') return { mode: 'unload-experiment', steps: UNLOAD_STEPS.map(s => s.name) };
     if (option === '--unload-cleanup') return { mode: 'unload-cleanup', steps: CLEANUP_STEPS.map(s => s.name) };
     if (option === '--readonly-fresh') return { mode: 'readonly-fresh', steps: READONLY_FRESH_STEPS.map(s => s.name) };
@@ -1571,8 +1611,11 @@ function skipReason(step, entries, aborted) {
  * { run, entry } (step/call are added here). Fills report.runs; returns { entries, aborted }.
  * prior: { entries, aborted } of an earlier runSequence of the same report to continue (report.runs is kept, requires / after may
  * name its steps; used when later steps are built from the results of earlier ones).
+ * options.snapshot(step): false = no module snapshot / CATIA-alive check after this step (loadedAfter / alive stay null; keeps
+ * back-to-back calls close together as in production). options.fatal(entry, step): a reason text aborts the rest like a timeout
+ * (entry.fatal is set), e.g. 0x800ADF09 / RPC_E_SERVERFAULT in --cycle-experiment.
  */
-async function runSequence(report, steps, library, pids, local, prior = null) {
+async function runSequence(report, steps, library, pids, local, prior = null, options = {}) {
     if (!prior) report.runs = [];
     const entries = prior ? prior.entries : [];
     let aborted = prior?.aborted ?? null;
@@ -1597,10 +1640,16 @@ async function runSequence(report, steps, library, pids, local, prior = null) {
             if (run.actions) entry.actions = run.actions;
         }
         report.runs.push(run);
-        const after = trySnapshot(report, 'after:' + step.name);
-        entry.loadedAfter = after.snapshot?.loaded ?? null;
-        run.catiaAlive = entry.alive = catiaAlive(pids, after.snapshot);
+        if (options.snapshot && !options.snapshot(step)) {
+            entry.loadedAfter = null;
+            run.catiaAlive = entry.alive = null;
+        } else {
+            const after = trySnapshot(report, 'after:' + step.name);
+            entry.loadedAfter = after.snapshot?.loaded ?? null;
+            run.catiaAlive = entry.alive = catiaAlive(pids, after.snapshot);
+        }
         entries.push(entry);
+        const fatal = options.fatal ? options.fatal(entry, step) : null;
         if (entry.alive === false) {
             entry.crashed = run.crashed = true;
             report.notes.push(`CATIA crashed after step ${step.name} (CNEXT.exe ${pids.join(', ')} is gone). Remaining steps were not run.`);
@@ -1611,6 +1660,10 @@ async function runSequence(report, steps, library, pids, local, prior = null) {
         } else if (run.exitCode === 10 || run.exitCode === 11) {
             report.notes.push(`Step ${step.name}: could not reach CATIA (exit ${run.exitCode}); remaining steps were not run.`);
             aborted = `aborted: CATIA not reachable in ${step.name}`;
+        } else if (fatal) {
+            entry.fatal = run.fatal = fatal;
+            report.notes.push(`Step ${step.name}: ${fatal}; CATIA may be unstable. Remaining steps were not run.`);
+            aborted = `aborted: ${fatal} in ${step.name}`;
         }
         if (run.argumentsIntact === false) report.notes.push(`Step ${step.name}: the arguments eval-probe.exe passed differ from the intended ones (command-line encoding problem).`);
     }
@@ -2812,60 +2865,67 @@ function sxCommonLines(p) {
  *   C5D_SxWho()   "who=ok;running=..;name=..;display=<DisplayName>;mode=..;vbName=..;file=<VBProject.FileName>;comps=..;c5d=.."
  *   C5D_SxList()  the list of SxListText (all IApcProjects and VBProjects; read-only)
  */
+/** VBA of C5D_<p>Self (apc.ExecutingProject as an object) and C5D_<p>Who (its text), using the private helpers of sxCommonLines(p). */
+function sxSelfWhoLines(p) {
+    const self = `C5D_${p}Self`, who = `C5D_${p}Who`;
+    return [
+        `Public Function ${self}() As Variant`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim ex As Object',
+        `    Set apc = ${p}Apc()`,
+        '    If apc Is Nothing Then',
+        `        ${self} = "error:apc:" & CStr(Err.Number)`,
+        '        Exit Function',
+        '    End If',
+        '    Err.Clear',
+        '    Set ex = Nothing',
+        '    Set ex = apc.ExecutingProject',
+        '    If ex Is Nothing Then',
+        `        ${self} = "error:noexec:" & CStr(Err.Number)`,
+        '        Exit Function',
+        '    End If',
+        `    Set ${self} = ex`,
+        'End Function',
+        `Public Function ${who}() As Variant`,
+        '    On Error Resume Next',
+        '    Dim apc As Object',
+        '    Dim ex As Object',
+        '    Dim vbp As Object',
+        '    Dim s As String',
+        '    Dim v As Variant',
+        '    Dim e As Long',
+        `    Set apc = ${p}Apc()`,
+        '    If apc Is Nothing Then',
+        `        ${who} = "error:apc:" & CStr(Err.Number)`,
+        '        Exit Function',
+        '    End If',
+        '    s = ""',
+        ...sxProp(`${p}Fmt`, 'running', 'apc.Running'),
+        '    Err.Clear',
+        '    Set ex = Nothing',
+        '    Set ex = apc.ExecutingProject',
+        '    If ex Is Nothing Then',
+        `        ${who} = "error:noexec:" & CStr(Err.Number) & s`,
+        '        Exit Function',
+        '    End If',
+        ...sxProp(`${p}Fmt`, 'name', 'ex.Name'),
+        ...sxProp(`${p}Fmt`, 'display', 'ex.DisplayName'),
+        ...sxProp(`${p}Fmt`, 'mode', 'ex.Mode'),
+        '    Set vbp = Nothing',
+        '    Set vbp = ex.VBProject',
+        ...sxProp(`${p}Fmt`, 'vbName', 'vbp.Name'),
+        ...sxProp(`${p}Fmt`, 'file', 'vbp.FileName'),
+        `    s = s & ${p}Comps(vbp)`,
+        '    Err.Clear',
+        `    ${who} = "who=ok" & s`,
+        'End Function'
+    ];
+}
 const SX_SOURCE = [
     'Option Explicit',
     ...sxCommonLines('Sx'),
-    'Public Function C5D_SxSelf() As Variant',
-    '    On Error Resume Next',
-    '    Dim apc As Object',
-    '    Dim ex As Object',
-    '    Set apc = SxApc()',
-    '    If apc Is Nothing Then',
-    '        C5D_SxSelf = "error:apc:" & CStr(Err.Number)',
-    '        Exit Function',
-    '    End If',
-    '    Err.Clear',
-    '    Set ex = Nothing',
-    '    Set ex = apc.ExecutingProject',
-    '    If ex Is Nothing Then',
-    '        C5D_SxSelf = "error:noexec:" & CStr(Err.Number)',
-    '        Exit Function',
-    '    End If',
-    '    Set C5D_SxSelf = ex',
-    'End Function',
-    'Public Function C5D_SxWho() As Variant',
-    '    On Error Resume Next',
-    '    Dim apc As Object',
-    '    Dim ex As Object',
-    '    Dim vbp As Object',
-    '    Dim s As String',
-    '    Dim v As Variant',
-    '    Dim e As Long',
-    '    Set apc = SxApc()',
-    '    If apc Is Nothing Then',
-    '        C5D_SxWho = "error:apc:" & CStr(Err.Number)',
-    '        Exit Function',
-    '    End If',
-    '    s = ""',
-    ...sxProp('SxFmt', 'running', 'apc.Running'),
-    '    Err.Clear',
-    '    Set ex = Nothing',
-    '    Set ex = apc.ExecutingProject',
-    '    If ex Is Nothing Then',
-    '        C5D_SxWho = "error:noexec:" & CStr(Err.Number) & s',
-    '        Exit Function',
-    '    End If',
-    ...sxProp('SxFmt', 'name', 'ex.Name'),
-    ...sxProp('SxFmt', 'display', 'ex.DisplayName'),
-    ...sxProp('SxFmt', 'mode', 'ex.Mode'),
-    '    Set vbp = Nothing',
-    '    Set vbp = ex.VBProject',
-    ...sxProp('SxFmt', 'vbName', 'vbp.Name'),
-    ...sxProp('SxFmt', 'file', 'vbp.FileName'),
-    '    s = s & SxComps(vbp)',
-    '    Err.Clear',
-    '    C5D_SxWho = "who=ok" & s',
-    'End Function',
+    ...sxSelfWhoLines('Sx'),
     'Public Function C5D_SxList() As Variant',
     '    C5D_SxList = SxListText()',
     'End Function',
@@ -3185,12 +3245,12 @@ function selfCloseStepNames(n = 0) {
 
 // -- judging
 const actionOf = (e, index) => (e?.actions ?? []).find(a => a.action === index);
-/** { ok, ms, display, file, guard, error } of a self-close step (guard: the first failed guard, if any). */
-function sxCloseFacts(e) {
+/** { ok, ms, display, file, guard, error } of a self-close step (guard: the first failed guard, if any; closeIndex: the Close action). */
+function sxCloseFacts(e, closeIndex = SX_CLOSE_ACTION) {
     if (!e || e.skipped) return { ok: null, ms: null, display: null, file: null, guard: null, error: e ? e.skipped : 'not in this run' };
     const get = i => { const a = actionOf(e, i); return a?.ok ? a.result : null; };
     const failedGuard = (e.actions ?? []).find(a => String(a.op).startsWith('guard:') && a.ok === false && !a.skipped);
-    const close = actionOf(e, SX_CLOSE_ACTION);
+    const close = actionOf(e, closeIndex);
     const base = { display: get(1), file: get(2), guard: failedGuard ? `${failedGuard.op} -> ${failedGuard.message ?? failedGuard.hresult}` : null };
     if (!close) return { ok: false, ms: null, ...base, error: e.ok ? `no object (${JSON.stringify(e.result)})` : rlOutcome(e) };
     if (close.skipped) return { ok: false, ms: null, ...base, error: base.guard ? `guard failed: ${base.guard}` : close.message ?? rlOutcome(e) };
@@ -3417,6 +3477,568 @@ function formatSelfCloseSummary(report) {
     return [...text.slice(0, 2), ...lines, ...text.slice(2)].join('\n');
 }
 
+// ---- --cycle-experiment: the production idea on a freshly restarted CATIA. One Push = a NEW path (a read-only copy or a hard link
+// of the master A), loaded alone, C5D_Install C5D_Cy (the only C5D_Bridge = itself), self-identification, the Push/Pull-like read of
+// a user project, guarded Close from outside. Repeated per method (copy first, then hardlink: the hard link is the riskier one, since
+// the same real file under several path strings once broke CATIA's VBA with 0x800ADF09). A is never loaded through its own path.
+const CY_MODULE = 'C5D_Cy';
+/** The user project and module C5D_CyRead reads (never writes): the CATIA test target of this repository. */
+const CY_READ_PROJECT = 'toQI';
+const CY_READ_MODULE = 'C5D_BridgeTest';
+/** Run order of --cycle-method both: the safer copy first. */
+const CY_METHODS = ['copy', 'hardlink'];
+const CY_DEFAULT_ROUNDS = 5;
+const CY_MAX_ROUNDS = 20;
+const CY_START = 's';
+const CY_FINAL = 'z';
+const CY_READ_PATTERN = /^read=ok;/;
+/** Index of call:$.Close(false) in cyCloseActions. */
+const CY_CLOSE_ACTION = 5;
+/** Errors after which CATIA's VBA is considered unstable: the run stops (no further call into CATIA). */
+const CY_FATAL = [[/0x800ADF09/i, 'Unknown VBA error 0x800ADF09'], [/0x80010105|RPC_E_SERVERFAULT/i, 'RPC_E_SERVERFAULT 0x80010105'],
+    [/0x800706BA|0x800706BE|0x80010108|RPC_E_DISCONNECTED/i, 'RPC failure (CATIA gone?)']];
+/** Old-name bridge (the plain copy of the default mode); never deleted by the cleanup. */
+const CY_KEEP = [BRIDGE_FILE];
+const CY_LEFTOVER = /^C5D_Bridge.*\.catvba$/i;
+
+/**
+ * VBA of C5D_Cy (ASCII, CRLF, On Error Resume Next, no MsgBox / Declare, no property read in an If condition; never closes, removes,
+ * saves or writes anything; C5D_Install writes it into the only loaded C5D_Bridge = the project of the round):
+ *   C5D_CySelf()  apc.ExecutingProject as an object (eval-probe.exe guards Name / DisplayName and closes it after ExecuteScript returned)
+ *   C5D_CyWho()   "who=ok;running=..;name=..;display=<DisplayName>;mode=..;vbName=..;file=<VBProject.FileName>;comps=..;c5d=.."
+ *   C5D_CyList()  every IApcProject and VBProject (as C5D_SxList)
+ *   C5D_CyRead(projName, modName)  READS the first VBProject named projName: "read=ok;project=..;hits=N;file=..;saved=..;module=..;
+ *                 lines=<CountOfLines>;first=<Lines(1, 1)>;savedAfter=.." | "error:noproject;count=N;err=E" | "error:nomodule;..."
+ */
+const CY_SOURCE = [
+    'Option Explicit',
+    ...sxCommonLines('Cy'),
+    ...sxSelfWhoLines('Cy'),
+    'Public Function C5D_CyList() As Variant',
+    '    C5D_CyList = CyListText()',
+    'End Function',
+    'Public Function C5D_CyRead(ByVal projName As Variant, ByVal modName As Variant) As Variant',
+    '    On Error Resume Next',
+    '    Dim apc As Object',
+    '    Dim ide As Object',
+    '    Dim vbps As Object',
+    '    Dim vbp As Object',
+    '    Dim hit As Object',
+    '    Dim comps As Object',
+    '    Dim comp As Object',
+    '    Dim cm As Object',
+    '    Dim pn As String',
+    '    Dim mn As String',
+    '    Dim nm As String',
+    '    Dim s As String',
+    '    Dim v As Variant',
+    '    Dim e As Long',
+    '    Dim hits As Long',
+    '    Dim cnt As Long',
+    '    Dim i As Long',
+    '    Dim n As Long',
+    '    pn = ""',
+    '    pn = CStr(projName)',
+    '    mn = ""',
+    '    mn = CStr(modName)',
+    '    Set apc = CyApc()',
+    '    If apc Is Nothing Then',
+    '        C5D_CyRead = "error:apc:" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Set ide = Nothing',
+    '    Set ide = apc.VBE',
+    '    Set vbps = Nothing',
+    '    Set vbps = ide.VBProjects',
+    '    n = -1',
+    '    n = vbps.Count',
+    '    hits = 0',
+    '    Set hit = Nothing',
+    '    For i = 1 To n',
+    '        Set vbp = Nothing',
+    '        Set vbp = vbps.Item(i)',
+    '        nm = ""',
+    '        nm = CStr(vbp.Name)',
+    '        If StrComp(nm, pn, vbBinaryCompare) = 0 Then',
+    '            hits = hits + 1',
+    '            If hits = 1 Then Set hit = vbp',
+    '        End If',
+    '    Next',
+    '    If hit Is Nothing Then',
+    '        C5D_CyRead = "error:noproject;count=" & CStr(n) & ";err=" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    s = ";project=" & CyClean(pn) & ";hits=" & CStr(hits)',
+    ...sxProp('CyFmt', 'file', 'hit.FileName'),
+    ...sxProp('CyFmt', 'saved', 'hit.Saved'),
+    '    s = s & ";module=" & CyClean(mn)',
+    '    Err.Clear',
+    '    Set comps = Nothing',
+    '    Set comps = hit.VBComponents',
+    '    Set comp = Nothing',
+    '    Set comp = comps.Item(mn)',
+    '    If comp Is Nothing Then',
+    '        C5D_CyRead = "error:nomodule" & s & ";err=" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    Err.Clear',
+    '    Set cm = Nothing',
+    '    Set cm = comp.CodeModule',
+    '    If cm Is Nothing Then',
+    '        C5D_CyRead = "error:codemodule" & s & ";err=" & CStr(Err.Number)',
+    '        Exit Function',
+    '    End If',
+    '    cnt = -1',
+    '    cnt = cm.CountOfLines',
+    '    s = s & ";lines=" & CStr(cnt)',
+    '    Err.Clear',
+    '    v = ""',
+    '    If cnt > 0 Then',
+    '        v = cm.Lines(1, 1)',
+    '    End If',
+    '    e = Err.Number',
+    '    s = s & ";first=" & CyFmt(v, e)',
+    ...sxProp('CyFmt', 'savedAfter', 'hit.Saved'),
+    '    Err.Clear',
+    '    C5D_CyRead = "read=ok" & s',
+    'End Function',
+    ''
+].join('\r\n');
+
+/** { methods, rounds } of --cycle-method / --cycle-rounds (values as given on the command line; missing = defaults). Throws on bad values. */
+function parseCycleOptions(values = {}) {
+    const method = values['--cycle-method'] ?? 'both';
+    if (!['both', ...CY_METHODS].includes(method)) throw new Error(`--cycle-method must be hardlink, copy or both (got ${method})`);
+    const text = values['--cycle-rounds'] ?? String(CY_DEFAULT_ROUNDS);
+    const rounds = /^\d+$/.test(text) ? Number(text) : NaN;
+    if (!(rounds >= 1 && rounds <= CY_MAX_ROUNDS)) throw new Error(`--cycle-rounds must be 1..${CY_MAX_ROUNDS} (got ${text})`);
+    return { methods: method === 'both' ? [...CY_METHODS] : [method], rounds };
+}
+
+/**
+ * The files of one run, next to A: start round s and final round z are read-only copies, the rounds are c1..cN (copy) and/or
+ * h1..hN (hard link): C5D_Bridge-<8 hex>-c<yyyyMMddHHmmss>-<s|n|z>.catvba / C5D_Bridge-<8 hex>-h<yyyyMMddHHmmss>-<n>.catvba.
+ */
+function cycleRounds(a, runTag, methods = CY_METHODS, n = CY_DEFAULT_ROUNDS) {
+    const dir = path.win32.dirname(a), base = path.win32.basename(a, '.catvba');
+    const file = (letter, suffix) => path.win32.join(dir, `${base}-${letter}${runTag}-${suffix}.catvba`);
+    return {
+        start: { tag: CY_START, method: 'copy', path: file('c', CY_START) },
+        rounds: methods.flatMap(method => Array.from({ length: n }, (_, i) => ({ tag: `${method === 'copy' ? 'c' : 'h'}${i + 1}`, method,
+            path: file(method === 'copy' ? 'c' : 'h', String(i + 1)) }))),
+        final: { tag: CY_FINAL, method: 'copy', path: file('c', CY_FINAL) }
+    };
+}
+
+/** Actions of a cycle close: read Name / DisplayName / FileName, guard Name and DisplayName, then Close(false) and a Name read that should fail. */
+const cyCloseActions = display => ['get:$.Name', 'get:$.DisplayName', 'get:$.VBProject.FileName', `guard:$.Name=${sxLiteral(BRIDGE_PROJECT)}`,
+    `guard:$.DisplayName=${sxLiteral(display)}`, 'call:$.Close(false)', 'get:$.Name'];
+
+/** Whether a parsed C5D_CyList shows exactly one C5D_Bridge (this path) and, when start is given, as many user projects as at the start. */
+function cycleListOk(list, library, start = null) {
+    if (!list || list.err !== '0' || list.count === null || list.vbeCount === null) return false;
+    const apc = sxBridges(list), vbe = list.vbe.filter(p => p.name === BRIDGE_PROJECT);
+    if (apc.length !== 1 || vbe.length !== 1 || !sameText(apc[0].display, library)) return false;
+    if (!start) return true;
+    const users = sxUserProjects(list);
+    return users.apc.length === start.apc && users.vbe.length === start.vbe;
+}
+
+/**
+ * Steps of one round r = { tag, method, path }: prepare (local: copy or hard link) load install who list read close recall lock (local).
+ * start = { apc, vbe } user project counts of the start round (null for the start round itself). who / list / read / close require
+ * the own who (a mismatch means C5D_Install may have written elsewhere: nothing more runs through that path).
+ */
+function buildCycleRound(r, start = null) {
+    const p = r.path, t = r.tag;
+    const call = (name, module, func, args, extra) => ({ name: `${t}-${name}`, library: p, module, func, args, round: t, ...extra });
+    return [
+        { name: `${t}-prepare`, local: 'prepare', method: r.method, path: p, round: t },
+        call('load', BRIDGE_MODULE, 'C5D_Version', [], { expected: BRIDGE_VERSION, requires: [`${t}-prepare`] }),
+        call('install', BRIDGE_MODULE, 'C5D_Install', [CY_MODULE, CY_SOURCE], { expected: 'ok', requires: [`${t}-load`] }),
+        call('who', CY_MODULE, 'C5D_CyWho', [], { check: result => whoIsSelf(result, p), self: p, requires: [`${t}-install`] }),
+        call('list', CY_MODULE, 'C5D_CyList', [], { check: result => cycleListOk(parseSxList(result), p, start), info: 'cy', requires: [`${t}-who`] }),
+        call('read', CY_MODULE, 'C5D_CyRead', [CY_READ_PROJECT, CY_READ_MODULE], { pattern: CY_READ_PATTERN, requires: [`${t}-who`] }),
+        call('close', CY_MODULE, 'C5D_CySelf', [], { actions: cyCloseActions(p), mustSucceed: [CY_CLOSE_ACTION], resultType: 'ComObject',
+            closeAction: CY_CLOSE_ACTION, closeOf: p, requires: [`${t}-who`] }),
+        call('recall', BRIDGE_MODULE, 'C5D_Version', [], { expectFailure: BRIDGE_VERSION, requires: [`${t}-close`] }),
+        { name: `${t}-lock`, local: 'lock', path: p, round: t, after: [`${t}-prepare`] }
+    ];
+}
+/** All step names of --cycle-experiment (start round, rounds, final round) for the given methods and round count. */
+function cycleStepNames(methods = CY_METHODS, n = CY_DEFAULT_ROUNDS) {
+    const plan = cycleRounds('C:\\x\\C5D_Bridge-x.catvba', '0', methods, n);
+    return [plan.start, ...plan.rounds, plan.final].flatMap(r => buildCycleRound(r).map(s => s.name));
+}
+
+/** Reason text when an entry shows a CATIA-is-unstable error (the actions after the Close are ignored: "disconnected" is expected there). */
+function cycleFatal(entry, step = {}) {
+    if (!entry || entry.skipped) return null;
+    const texts = [entry.hresult, entry.message];
+    for (const a of entry.actions ?? []) if (step.closeAction === undefined || a.action <= step.closeAction) texts.push(a.hresult, a.message);
+    const text = texts.filter(Boolean).join(' ');
+    return CY_FATAL.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
+const readOnlyOf = file => { try { return (fs.statSync(file).mode & 0o200) === 0; } catch { return null; } };
+const linksOf = file => { try { return Number(fs.statSync(file, { bigint: true }).nlink); } catch { return null; } };
+/** Whether x and y are the same file (hard links): same volume and file id. null when either cannot be read. */
+function sameFileOf(x, y) {
+    try {
+        const sx = fs.statSync(x, { bigint: true }), sy = fs.statSync(y, { bigint: true });
+        return sx.ino === sy.ino && sx.dev === sy.dev;
+    } catch { return null; }
+}
+
+/**
+ * The local file of a round (before any CATIA call through it): copy = A copied (never overwriting) and made read-only, hash = A;
+ * hardlink = a new hard link of A (shares A's read-only attribute). Returns { ok, method, path, ms, error, readOnly, sameFile, links, sha256Same }.
+ */
+function prepareCycleFile(method, a, file, ops = {}) {
+    const { copyFile = fs.copyFileSync, chmod = fs.chmodSync, linkSync = fs.linkSync, aSha256 = null } = ops;
+    const out = { ok: false, method, path: file, ms: null, error: null, readOnly: null, sameFile: null, links: null, sha256Same: null };
+    const started = Date.now();
+    if (method === 'copy') {
+        try {
+            copyFile(a, file, fs.constants.COPYFILE_EXCL);
+            chmod(file, 0o444);
+        } catch (error) { out.error = errorText(error); }
+        out.ms = Date.now() - started;
+        if (!out.error) {
+            out.readOnly = readOnlyOf(file);
+            out.sameFile = sameFileOf(a, file);
+            out.sha256Same = sha256(file) === (aSha256 ?? sha256(a));
+            out.ok = out.readOnly === true && out.sha256Same && out.sameFile === false;
+            if (!out.ok) out.error = [out.readOnly !== true && 'read-only not set', !out.sha256Same && 'hash differs from A', out.sameFile !== false && 'not a separate file'].filter(Boolean).join('; ');
+        }
+    } else if (method === 'hardlink') {
+        const link = makeHardlink(a, file, { linkSync });
+        out.ms = Date.now() - started;
+        Object.assign(out, { error: link.error, sameFile: link.sameFile, links: link.links });
+        if (link.ok) {
+            out.readOnly = readOnlyOf(file);
+            out.ok = link.sameFile === true && out.readOnly === true;
+            if (!out.ok) out.error = [link.sameFile !== true && 'not the same file as A', out.readOnly !== true && 'read-only not set (A is not read-only?)'].filter(Boolean).join('; ');
+        }
+    } else throw new Error(`unknown method ${method}`);
+    return out;
+}
+
+/**
+ * Every C5D_Bridge*.catvba in the bridge folder with its lock state (before any CATIA call): { dir, files: [{ name, path, size, role,
+ * hardlinkOfA, lock }] }. role: 'master' (A), 'old-name' (C5D_Bridge.catvba, kept) or 'leftover' (an earlier probe's file, to delete).
+ */
+function scanBridgeFolder(dir, a, ops = {}) {
+    const { readdir = fs.readdirSync, lock = file => lockProbe(file) } = ops;
+    let names;
+    try { names = readdir(dir); } catch (error) { return { dir, files: [], error: errorText(error) }; }
+    const aName = path.basename(a);
+    const files = names.filter(name => CY_LEFTOVER.test(name)).sort((x, y) => x.localeCompare(y, 'en')).map(name => {
+        const file = path.join(dir, name);
+        const role = sameText(name, aName) ? 'master' : CY_KEEP.some(k => sameText(k, name)) ? 'old-name' : 'leftover';
+        let size = null;
+        try { size = fs.statSync(file).size; } catch { /* reported as null */ }
+        return { name, path: file, size, role, hardlinkOfA: role === 'leftover' ? sameFileOf(a, file) === true : null, lock: lock(file) };
+    });
+    return { dir, files, error: null };
+}
+/**
+ * Production's "clean up at the next start": deletes the leftovers of a scan that are not locked (read-only cleared first; a hard link of
+ * A gets A's read-only attribute back, see cleanupProbeFiles). Returns { items, deleted, deletedBytes, hardlinks, kept, failed, aReadOnly, aLinks }.
+ */
+function cleanupBridgeLeftovers(scan, a, ops = {}) {
+    const leftovers = scan.files.filter(f => f.role === 'leftover');
+    const done = cleanupProbeFiles(leftovers.map(f => ({ key: f.name, path: f.path, linkOf: f.hardlinkOfA ? a : undefined })), ops);
+    const items = done.map((c, i) => ({ ...c, size: leftovers[i].size, hardlinkOfA: leftovers[i].hardlinkOfA }));
+    const deleted = items.filter(c => c.action === 'deleted');
+    return { items, deleted: deleted.length, deletedBytes: deleted.reduce((sum, c) => sum + (c.size ?? 0), 0),
+        hardlinks: deleted.filter(c => c.hardlinkOfA).length, kept: items.filter(c => c.action.startsWith('kept')).map(c => c.key),
+        failed: items.filter(c => c.action === 'failed').map(c => `${c.key}: ${c.error}`), aReadOnly: readOnlyOf(a), aLinks: linksOf(a) };
+}
+
+// -- judging
+const avgMs = list => { const n = list.filter(x => typeof x === 'number'); return n.length ? Math.round(n.reduce((x, y) => x + y, 0) / n.length) : null; };
+const msText = value => value === null || value === undefined ? '-' : `${value}ms`;
+const mb = bytes => `${(bytes / 1048576).toFixed(1)} MB`;
+const flagOf = e => (!e || e.skipped ? null : e.match === true);
+function readWord(e) {
+    if (!e || e.skipped || !e.ok) return `read ${rlOutcome(e)}`;
+    if (!CY_READ_PATTERN.test(e.result ?? '')) return `read ${JSON.stringify(e.result)}`;
+    const f = sxFields(e.result);
+    return `read ${f.project}.${f.module} lines=${f.lines} first=${JSON.stringify(f.first ?? '')} saved ${f.saved}->${f.savedAfter}${f.hits !== '1' ? ` (${f.hits} projects named ${f.project})` : ''}`;
+}
+/** Facts of one round from the entries (null fields = not run). users = sxUserProjects of its list. */
+function cycleRoundFacts(r, entries, startUsers = null) {
+    const get = k => entries.find(e => e.step === `${r.tag}-${k}`);
+    const prepare = get('prepare'), load = get('load'), install = get('install'), who = get('who'), list = get('list'), read = get('read');
+    const closeEntry = get('close'), recall = get('recall'), lock = get('lock');
+    const parsed = listOf(list);
+    const users = sxUserProjects(parsed);
+    const close = sxCloseFacts(closeEntry, CY_CLOSE_ACTION);
+    const whoFields = who && !who.skipped && who.ok ? parseWho(who.result) : null;
+    const mine = entries.filter(e => String(e.step).startsWith(`${r.tag}-`));
+    const fatal = mine.find(e => e.fatal || e.timedOut || e.crashed);
+    const f = { tag: r.tag, method: r.method, path: r.path, ran: Boolean(prepare && !prepare.skipped),
+        prepare: flagOf(prepare), prepareMs: prepare?.ms ?? null, prepareError: prepare?.message ?? null, prepareInfo: prepare?.prepare ?? null,
+        load: flagOf(load), loadMs: load?.elapsedMs ?? null, install: flagOf(install), installMs: install?.elapsedMs ?? null,
+        who: flagOf(who), whoMs: who?.elapsedMs ?? null, whoExact: whoFields ? whoFields.display === r.path : null, whoDisplay: whoFields?.display ?? null, whoFile: whoFields?.file ?? null,
+        list: flagOf(list), listMs: list?.elapsedMs ?? null, counts: parsed ? { apc: parsed.count, vbe: parsed.vbeCount, bridges: sxBridges(parsed).length } : null,
+        users, userDiff: startUsers && users ? userDiff(startUsers, users) : null,
+        read: flagOf(read), readMs: read?.elapsedMs ?? null, readResult: read?.result ?? null,
+        close, closeCallMs: closeEntry?.elapsedMs ?? null, recall: flagOf(recall), lock: lock?.locks?.[r.tag] ?? null,
+        fatal: fatal ? fatal.fatal ?? (fatal.timedOut ? `timed out in ${fatal.step}` : `CATIA crashed after ${fatal.step}`) : null,
+        words: { load: rlOutcome(load), install: rlOutcome(install), who: whoWord(who, r.path), list: describeSxList(list), read: readWord(read),
+            recall: recall ? recallWord(recall) : '-' } };
+    f.ok = f.prepare === true && f.load === true && f.install === true && f.who === true && f.list === true && f.close.ok === true && f.recall === true && !f.fatal;
+    return f;
+}
+/**
+ * Why the run stops after a round (null = go on): { kind, reason }. kind: 'fatal' (CATIA may be unstable: aborted / 0x800ADF09 /
+ * RPC_E_SERVERFAULT / timeout / crash), 'restart' (another C5D_Bridge loaded), 'vbe' (no user project visible), 'round' (this round failed).
+ */
+function cycleStopReason(f, { start = false, aborted = null } = {}) {
+    if (aborted || f.fatal) return { kind: 'fatal', reason: f.fatal ?? String(aborted).replace(/^aborted: /, '') };
+    if (f.prepare !== true) return { kind: 'round', reason: `prepare failed (${f.prepareError ?? 'not run'})` };
+    if (f.load !== true) return { kind: 'round', reason: `load: C5D_Version ${f.words.load}` };
+    if (f.install !== true) return { kind: 'round', reason: `install: C5D_Install ${f.words.install}` };
+    if (f.who !== true) {
+        return { kind: start ? 'restart' : 'round', reason: `${f.words.who}: the code did not run in this path's project, so C5D_Install may have written into `
+            + `another C5D_Bridge${start ? ' (one loaded before this run? CATIA を再起動してください / restart CATIA)' : ''}` };
+    }
+    if (start && f.counts && f.counts.bridges > 1) return { kind: 'restart', reason: `${BRIDGE_PROJECT} x${f.counts.bridges} loaded at the start: CATIA was not restarted. CATIA を再起動してください (restart CATIA)` };
+    if (start && f.users && f.users.vbe.length === 0) {
+        return { kind: 'vbe', reason: 'no user project visible (apc.Projects shows only C5D_Bridge before the VBA editor was opened): '
+            + 'restart CATIA, open the VBA editor once (Alt+F11), then re-run' };
+    }
+    if (f.list !== true) return { kind: 'round', reason: `list: ${f.words.list} (expected ${BRIDGE_PROJECT} x1 = this path${start ? '' : ' and the user project count of the start'})` };
+    if (f.close.ok !== true) return { kind: 'round', reason: `close: ${closeWord(f.close)} (this ${BRIDGE_PROJECT} stays loaded; the next C5D_Install would write into it)` };
+    if (f.recall !== true) return { kind: 'round', reason: `same path after close: ${f.words.recall} (re-loaded: a ${BRIDGE_PROJECT} stays loaded)` };
+    return null;
+}
+function cycleRoundLine(f, label = '') {
+    const head = `round ${f.tag} (${f.method}${label}) ${baseName(f.path)}: `;
+    if (!f.ran) return head + `not run (${f.notRun ?? 'not in this run'})`;
+    const p = f.prepareInfo;
+    const prep = f.prepare ? `${f.method === 'copy' ? 'copy' : 'hard link'} ok ${msText(f.prepareMs)}${f.method === 'hardlink' && p?.links ? ` (links ${p.links})` : ''}`
+        : `prepare FAILED (${f.prepareError})`;
+    const diff = f.tag === CY_START ? 'user projects listed = the start reference' : f.userDiff === null ? 'user projects not compared'
+        : f.userDiff.length ? `user projects DIFFER: ${f.userDiff.join('; ')}` : 'user projects = start';
+    return head + [prep, `load ${f.load ? `ok ${msText(f.loadMs)}` : f.words.load}`, `install ${f.install ? `ok ${msText(f.installMs)}` : f.words.install}`, f.words.who,
+        `list ${f.words.list} (ok: ${yn(f.list)})`, f.words.read, `${closeWord(f.close)}${f.closeCallMs !== null ? ` (ExecuteScript ${f.closeCallMs}ms)` : ''}`,
+        `same path after close ${f.words.recall}`, `lock after close ${lockWord(f.lock)}`, diff].join(', ') + (f.fatal ? `; FATAL: ${f.fatal}` : '');
+}
+function cycleMethodLine(method, facts, planned) {
+    const ran = facts.filter(f => f.method === method && f.ran);
+    const ok = ran.filter(f => f.ok);
+    const avg = key => msText(avgMs(ok.map(key)));
+    const compared = ran.filter(f => f.userDiff !== null);
+    const differ = compared.filter(f => f.userDiff.length);
+    const probed = ran.filter(f => f.lock && !f.lock.skipped);
+    return `method ${method}: ${ok.length}/${planned} rounds ok (${ran.length} run); average of the ok rounds: prepare ${avg(f => f.prepareMs)}, load ${avg(f => f.loadMs)}, `
+        + `install ${avg(f => f.installMs)}, who ${avg(f => f.whoMs)}, list ${avg(f => f.listMs)}, read ${avg(f => f.readMs)}, close ${avg(f => f.close.ms)} `
+        + `(ExecuteScript ${avg(f => f.closeCallMs)}); read ok ${ran.filter(f => f.read).length}/${ran.length}; `
+        + `locked after close ${probed.filter(f => f.lock.inUse === true).length}/${probed.length} probed; user projects = start in ${compared.length - differ.length}/${ran.length}`
+        + `${differ.length ? `, DIFFER in ${differ.map(f => f.tag).join(', ')}` : ''}`;
+}
+/**
+ * Verdict of --cycle-experiment: { lines, data }. ctx: { a, methods, rounds (planned per method), preCheck, preCleanup, master, start,
+ * facts (rounds in run order, incl. not run ones), final, stop, cleanup, aEnd }.
+ */
+function judgeCycle(beforeLoaded, entries, ctx) {
+    const lines = [];
+    const pc = ctx.preCheck;
+    if (pc) {
+        const locked = pc.files.filter(f => f.lock?.inUse === true);
+        lines.push(`precheck: ${pc.files.length} ${BRIDGE_PROJECT}*.catvba in ${pc.dir}${pc.error ? ` (folder not read: ${pc.error})` : ''}, `
+            + `${locked.length ? `IN USE: ${locked.map(f => f.name).join(', ')}` : 'none in use'}`);
+    }
+    const cl = ctx.preCleanup;
+    if (cl) {
+        lines.push(`cleanup before run: deleted ${cl.deleted}/${cl.items.length} old files (${mb(cl.deletedBytes)}; hard links of A ${cl.hardlinks})`
+            + `${cl.kept.length ? `, kept ${cl.kept.join(', ')}` : ''}${cl.failed.length ? `, FAILED ${cl.failed.join(', ')}` : ''}; A read-only afterwards ${yn(cl.aReadOnly)}, A links ${cl.aLinks ?? '-'}`);
+    }
+    const m = ctx.master;
+    if (m) lines.push(`master A ${baseName(m.path)}: ${m.action}, read-only ${yn(m.readOnly)}, = source ${yn(m.sameAsSource)}, links ${m.links ?? '-'} (never loaded through its own path)`);
+    if (ctx.start) lines.push(cycleRoundLine(ctx.start, ', start list'));
+    const startUsers = ctx.start?.users ?? null;
+    if (startUsers) lines.push(`user projects at start: ${startUsers.vbe.length} (${startUsers.vbe.map(p => `${p.name}[${p.comps}] saved=${p.saved}`).join(', ')})`);
+    for (const f of ctx.facts ?? []) lines.push(cycleRoundLine(f));
+    if (ctx.facts) for (const method of ctx.methods ?? []) lines.push(cycleMethodLine(method, ctx.facts, ctx.rounds));
+    if (ctx.final) lines.push(cycleRoundLine(ctx.final, ', final list'));
+    // user projects at the end: the final list, else the last list that was taken
+    const lists = [ctx.final, ...[...(ctx.facts ?? [])].reverse()].filter(f => f?.users);
+    const last = lists[0];
+    if (startUsers && last) {
+        const diff = userDiff(startUsers, last.users);
+        lines.push(`user projects start vs end (list of round ${last.tag}${last === ctx.final ? ', final' : ''}): `
+            + (diff.length ? `DIFFER: ${diff.join('; ')}` : `identical (${startUsers.vbe.length} projects: name, FileName, module count, Saved)`));
+    } else if (ctx.start) lines.push('user projects start vs end: not compared (a list is missing)');
+    const s = ctx.stop;
+    lines.push(!s ? 'stop: none (every planned round and the final list ran)'
+        : `stop (${s.kind}${s.kind === 'fatal' ? ': CATIA may be unstable, restart it before anything else' : ''}) ${s.after ? `after round ${s.after}` : 'before the first CATIA call'}: `
+        + `${s.reason}${s.notRun?.length ? `; not run: ${s.notRun.join(', ')}` : ''}`);
+    if (ctx.cleanup) {
+        const kept = ctx.cleanup.filter(c => c.action !== 'deleted' && c.action !== 'missing');
+        lines.push(`cleanup after run: deleted ${ctx.cleanup.filter(c => c.action === 'deleted').length}/${ctx.cleanup.length}`
+            + `${kept.length ? `, kept ${kept.map(c => `${baseName(c.path)} (${c.action}${c.error ? `: ${c.error}` : ''})`).join(', ')}` : ''}`);
+    }
+    if (ctx.aEnd) lines.push(`A at end: unchanged ${yn(ctx.aEnd.unchanged)}, read-only ${yn(ctx.aEnd.readOnly)}, links ${ctx.aEnd.links ?? '-'}, ${lockWord(ctx.aEnd.lock)}`);
+    const crashed = entries.find(e => e.crashed);
+    if (crashed) lines.push(`CATIA crashed after step ${crashed.step}`);
+    const timedOut = entries.find(e => e.timedOut);
+    if (timedOut) lines.push(`timed out at step ${timedOut.step} (CATIA may be stopped at a dialog)`);
+    if (entries.length) lines.push(describeVbscript(beforeLoaded, entries));
+    return { lines, data: { start: ctx.start ?? null, rounds: ctx.facts ?? [], final: ctx.final ?? null, stop: ctx.stop ?? null } };
+}
+
+/**
+ * --cycle-experiment (right after a CATIA restart, VBA editor opened once). Local first: every C5D_Bridge*.catvba of the bridge folder
+ * must be free (else nothing is done: restart CATIA), the old ones are deleted, A is prepared read-only. Then the start round s (copy;
+ * its list = the user projects at the start; another C5D_Bridge there stops the run), the rounds of each method (copy before
+ * hardlink), the final round z (copy; the list at the end). Each round is one runSequence; no module snapshot between the CATIA
+ * calls of a round (only at its lock step). Any stop reason (cycleStopReason) ends the run; a fatal one skips the final round too.
+ */
+async function runCycle(report, options = {}) {
+    const { methods, rounds: n } = options.cycle ?? parseCycleOptions();
+    const paths = hashedPaths();
+    const a = paths.target, dir = path.dirname(a);
+    report.cycle = { methods, rounds: n, readProject: CY_READ_PROJECT, readModule: CY_READ_MODULE };
+    report.cnext = cnextProcesses();
+    if (!report.cnext.error && !report.cnext.processes.length) throw new Error('CNEXT.exe is not running');
+    const finish = (ctx, entries = [], beforeLoaded = false) => {
+        const { lines, data } = judgeCycle(beforeLoaded, entries, { a, methods, rounds: n, ...ctx });
+        report.summary = { ...(report.runs ? sequenceSummary(report, entries) : {}), cycle: data, verdictLines: lines, verdict: lines.join('\n') };
+    };
+    // 1. nothing in the bridge folder may be open (a closed C5D_Bridge keeps its file until CATIA exits)
+    fs.mkdirSync(dir, { recursive: true });
+    const preCheck = scanBridgeFolder(dir, a);
+    report.preCheck = preCheck;
+    const inUse = preCheck.files.filter(f => f.lock?.inUse === true);
+    if (preCheck.error || inUse.length) {
+        const stop = { kind: 'restart', after: null, reason: preCheck.error ? `bridge folder not readable (${preCheck.error})`
+            : `${inUse.map(f => f.name).join(', ')} in use: CATIA still has a ${BRIDGE_PROJECT} of an earlier run. CATIA を再起動してください (restart CATIA; nothing was done)` };
+        report.stop = stop;
+        report.notes.push(stop.reason);
+        finish({ preCheck, stop });
+        process.exitCode = 1;
+        return;
+    }
+    // 2. production's cleanup at the next start, 3. the master
+    const preCleanup = cleanupBridgeLeftovers(preCheck, a);
+    report.preCleanup = preCleanup;
+    if (preCleanup.failed.length) report.notes.push(`Cleanup before the run failed for ${preCleanup.failed.join(', ')}.`);
+    const prepared = prepareHashedBridge(paths.source, a);
+    report.bridge = { action: prepared.action, ok: prepared.ok, locked: prepared.locked, code: prepared.code, message: prepared.message,
+        source: prepared.source, before: prepared.before, readOnly: prepared.readOnly, target: prepared.after, lock: lockProbe(a), targetAtEnd: null, lockAtEnd: null };
+    if (prepared.locked) throw new Error(`${a} differs from the source and cannot be replaced (${prepared.code}); restart CATIA and re-run.`);
+    if (!prepared.ok) throw new Error(`Preparing ${a} failed: ${prepared.message}`);
+    const aSha256 = prepared.after.sha256;
+    const master = { path: a, action: prepared.action, readOnly: prepared.after.readOnly, sameAsSource: aSha256 === prepared.source.sha256, links: linksOf(a) };
+    const runTag = timestamp().replace('-', '');
+    const plan = cycleRounds(a, runTag, methods, n);
+    const all = [plan.start, ...plan.rounds, plan.final];
+    for (const r of all) if (fs.existsSync(r.path)) throw new Error(`${r.path} already exists`);
+    report.plan = all;
+    report.files = { a: { role: 'A (master, read-only; copied / hard-linked, never loaded through its own path)', state: prepared.after, lock: report.bridge.lock } };
+    report.library = '(per step, see each run)';
+    report.libraryPerStep = true;
+    report.exe = buildProbe(ROOT);
+    const first = trySnapshot(report, 'before');
+    if (first.error) throw new Error(`module snapshot failed: ${first.error}`);
+    checkCnext(report, first.snapshot);
+    const pids = first.snapshot.cnextPids;
+    report.cnextPids = pids;
+    report.vbscriptBefore = first.snapshot.loaded;
+    if (first.snapshot.loaded) report.notes.push('vbscript.dll was already loaded before the first step (CATIA not freshly restarted?).');
+    const local = async step => {
+        if (step.local === 'prepare') {
+            const p = prepareCycleFile(step.method, a, step.path, { aSha256 });
+            report.files[step.round] = { role: `${step.method === 'copy' ? 'read-only copy' : 'hard link'} of A for round ${step.round}`, prepare: p,
+                state: p.ok ? fileState(step.path) : null, lock: p.ok ? lockProbe(step.path) : null };
+            return { run: { local: true, kind: step.method === 'copy' ? 'copy' : 'link', ...p, match: p.ok, aReadOnly: readOnlyOf(a), durationMs: p.ms, message: p.error },
+                entry: { ok: p.ok, match: p.ok, ms: p.ms, path: step.path, message: p.error, prepare: p } };
+        }
+        if (step.local !== 'lock') throw new Error(`unknown local step ${step.local}`);
+        const started = Date.now();
+        const lock = lockProbe(step.path);
+        if (report.files[step.round]) report.files[step.round].lockAfterClose = lock;
+        return { run: { local: true, kind: 'locks', ok: true, match: true, locks: { [step.round]: lock }, durationMs: Date.now() - started },
+            entry: { ok: true, match: true, locks: { [step.round]: lock } } };
+    };
+    const seqOptions = { snapshot: step => step.local === 'lock', fatal: cycleFatal };
+    const steps = [];
+    let state = null;
+    const runRound = async (r, startCounts, startUsers) => {
+        const roundSteps = buildCycleRound(r, startCounts);
+        steps.push(...roundSteps);
+        state = await runSequence(report, roundSteps, s => s.library, pids, local, state, seqOptions);
+        for (const entry of state.entries) {
+            const run = report.runs.find(x => x.step === entry.step);
+            if (run?.result && entry.elapsedMs === undefined) Object.assign(entry, { elapsedMs: run.result.elapsedMs ?? null, processMs: run.durationMs ?? null });
+        }
+        return cycleRoundFacts(r, state.entries, startUsers);
+    };
+    let stop = null;
+    const notRun = (r, why) => ({ ...cycleRoundFacts(r, []), ran: false, notRun: why });
+    // 4. start round
+    const start = await runRound(plan.start, null, null);
+    const startStop = cycleStopReason(start, { start: true, aborted: state.aborted });
+    if (startStop) stop = { ...startStop, after: plan.start.tag };
+    const startUsers = start.users;
+    const startCounts = startUsers ? { apc: startUsers.apc.length, vbe: startUsers.vbe.length } : null;
+    // 5. rounds (copy first), 6. final list
+    const facts = [];
+    for (const r of plan.rounds) {
+        if (stop) { facts.push(notRun(r, `stopped after round ${stop.after}`)); continue; }
+        const f = await runRound(r, startCounts, startUsers);
+        facts.push(f);
+        const why = cycleStopReason(f, { aborted: state.aborted });
+        if (why) stop = { ...why, after: r.tag };
+    }
+    let final;
+    if (stop) final = notRun(plan.final, `stopped after round ${stop.after}`);
+    else {
+        final = await runRound(plan.final, startCounts, startUsers);
+        const why = cycleStopReason(final, { aborted: state.aborted });
+        if (why) stop = { ...why, after: plan.final.tag };
+    }
+    if (stop) {
+        stop.notRun = [...facts, final].filter(f => !f.ran).map(f => f.tag);
+        report.notes.push(`Stopped (${stop.kind}) after round ${stop.after}: ${stop.reason}`);
+        if (stop.kind === 'fatal') report.notes.push('CATIA may be unstable: restart CATIA before anything else (do not save the C5D_Bridge projects).');
+    }
+    report.stop = stop;
+    report.steps = steps.map(s => s.name);
+    const { entries } = state;
+    // 7. end: file facts, then the files of this run that CATIA does not hold any more are deleted (normally none: closed files stay locked)
+    for (const [key, f] of Object.entries(report.files)) {
+        const file = key === 'a' ? a : all.find(r => r.tag === key)?.path;
+        if (file) Object.assign(f, { stateAtEnd: fileState(file), lockAtEnd: lockProbe(file) });
+    }
+    report.bridge.targetAtEnd = report.files.a.stateAtEnd;
+    report.bridge.lockAtEnd = report.files.a.lockAtEnd;
+    report.cleanup = cleanupProbeFiles(all.filter(r => fs.existsSync(r.path)).map(r => ({ key: r.tag, path: r.path, linkOf: r.method === 'hardlink' ? a : undefined })));
+    const kept = report.cleanup.filter(c => c.action !== 'deleted' && c.action !== 'missing');
+    if (kept.length) report.notes.push(`Files of this run left in ${dir} (${kept.map(c => `${path.basename(c.path)}: ${c.action}`).join(', ')}); `
+        + 'CATIA holds them until it exits (a hard link holds A). The next --cycle-experiment deletes them after a CATIA restart.');
+    const aEnd = { unchanged: fileState(a).sha256 === aSha256, readOnly: readOnlyOf(a), links: linksOf(a), lock: lockProbe(a) };
+    if (!aEnd.unchanged) report.notes.push(`${a} changed during the run.`);
+    if (aEnd.readOnly !== true) report.notes.push(`${a} is NOT read-only at the end.`);
+    report.notes.push('CATIA was changed by this run (C5D_Bridge copies loaded and closed). Restart CATIA before the next probe run.');
+    finish({ preCheck, preCleanup, master, start, facts, final, stop, cleanup: report.cleanup, aEnd }, entries, first.snapshot.loaded);
+    report.summary.lists = Object.fromEntries(steps.filter(s => s.info === 'cy').map(s => [s.name, parseSxList(entries.find(e => e.step === s.name)?.result)]));
+    if (stop || state.aborted) process.exitCode = 1;
+}
+/** Summary of --cycle-experiment: pre-check and cleanup before the run, then as formatReloadSummary. */
+function formatCycleSummary(report) {
+    const text = formatReloadSummary(report).split('\n');
+    const lines = [];
+    if (report.cycle) lines.push(`cycle: methods ${report.cycle.methods.join(' -> ')}, ${report.cycle.rounds} rounds each, read ${report.cycle.readProject}.${report.cycle.readModule}`);
+    for (const f of report.preCheck?.files ?? []) lines.push(`precheck ${f.role} ${f.name}${f.hardlinkOfA ? ' (hard link of A)' : ''}: ${lockWord(f.lock)}`);
+    for (const c of report.preCleanup?.items ?? []) lines.push(`cleanup before run ${c.key}: ${c.action}${c.error ? ` (${c.error})` : ''}`);
+    return [...text.slice(0, 2), ...lines, ...text.slice(2)].join('\n');
+}
+
 /** temp/<prefix>-<time>.json; never overwrites an earlier report. */
 function uniqueReportPath(directory, prefix = 'probe-bridge') {
     const base = path.join(directory, `${prefix}-${timestamp()}`);
@@ -3533,6 +4155,9 @@ function formatUnloadSummary(report) {
             else if (run.kind === 'read-timer-log') {
                 lines.push(`  ${run.step}: ${run.log === null ? 'log MISSING' : `${run.log.split(/\r?\n/).filter(Boolean).length} lines`}  ${tail}`);
                 for (const line of (run.log ?? '').split(/\r?\n/).filter(Boolean)) lines.push(`    | ${line}`);
+            } else if (run.kind === 'copy') {
+                lines.push(`  ${run.step}: copy ${run.ok ? 'ok' : `FAILED (${run.error})`} readOnly=${yn(run.readOnly)} sha256=A ${yn(run.sha256Same)} `
+                    + `separate file=${yn(run.sameFile === null ? null : !run.sameFile)} ${run.durationMs}ms  ${tail}`);
             } else if (run.kind === 'link') {
                 lines.push(`  ${run.step}: hard link ${run.ok ? 'ok' : `FAILED (${run.error})`} sameFile=${yn(run.sameFile)} links=${run.links ?? '-'} `
                     + `A readOnly=${yn(run.aReadOnly)} ${run.durationMs}ms  ${tail}`);
@@ -3620,7 +4245,7 @@ function formatReadonlyCheck(report) {
 const REPORT_PREFIXES = { 'unload-experiment': 'probe-bridge-unload', 'unload-cleanup': 'probe-bridge-unload-cleanup',
     'readonly-fresh': 'probe-bridge-readonly-fresh', 'readonly-fresh-check': 'probe-bridge-readonly-fresh-check',
     'remove-experiment': 'probe-bridge-remove', 'remove-experiment-risky': 'probe-bridge-remove-risky', 'reload-experiment': 'probe-bridge-reload',
-    'self-close-experiment': 'probe-bridge-selfclose' };
+    'self-close-experiment': 'probe-bridge-selfclose', 'cycle-experiment': 'probe-bridge-cycle' };
 /** Runner, summary formatter and report prefix of a parsed mode (not 'help'). */
 function dispatch(options) {
     switch (options.mode) {
@@ -3631,6 +4256,7 @@ function dispatch(options) {
         case 'remove-experiment': case 'remove-experiment-risky': return { run: runRemove, format: formatUnloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'reload-experiment': return { run: runReload, format: formatReloadSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'self-close-experiment': return { run: runSelfClose, format: formatSelfCloseSummary, prefix: REPORT_PREFIXES[options.mode] };
+        case 'cycle-experiment': return { run: runCycle, format: formatCycleSummary, prefix: REPORT_PREFIXES[options.mode] };
         case 'run': return { run: runBridge, format: formatSummary, prefix: 'probe-bridge' };
         default: throw new Error(`no runner for mode ${options.mode}`);
     }
@@ -3665,4 +4291,7 @@ module.exports = { parseArgs, encodeToken, callArgs, matchStep, matchCall, codep
     judgeReload, runReload, formatReloadSummary, RL_ROUNDS, RL_FINAL, RL_CLOSE_ACTIONS, rlModule, rlFunc,
     SX_MODULE, SXB_MODULE, SX_SOURCE, SXB_SOURCE, SX_ROUNDS, SX_FINAL, SX_CLOSE_ACTION, SX_MAX_TARGETS, sxCloseActions, sxLiteral, parseSxList, parseWho,
     whoIsSelf, sxUserProjects, userDiff, buildSelfCloseStart, buildSelfCloseTargets, buildSelfCloseB, buildSelfCloseRounds, selfCloseRounds,
-    selfCloseTargets, selfCloseStepNames, reloadLeftovers, sxCloseFacts, judgeSelfClose, runSelfClose, formatSelfCloseSummary };
+    selfCloseTargets, selfCloseStepNames, reloadLeftovers, sxCloseFacts, judgeSelfClose, runSelfClose, formatSelfCloseSummary,
+    CY_MODULE, CY_SOURCE, CY_READ_PROJECT, CY_READ_MODULE, CY_METHODS, CY_DEFAULT_ROUNDS, CY_MAX_ROUNDS, CY_START, CY_FINAL, CY_CLOSE_ACTION,
+    parseCycleOptions, cycleRounds, cyCloseActions, cycleListOk, buildCycleRound, cycleStepNames, cycleFatal, prepareCycleFile, scanBridgeFolder,
+    cleanupBridgeLeftovers, cycleRoundFacts, cycleStopReason, judgeCycle, runCycle, formatCycleSummary };
