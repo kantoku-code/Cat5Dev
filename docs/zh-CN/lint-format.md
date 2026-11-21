@@ -37,6 +37,7 @@ enabled = true
 | VBA007 | `Sub` / `Function` 的行数过多 | 警告 | `max_function_lines` | `300`（行。`0` 为禁用） |
 | VBA008 | 括号不匹配 | 错误 | `unmatched_parens` | `true` |
 | VBA009 | 缺少 `End If` / `End Sub` / `End Function` 等 | 错误 | `unmatched_blocks` | `true` |
+| VBA010 | 存在 CATIA 的 VBA 无法表示的字符（表情符号等）（[见下文](#vba010-catia-的-vba-无法表示的字符)） | 警告 | `non_ansi_character` | `true` |
 
 `true` / `false` 类规则设为 `false` 即禁用，数值类规则设为 `0` 即禁用。
 
@@ -51,10 +52,39 @@ max_nesting_depth    = 5
 max_function_lines   = 300
 unmatched_parens     = true
 unmatched_blocks     = true
+non_ansi_character   = true
+ansi_code_page       = 0     # VBA010 判断所用的代码页（0 = 自动检测）
 ```
 
+### VBA010: CATIA 的 VBA 无法表示的字符
+CATIA 的 VBA 以 Windows 系统的 ANSI 代码页保存模块正文（简体中文版 Windows 为代码页 936 = GBK，日语版为 932 = Shift-JIS 等）。该代码页无法表示的字符在 Push 时会**在没有任何提示的情况下被替换为 `?` 等其他字符**（参见 [字符编码](sync.md#字符编码)）。VBA010 会在 Push 之前对这类字符发出警告。
+
+```vba
+MsgBox "完成🙂"   ' 对 🙂 发出警告：Push 后会变成 ?
+```
+
+- 无论字符出现在标识符、字符串还是注释中，都会检查。
+- 逐个字符检查“转换为代码页后再转换回来是否与原字符相同”。连续的字符合并为一条警告，波浪线只标在这些字符上。
+- 消息示例：`CATIA 的 VBA（代码页 936）无法表示此字符，Push 后会被替换为 ? 等其他字符: 🙂`
+- 代码页 936 下，表情符号（`🙂` 等）、韩文、半角片假名（`ｱ`）等会发出警告，汉字、`①` 等不会。代码页 932 下，半角片假名不会发出警告，但 `〜`（U+301C，Push 后变为 `～`）、`−`（U+2212）、`¥`（变为 `\`）等会发出警告。
+
+#### 判断所用的代码页
+通过 `[lint.rules]` 的 `ansi_code_page` 指定。
+
+| 值 | 行为 |
+|----|------|
+| `0`（默认） | 使用本机系统的 ANSI 代码页。扩展启动时仅读取一次注册表 `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` 中的 `ACP`。读取失败时，根据 VSCode 的显示语言推定（中文（简体）→ 936、中文（繁体）→ 950、韩语 → 949、其他 → 932） |
+| `936`、`932` 等 | 使用指定的代码页。运行 CATIA 的电脑与编辑此工作区的电脑系统代码页不同时请指定。也可以写成 `"cp936"` 或 `"auto"`（= `0`） |
+
+- 所用的代码页会在输出面板“CATIA VBA Sync”中记录一行，例如 `[vba-lint] 系统的 ANSI 代码页: 936 …`。
+- 支持的代码页为 874、932、936、949、950、1250～1258。其他代码页（例如启用 Windows 的“Beta 版: 使用 Unicode UTF-8 提供全球语言支持”时的 65001）会禁用 VBA010，并在输出面板中记录。
+- 更改 Windows 的系统区域设置后，请重新启动 VSCode 以重新检测。
+
+> [!IMPORTANT]
+> `ansi_code_page` **仅用于 Lint 的 VBA010 判断**。它与 0.7.0 中废弃的 `[project]` 的 `encoding`（与 CATIA 交换数据时使用的字符编码）无关，不会影响 Push / Pull 的行为。
+
 ### 注意事项
-- 无论显示语言如何设置，Lint 消息始终以日语显示。
+- 无论显示语言如何设置，VBA001～VBA009 的消息始终以日语显示。VBA010 的消息会按照显示语言（日语、英语、中文）显示。
 - VBA005 只检查 `Dim` 中的第一个变量（`Dim a, b` 中只检查 `a`）。检查对象是过程内的 `Dim`，不包括 `Private` / `Public` / `Static` 声明。
 - VBA006 将过程本身计为 1 层。`Select Case` 计为 2 层。
 - 检测不存在的成员（来源 `vba-ls`）是与 Lint 不同的功能。请参阅 [IntelliSense](intellisense.md#检测不存在的成员)。

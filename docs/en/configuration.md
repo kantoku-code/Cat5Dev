@@ -74,6 +74,8 @@ max_nesting_depth = 5
 max_function_lines = 300
 unmatched_parens = true
 unmatched_blocks = true
+non_ansi_character = true
+ansi_code_page = 0           # code page used by VBA010 (0 = detect automatically)
 
 [formatter]
 enabled = false              # true to enable the formatter
@@ -107,6 +109,8 @@ breadcrumbs_sort = "name"    # Breadcrumbs sort order: position / name / type
 ### [lint] / [lint.rules]
 See [Lint and Formatter](lint-format.md#vba-lint).
 
+`ansi_code_page` is the code page used only by VBA010, which warns about characters that Push replaces with `?` (see [VBA010](lint-format.md#vba010-characters-that-catia-vba-cannot-represent)). It is a different setting from the former `encoding` in `[project]` above and does not change how Push / Pull work.
+
 ### [formatter]
 See [Lint and Formatter](lint-format.md#vba-formatter).
 
@@ -126,7 +130,7 @@ See [Lint and Formatter](lint-format.md#vba-formatter).
 Notifications and dialog messages can be shown in Japanese, English, or Chinese (Simplified). Switch with the 🌐 button at the top of the panel (`CATIA: Switch Language`).
 
 - After switching, messages appear in the new language immediately (no reload needed).
-- Tree labels (Modules, etc.), command names, and Lint messages are not translated.
+- Tree labels (Modules, etc.), command names, and Lint messages (except VBA010) are not translated.
 
 The language is determined in this order:
 

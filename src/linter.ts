@@ -2,6 +2,9 @@ import * as vscode from 'vscode';
 import { VbaServer, httpPost } from './vbaServer';
 import { readLintOptions, LintOptions } from './lintConfig';
 import { t } from './i18n';
+import {
+    NON_ANSI_DIAGNOSTIC_CODE, detectSystemAnsiCodePage, findNonAnsiRanges, getAnsiCharChecker,
+} from './ansiCodePage';
 
 const LINT_TIMEOUT_MS = 10000;
 const DEBOUNCE_MS = 500;
@@ -33,7 +36,9 @@ async function callLint(
         return null;
     }
 
-    const body = JSON.stringify({ code: text, options });
+    // VBA010（non_ansi_character）は拡張機能側で判定するので、Go には送らない
+    const { non_ansi_character: _nonAnsi, ansi_code_page: _codePage, ...goOptions } = options;
+    const body = JSON.stringify({ code: text, options: goOptions });
     try {
         const raw = await httpPost(`${baseUrl}/lint`, body, LINT_TIMEOUT_MS);
         const resp = JSON.parse(raw) as LintResponse;
@@ -76,6 +81,10 @@ export class VbaLinter implements vscode.Disposable {
     private readonly collection: vscode.DiagnosticCollection;
     private readonly timers = new Map<string, NodeJS.Timeout>();
     private workspaceRoot: string | undefined;
+    /** システムの ANSI コードページ。起動時に 1 回だけ非同期で検出する */
+    private readonly systemCodePage: Promise<number>;
+    /** 対応外として一度ログに出したコードページ（同じログを繰り返さない） */
+    private readonly reportedUnsupported = new Set<number>();
 
     constructor(
         private readonly server: VbaServer,
@@ -83,6 +92,38 @@ export class VbaLinter implements vscode.Disposable {
     ) {
         this.collection = vscode.languages.createDiagnosticCollection('cat5dev-lint');
         this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        this.systemCodePage = detectSystemAnsiCodePage(vscode.env.language).then(r => {
+            this.outputChannel.appendLine(r.source === 'registry'
+                ? t('log.vbalint.ansiCodePageDetected', String(r.codePage))
+                : t('log.vbalint.ansiCodePageFallback', String(r.codePage), r.reason ?? ''));
+            return r.codePage;
+        });
+    }
+
+    /** VBA010: CATIA の VBA（ANSI コードページ）で往復できない文字を警告する */
+    private async nonAnsiDiagnostics(text: string, options: LintOptions): Promise<vscode.Diagnostic[]> {
+        if (!options.non_ansi_character) {
+            return [];
+        }
+        const codePage = options.ansi_code_page > 0 ? options.ansi_code_page : await this.systemCodePage;
+        const checker = getAnsiCharChecker(codePage);
+        if (!checker) {
+            if (!this.reportedUnsupported.has(codePage)) {
+                this.reportedUnsupported.add(codePage);
+                this.outputChannel.appendLine(t('log.vbalint.ansiCodePageUnsupported', String(codePage)));
+            }
+            return [];
+        }
+        return findNonAnsiRanges(text, checker).map(r => {
+            const diag = new vscode.Diagnostic(
+                new vscode.Range(r.line, r.startCol, r.line, r.endCol),
+                t('lint.nonAnsiCharacter', String(codePage), r.text),
+                vscode.DiagnosticSeverity.Warning,
+            );
+            diag.code = NON_ANSI_DIAGNOSTIC_CODE;
+            diag.source = 'cat5dev';
+            return diag;
+        });
     }
 
     /** ドキュメントを即座に Lint する */
@@ -95,13 +136,17 @@ export class VbaLinter implements vscode.Disposable {
             return;
         }
 
-        const diags = await callLint(document.getText(), options, this.server, this.outputChannel);
-        if (diags === null) {
-            return;
-        }
+        const text = document.getText();
+        const [diags, nonAnsi] = await Promise.all([
+            callLint(text, options, this.server, this.outputChannel),
+            this.nonAnsiDiagnostics(text, options),
+        ]);
 
-        const vsDiags = diags.map(d => toVscodeDiagnostic(d, document));
-        this.collection.set(document.uri, vsDiags);
+        // Go の Lint に失敗したときは、前回の Go の診断を残して VBA010 だけ更新する
+        const goDiags = diags === null
+            ? (this.collection.get(document.uri) ?? []).filter(d => d.code !== NON_ANSI_DIAGNOSTIC_CODE)
+            : diags.map(d => toVscodeDiagnostic(d, document));
+        this.collection.set(document.uri, [...goDiags, ...nonAnsi]);
     }
 
     /** デバウンス付き Lint（編集中のリアルタイム実行用） */

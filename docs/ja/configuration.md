@@ -74,6 +74,8 @@ max_nesting_depth = 5
 max_function_lines = 300
 unmatched_parens = true
 unmatched_blocks = true
+non_ansi_character = true
+ansi_code_page = 0           # VBA010 の判定に使うコードページ（0 = 自動検出）
 
 [formatter]
 enabled = false              # true でフォーマッタを有効にする
@@ -107,6 +109,8 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 ### [lint] / [lint.rules]
 [Lint とフォーマッタ](lint-format.md#vba-lint) を参照してください。
 
+`ansi_code_page` は、Push で `?` に置き換わる文字を警告する VBA010 の判定だけに使うコードページです（[VBA010](lint-format.md#vba010-catia-の-vba-で表せない文字) を参照）。上の `[project]` の旧 `encoding` とは別の設定で、Push / Pull の動作には影響しません。
+
 ### [formatter]
 [Lint とフォーマッタ](lint-format.md#vba-フォーマッタ) を参照してください。
 
@@ -126,7 +130,7 @@ breadcrumbs_sort = "name"    # パンくずリストの並び順 position / name
 通知やダイアログのメッセージを日本語・英語・中国語（簡体字）で表示できます。パネル上部の 🌐 ボタン（`CATIA: Switch Language`）で切り替えます。
 
 - 切り替えるとメッセージはすぐに新しい言語になります（再読み込みは不要です）。
-- ツリーの表示名（Modules など）、コマンド名、Lint のメッセージは翻訳されません。
+- ツリーの表示名（Modules など）、コマンド名、Lint のメッセージ（VBA010 を除く）は翻訳されません。
 
 言語は次の順に決まります。
 

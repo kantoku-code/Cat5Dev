@@ -12,6 +12,10 @@ export interface LintOptions {
     max_function_lines: number;
     unmatched_parens: boolean;
     unmatched_blocks: boolean;
+    /** VBA010: CATIA の VBA（ANSI コードページ）で表せない文字を警告する。Go の /lint には送らない */
+    non_ansi_character: boolean;
+    /** VBA010 の判定に使うコードページ。0 = システムの ANSI コードページを自動検出。Go の /lint には送らない */
+    ansi_code_page: number;
 }
 
 export const DEFAULT_LINT_OPTIONS: LintOptions = {
@@ -24,6 +28,23 @@ export const DEFAULT_LINT_OPTIONS: LintOptions = {
     max_function_lines: 300,
     unmatched_parens: true,
     unmatched_blocks: true,
+    non_ansi_character: true,
+    ansi_code_page: 0,
+};
+
+/** Lint 全体が無効（cat5dev.toml が無い、または [lint] enabled = false）のときの値 */
+const DISABLED_LINT_OPTIONS: LintOptions = {
+    option_explicit: false,
+    on_error_resume_next: false,
+    goto: false,
+    max_line_length: 0,
+    unused_variables: false,
+    max_nesting_depth: 0,
+    max_function_lines: 0,
+    unmatched_parens: false,
+    unmatched_blocks: false,
+    non_ansi_character: false,
+    ansi_code_page: 0,
 };
 
 /**
@@ -78,21 +99,21 @@ function getInt(map: Record<string, string>, key: string, def: number): number {
     return isNaN(n) ? def : n;
 }
 
+/** コードページの値を読む。`932` / `"932"` / `"cp932"` / `"auto"`（= 0）を受け付ける。不正値は def */
+function getCodePage(map: Record<string, string>, key: string, def: number): number {
+    const v = map[key];
+    if (v === undefined) { return def; }
+    const s = v.replace(/^"|"$/g, '').trim().toLowerCase();
+    if (s === 'auto') { return 0; }
+    const m = /^(?:cp|windows-?)?(\d+)$/.exec(s);
+    return m ? parseInt(m[1], 10) : def;
+}
+
 /** ワークスペースルートの cat5dev.toml を読み込んで LintOptions を返す */
 export function readLintOptions(workspaceRoot: string): LintOptions {
     const tomlPath = path.join(workspaceRoot, 'cat5dev.toml');
     if (!fs.existsSync(tomlPath)) {
-        return {
-            option_explicit: false,
-            on_error_resume_next: false,
-            goto: false,
-            max_line_length: 0,
-            unused_variables: false,
-            max_nesting_depth: 0,
-            max_function_lines: 0,
-            unmatched_parens: false,
-            unmatched_blocks: false,
-        };
+        return { ...DISABLED_LINT_OPTIONS };
     }
 
     let content: string;
@@ -107,17 +128,7 @@ export function readLintOptions(workspaceRoot: string): LintOptions {
     // [lint] セクションで enabled = false（デフォルト）なら全ルール無効
     const lintSection = toml['lint'] ?? {};
     if (getBool(lintSection, 'enabled', false) === false) {
-        return {
-            option_explicit: false,
-            on_error_resume_next: false,
-            goto: false,
-            max_line_length: 0,
-            unused_variables: false,
-            max_nesting_depth: 0,
-            max_function_lines: 0,
-            unmatched_parens: false,
-            unmatched_blocks: false,
-        };
+        return { ...DISABLED_LINT_OPTIONS };
     }
 
     const rules = toml['lint.rules'] ?? {};
@@ -131,6 +142,8 @@ export function readLintOptions(workspaceRoot: string): LintOptions {
         max_function_lines:  getInt (rules, 'max_function_lines',   DEFAULT_LINT_OPTIONS.max_function_lines),
         unmatched_parens:    getBool(rules, 'unmatched_parens',     DEFAULT_LINT_OPTIONS.unmatched_parens),
         unmatched_blocks:    getBool(rules, 'unmatched_blocks',     DEFAULT_LINT_OPTIONS.unmatched_blocks),
+        non_ansi_character:  getBool(rules, 'non_ansi_character',   DEFAULT_LINT_OPTIONS.non_ansi_character),
+        ansi_code_page:      getCodePage(rules, 'ansi_code_page',   DEFAULT_LINT_OPTIONS.ansi_code_page),
     };
 }
 
@@ -330,6 +343,8 @@ const tomlComments = {
         maxFunctionLines: '# Sub/Function の行数が閾値を超えた場合に警告 (0 = 無効)',
         unmatchedParens: '# 括弧の不一致をエラーとして報告',
         unmatchedBlocks: '# End If / End Sub / End Function 等の欠落をエラーとして報告',
+        nonAnsiCharacter: '# CATIA の VBA（Windows の ANSI コードページ）で表せない文字を警告 (Push すると ? などに置き換わるため)',
+        ansiCodePage: '# non_ansi_character の判定に使うコードページ (0 = システムの設定を自動検出、932 = 日本語、936 = 簡体字中国語 など)\n# [project] の旧 encoding とは別の設定です',
         formatterEnabled: '# フォーマッターの有効/無効',
         indentSize: '# インデントのスペース数',
         capitalizeKeywords: '# VBA キーワードを大文字化 (If, Dim, Sub 等)',
@@ -359,6 +374,8 @@ const tomlComments = {
         maxFunctionLines: '# Warn when a Sub/Function exceeds the line count threshold (0 = disabled)',
         unmatchedParens: '# Report mismatched parentheses as an error',
         unmatchedBlocks: '# Report missing End If / End Sub / End Function etc. as an error',
+        nonAnsiCharacter: '# Warn about characters that CATIA VBA (the Windows ANSI code page) cannot represent (Push replaces them with ? or similar)',
+        ansiCodePage: '# Code page used by non_ansi_character (0 = detect the system setting, 932 = Japanese, 936 = Simplified Chinese, etc.)\n# Not related to the former [project] encoding setting',
         formatterEnabled: '# Enable or disable the formatter entirely',
         indentSize: '# Number of spaces per indentation level',
         capitalizeKeywords: '# Capitalize VBA keywords (If, Dim, Sub, etc.)',
@@ -388,6 +405,8 @@ const tomlComments = {
         maxFunctionLines: '# Sub/Function 行数超过阈值时发出警告 (0 = 禁用)',
         unmatchedParens: '# 将括号不匹配报告为错误',
         unmatchedBlocks: '# 将缺少 End If / End Sub / End Function 等报告为错误',
+        nonAnsiCharacter: '# 对 CATIA 的 VBA（Windows 的 ANSI 代码页）无法表示的字符发出警告 (Push 后会被替换为 ? 等字符)',
+        ansiCodePage: '# non_ansi_character 判断所用的代码页 (0 = 自动检测系统设置，936 = 简体中文，932 = 日语 等)\n# 与旧版 [project] 的 encoding 设置无关',
         formatterEnabled: '# 启用或禁用格式化程序',
         indentSize: '# 每个缩进级别的空格数',
         capitalizeKeywords: '# 自动大写 VBA 关键字 (If, Dim, Sub 等)',
@@ -450,6 +469,12 @@ unmatched_parens = ${l.unmatched_parens}
 
 ${c.unmatchedBlocks}
 unmatched_blocks = ${l.unmatched_blocks}
+
+${c.nonAnsiCharacter}
+non_ansi_character = ${l.non_ansi_character}
+
+${c.ansiCodePage}
+ansi_code_page = ${l.ansi_code_page}
 
 [formatter]
 ${c.formatterEnabled}

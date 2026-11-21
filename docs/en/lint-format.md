@@ -37,6 +37,7 @@ enabled = true
 | VBA007 | `Sub` / `Function` has too many lines | Warning | `max_function_lines` | `300` (lines; `0` disables) |
 | VBA008 | Unmatched parentheses | Error | `unmatched_parens` | `true` |
 | VBA009 | Missing `End If` / `End Sub` / `End Function`, etc. | Error | `unmatched_blocks` | `true` |
+| VBA010 | Characters that CATIA VBA cannot represent (emoji, etc.) ([below](#vba010-characters-that-catia-vba-cannot-represent)) | Warning | `non_ansi_character` | `true` |
 
 `true` / `false` rules are disabled with `false`, and numeric rules are disabled with `0`.
 
@@ -51,10 +52,45 @@ max_nesting_depth    = 5
 max_function_lines   = 300
 unmatched_parens     = true
 unmatched_blocks     = true
+non_ansi_character   = true
+ansi_code_page       = 0     # code page used by VBA010 (0 = detect automatically)
 ```
 
+### VBA010: Characters that CATIA VBA cannot represent
+CATIA VBA stores module text in the Windows system ANSI code page (code page 932 = Shift-JIS on Japanese Windows, 936 = GBK on Simplified Chinese Windows, and so on). Characters that this code page cannot represent are **silently replaced with `?` or another character when you Push** (see [Character encoding](sync.md#character-encoding)). VBA010 warns you about such characters before you Push.
+
+```vba
+MsgBox "Done🙂"   ' warning on 🙂: Push turns it into ?
+```
+
+- Characters are checked wherever they appear: identifiers, strings, and comments.
+- Each character is checked by converting it to the code page and back; if the result differs, it is reported. Consecutive characters are combined into one warning, and the squiggle covers exactly those characters.
+- Example message: `CATIA VBA (code page 932) cannot represent this character, so Push replaces it with ? or another character: 🙂`
+- Examples for code page 932:
+
+  | Warned | Not warned |
+  |--------|------------|
+  | Emoji (such as `🙂`), Hangul, `〜` (U+301C; Push turns it into `～`), `−` (U+2212), `¥` (becomes `\`), no-break space | Kanji, hiragana, katakana, half-width katakana (`ｱ`), circled numbers (`①`), `～` (full-width tilde U+FF5E), `㈱` |
+
+  With code page 936, half-width katakana (`ｱ`) and similar characters are warned.
+
+#### Code page used for the check
+Set it with `ansi_code_page` in `[lint.rules]`.
+
+| Value | Behavior |
+|-------|----------|
+| `0` (default) | Uses the system ANSI code page of this PC. When the extension starts, it reads `ACP` under the registry key `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` once. If that fails, it estimates the code page from the VSCode display language (Chinese (Simplified) → 936, Chinese (Traditional) → 950, Korean → 949, others → 932) |
+| `932`, `936`, etc. | Uses the specified code page. Set this when the PC running CATIA and the PC editing this workspace have different system code pages. You can also write `"cp936"` or `"auto"` (= `0`) |
+
+- The code page in use is logged as one line in the "CATIA VBA Sync" output panel, such as `[vba-lint] System ANSI code page: 932 …`.
+- Supported code pages are 874, 932, 936, 949, 950, and 1250–1258. For any other code page (for example 65001, used when Windows' "Beta: Use Unicode UTF-8 for worldwide language support" is enabled), VBA010 is disabled and a note is written to the output panel.
+- If you change the Windows system locale, restart VSCode to detect it again.
+
+> [!IMPORTANT]
+> `ansi_code_page` is used **only for the VBA010 lint check**. It is unrelated to `encoding` in `[project]` (the encoding used for exchanging code with CATIA), which was removed in 0.7.0, and it does not change how Push / Pull work.
+
 ### Notes
-- Lint messages are always shown in Japanese, regardless of the display language setting.
+- Messages of VBA001–VBA009 are always shown in Japanese, regardless of the display language setting. VBA010 messages follow the display language (Japanese, English, or Chinese).
 - VBA005 checks only the first variable of a `Dim` statement (only `a` in `Dim a, b`). It covers `Dim` inside procedures; `Private` / `Public` / `Static` declarations are not checked.
 - VBA006 counts the procedure itself as one level. `Select Case` counts as two levels.
 - Nonexistent member detection (source `vba-ls`) is a separate feature from Lint. See [IntelliSense](intellisense.md#nonexistent-member-detection).
