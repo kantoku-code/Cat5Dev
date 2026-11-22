@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { fixture } = require('./helpers');
+const { fixture, shortPath } = require('./helpers');
 const { BridgeFiles, BridgeFileError, LINK_NAME, MASTER_NAME, fileLockState, defaultBridgeDir } = require('../out/bridgeFiles');
 
 const readOnly = file => (fs.statSync(file).mode & 0o200) === 0;
@@ -117,4 +117,21 @@ test('an unknown lock state keeps the file', t => {
     const prepared = files.prepare();
     assert.ok(fs.existsSync(link));
     assert.deepEqual(prepared.cleanup.map(e => e.action), ['kept (lock unknown)']);
+});
+test('the master path uses the long name of the bridge folder (fs.realpathSync.native expands 8.3 short names)', t => {
+    const { files, bridgeDir, master, bundledPath } = setup(t);
+    fs.mkdirSync(bridgeDir, { recursive: true });
+    const calls = [];
+    const native = fs.realpathSync.native;
+    fs.realpathSync.native = (file, ...rest) => { calls.push(file); return native(file, ...rest); };
+    const expected = path.join(native(bridgeDir), path.basename(master));
+    try { assert.equal(files.prepare().master, expected); }
+    finally { fs.realpathSync.native = native; }
+    assert.ok(calls.includes(bridgeDir), JSON.stringify(calls));
+    const short = shortPath(bridgeDir);
+    if (!short) { t.diagnostic('no 8.3 short name on this volume; the short-path half is skipped'); return; }
+    const viaShort = new BridgeFiles({ bundledPath, bridgeDir: short });
+    const prepared = viaShort.prepare();
+    assert.equal(prepared.master, expected, `${short} -> ${prepared.master}`);
+    assert.equal(viaShort.masterPath(), expected);
 });

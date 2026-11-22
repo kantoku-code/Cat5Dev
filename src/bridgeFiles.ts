@@ -65,8 +65,15 @@ export class BridgeFiles {
         }
         return this.bundled.sha256;
     }
+    /**
+     * The bridge folder by its long, canonical name: fs.realpathSync.native expands 8.3 short names
+     * (%LOCALAPPDATA% may be C:\Users\LONGUS~1\...), so --bridge never carries them. As configured while the folder does not exist.
+     */
+    directory(): string {
+        try { return fs.realpathSync.native(this.bridgeDir); } catch { return this.bridgeDir; }
+    }
     masterPath(sha8 = this.bundledHash().slice(0, 8)): string {
-        return path.join(this.bridgeDir, `C5D_Bridge-${sha8}.catvba`);
+        return path.join(this.directory(), `C5D_Bridge-${sha8}.catvba`);
     }
     /** Cleans up (2.3), then makes sure the read-only master exists (2.1). Returns the absolute master path for --bridge. */
     prepare(): BridgePreparation {
@@ -84,13 +91,14 @@ export class BridgeFiles {
      */
     cleanup(sha8: string): CleanupEntry[] {
         let names: fs.Dirent[];
-        try { names = fs.readdirSync(this.bridgeDir, { withFileTypes: true }); } catch { return []; }
+        const directory = this.directory();
+        try { names = fs.readdirSync(directory, { withFileTypes: true }); } catch { return []; }
         const entries: CleanupEntry[] = [];
         for (const entry of names) {
             if (!entry.isFile()) { continue; }
             const master = MASTER_NAME.exec(entry.name);
             if (!LINK_NAME.test(entry.name) && !(master && master[1].toLowerCase() !== sha8)) { continue; }
-            const file = path.join(this.bridgeDir, entry.name);
+            const file = path.join(directory, entry.name);
             const lock = this.lockState(file);
             if (lock !== 'unlocked') { entries.push({ file, action: lock === 'locked' ? 'kept (locked)' : 'kept (lock unknown)' }); continue; }
             try {

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -22,8 +23,9 @@ internal sealed class RunOptions
     static readonly Regex MasterName = new Regex(@"^C5D_Bridge-[0-9a-f]{8}\.catvba$", RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// --bridge / --request / --result（どれも必須・1 回だけ・順不同、値は Path.GetFullPath しても変わらない絶対パス）と
+    /// --bridge / --request / --result（どれも必須・1 回だけ・順不同、値は完全修飾の絶対パス。PathNames.CheckAbsolute）と
     /// --validate-only（1 回まで）。--request と --result は同じフォルダ、--result は未作成、--bridge は正本の名前で存在すること。
+    /// 値は検証の後で長い名前（PathNames.Long。8.3 短縮名を展開）にして返す。
     /// </summary>
     public static RunOptions Parse(string[] args)
     {
@@ -45,7 +47,8 @@ internal sealed class RunOptions
             {
                 throw new InvalidInputException(arg + " is given twice");
             }
-            CheckAbsolute(arg, value);
+            PathNames.CheckAbsolute(arg, value);
+            value = PathNames.Long(value);
             if (arg == "--bridge") { options.Bridge = value; }
             else if (arg == "--request") { options.Request = value; }
             else { options.Result = value; }
@@ -53,11 +56,11 @@ internal sealed class RunOptions
         if (options.Bridge == null) { throw new InvalidInputException("--bridge is required"); }
         if (options.Request == null) { throw new InvalidInputException("--request is required"); }
         if (options.Result == null) { throw new InvalidInputException("--result is required"); }
-        if (!string.Equals(Path.GetDirectoryName(options.Request), Path.GetDirectoryName(options.Result), StringComparison.OrdinalIgnoreCase))
+        if (!PathNames.Same(PathNames.Parent(options.Request), PathNames.Parent(options.Result)))
         {
             throw new InvalidInputException("--request and --result must be in the same folder");
         }
-        if (string.Equals(options.Request, options.Result, StringComparison.OrdinalIgnoreCase))
+        if (PathNames.Same(options.Request, options.Result))
         {
             throw new InvalidInputException("--request and --result must differ");
         }
@@ -69,16 +72,99 @@ internal sealed class RunOptions
         if (!File.Exists(options.Bridge)) { throw new InvalidInputException("--bridge does not exist: " + options.Bridge); }
         return options;
     }
+}
 
-    static void CheckAbsolute(string option, string value)
+/// <summary>
+/// パスの検査と比較（docs/dev/bridge-contract.md 3 章）。.NET Framework の Path.GetFullPath は 8.3 短縮名（例 C:\Users\LONGUS~1）を
+/// 長い名前に展開することがあるため、「GetFullPath しても変わらない」ことでは絶対パスを判定しない。
+/// 比べるときは両側を GetLongPathName で長い名前にしてから大小無視で比べる（長い名前が同じなら同じファイル）。
+/// </summary>
+internal static class PathNames
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetLongPathNameW(string lpszShortPath, StringBuilder lpszLongPath, uint cchBuffer);
+
+    static readonly char[] InvalidNameChars = Path.GetInvalidFileNameChars();
+
+    /// <summary>
+    /// 完全修飾の絶対パス（X:\... か \\server\share\...）で、各要素が空でなく、. / .. でなく、末尾が空白・ピリオドでなく、
+    /// ファイル名に使えない文字（/ : * ? " &lt; &gt; | と制御文字）を含まないこと。\\?\ と \\.\ は受け付けない。8.3 短縮名はよい。
+    /// </summary>
+    public static void CheckAbsolute(string option, string value)
     {
-        string full;
-        try { full = Path.GetFullPath(value); }
-        catch (Exception e) { throw new InvalidInputException(option + " is not a valid path: " + value + " (" + e.Message + ")"); }
-        if (!string.Equals(full, value, StringComparison.Ordinal) || !Path.IsPathRooted(value))
+        string notAbsolute = option + " must be a full absolute path: " + value;
+        if (string.IsNullOrEmpty(value)) { throw new InvalidInputException(notAbsolute); }
+        int rest;
+        if (value.Length >= 3 && IsDriveLetter(value[0]) && value[1] == ':' && value[2] == '\\') { rest = 3; }
+        else if (value.StartsWith(@"\\", StringComparison.Ordinal) && !value.StartsWith(@"\\?\", StringComparison.Ordinal)
+            && !value.StartsWith(@"\\.\", StringComparison.Ordinal))
         {
-            throw new InvalidInputException(option + " must be a full absolute path: " + value);
+            rest = 2; // server と share も要素として下で調べる
+            int server = value.IndexOf('\\', rest);
+            if (server < 0 || value.IndexOf('\\', server + 1) < 0) { throw new InvalidInputException(notAbsolute); }
         }
+        else { throw new InvalidInputException(notAbsolute); }
+        if (rest >= value.Length) { throw new InvalidInputException(notAbsolute); }
+        foreach (string segment in value.Substring(rest).Split('\\'))
+        {
+            if (segment.Length == 0 || segment == "." || segment == ".." || segment.EndsWith(" ", StringComparison.Ordinal)
+                || segment.EndsWith(".", StringComparison.Ordinal) || segment.IndexOfAny(InvalidNameChars) >= 0)
+            {
+                throw new InvalidInputException(option + " must be a full absolute path without relative or invalid parts: " + value);
+            }
+        }
+        // 要素の検査の後で呼ぶ（IsPathRooted も使えない文字で例外を投げる）。GetFullPath の結果とは比べない（8.3 短縮名が展開されることがある）。
+        bool rooted;
+        try { rooted = Path.IsPathRooted(value); Path.GetFullPath(value); }
+        catch (Exception e) { throw new InvalidInputException(option + " is not a valid path: " + value + " (" + e.Message + ")"); }
+        if (!rooted) { throw new InvalidInputException(notAbsolute); }
+    }
+
+    static bool IsDriveLetter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+
+    /// <summary>
+    /// 長い名前（8.3 短縮名を展開したもの）。まだ無いファイル（result.json など）は、在る親フォルダまでを展開して残りを付ける。
+    /// 展開できなければそのまま返す。例外は出さない（CATIA から戻った文字列にも使う）。
+    /// </summary>
+    public static string Long(string path)
+    {
+        if (string.IsNullOrEmpty(path)) { return path; }
+        try
+        {
+            StringBuilder buffer = new StringBuilder(path.Length + 16);
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                uint length = GetLongPathNameW(path, buffer, (uint)buffer.Capacity);
+                if (length == 0) { break; }
+                if (length < buffer.Capacity) { return buffer.ToString(0, (int)length); }
+                buffer = new StringBuilder((int)length + 1);
+            }
+            string parent = Parent(path);
+            if (parent == null || parent.Length >= path.Length) { return path; }
+            string leaf = path.Substring(path.LastIndexOf('\\') + 1);
+            if (leaf.Length == 0) { return path; }
+            string longParent = Long(parent);
+            return longParent.EndsWith(@"\", StringComparison.Ordinal) ? longParent + leaf : longParent + @"\" + leaf;
+        }
+        catch (Exception) { return path; }
+    }
+
+    /// <summary>最後の \ より前（X:\a なら X:\）。\ が無ければ null。文字列だけで求める（GetDirectoryName の正規化を通さない）。</summary>
+    public static string Parent(string path)
+    {
+        if (path == null) { return null; }
+        int cut = path.LastIndexOf('\\');
+        if (cut < 0) { return null; }
+        if (cut == 2 && path[1] == ':') { return path.Substring(0, 3); }
+        return path.Substring(0, cut);
+    }
+
+    /// <summary>同じパスか: そのまま大小無視で等しいか、両側を長い名前にして大小無視で等しい。null は何とも等しくない。</summary>
+    public static bool Same(string a, string b)
+    {
+        if (a == null || b == null) { return false; }
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) { return true; }
+        return string.Equals(Long(a), Long(b), StringComparison.OrdinalIgnoreCase);
     }
 }
 

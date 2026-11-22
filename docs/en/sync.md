@@ -184,7 +184,7 @@ If the CATIA operation does not finish within 60 seconds (for example, because a
 In this case, CATIA may still be working or may already have written its changes, so the **sync lock** is held to prevent accidental double writes. While it is held, project selection, Pull and Push do not run.
 
 - If the CATIA operation finishes later and its result arrives, the lock is released automatically (`[CATIA] Late terminal result received` is logged in "CATIA VBA Sync" in the Output panel). A result that arrives late is not used as the outcome of the Pull or Push, so pull again if you need to check the contents in CATIA.
-- If the operation is known to have failed before anything was written in CATIA, such as when CATIA is not running, the VBA editor has never been opened, or the `C5D_Bridge` helper project cannot be prepared (`catia-run.exe` exit codes 2, 10, 11, 13 and 14), this message does not appear and the lock is released at once. Follow the message shown and try again.
+- If the operation is known to have failed before anything was written in CATIA, such as when CATIA is not running, the VBA editor has never been opened (no VBA project can be seen), the `C5D_Bridge` helper project cannot be prepared, or the previous `catia-run.exe` is still running (`catia-run.exe` exit codes 2, 10, 11, 13, 14 and 15), this message does not appear and the lock is released at once. Follow the message shown and try again.
 
 #### Releasing the lock
 If the lock is not released automatically, release it as follows:

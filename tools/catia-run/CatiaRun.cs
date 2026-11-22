@@ -4,7 +4,8 @@
 // Usage: catia-run.exe [--validate-only] --bridge <master.catvba> --request <dir>\request.json --result <dir>\result.json
 // Exit codes (src/catiaExecution.ts と共有):
 //   0 = 処理を最後まで行った, 2 = 引数・request.json が不正, 10 = CATIA 取得失敗, 11 = SystemService 取得失敗,
-//   12 = 要求の処理中に ExecuteScript が例外, 13 = ブリッジを準備できない, 14 = VBA エディタが未起動
+//   12 = 要求の処理中に ExecuteScript が例外, 13 = ブリッジを準備できない,
+//   14 = VBA プロジェクトが見えない（VBA エディタが未起動か、プロジェクトが読み込まれていない）, 15 = 別の catia-run.exe が実行中（CATIA に触る前）
 // stdout: 段階ごとに 1 行（"<stage> <ms>ms"。人が読むログ）。stderr: エラーの詳細。どちらも UTF-8（BOM なし）。
 // 同じフォルダの CatiaRun.*.cs と一緒にコンパイルする（EvalProbe.cs / TypeLibDump.cs は含めない）。
 using System;
@@ -18,8 +19,9 @@ using System.Threading;
 
 internal static class CatiaRun
 {
-    const int Ok = 0, BadArguments = 2, NoCatia = 10, NoSystemService = 11, BridgeNotReady = 13;
-    const string MutexName = @"Local\Cat5Dev.catia-run";
+    const int Ok = 0, BadArguments = 2, NoCatia = 10, NoSystemService = 11, BridgeNotReady = 13, RunnerBusy = 15;
+    /// <summary>tests/catiaRun.test.js のハーネスもこの名前で Mutex を持つ。</summary>
+    internal const string MutexName = @"Local\Cat5Dev.catia-run";
     const string Usage = "usage: catia-run [--validate-only] --bridge <C5D_Bridge-<sha8>.catvba> --request <dir>\\request.json --result <dir>\\result.json";
 
     // Node 側は UTF-8 で読むため、コンソールのコードページに依存せず UTF-8 で書く。
@@ -59,7 +61,7 @@ internal static class CatiaRun
         RuntimeSource runtime = RuntimeSource.Load(out error);
         if (runtime == null) { Err.WriteLine("error: " + error); return BridgeNotReady; }
 
-        // 2. 同時に 2 個動かさない
+        // 2. 同時に 2 個動かさない（取れなければ CATIA に触る前に 15）
         Mutex mutex = null;
         bool owned = false;
         try
@@ -71,7 +73,7 @@ internal static class CatiaRun
                 catch (AbandonedMutexException) { owned = true; } // 前の catia-run.exe が殺された
             }
             catch (Exception e) { Err.WriteLine("error: cannot open the mutex: " + BridgeText.Describe(e)); return BridgeNotReady; }
-            if (!owned) { Err.WriteLine("another catia-run.exe is running"); return BridgeNotReady; }
+            if (!owned) { Err.WriteLine("another catia-run.exe is running"); return RunnerBusy; }
             return RunWithCatia(options, request, runtime);
         }
         finally

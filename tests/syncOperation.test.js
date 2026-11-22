@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
-const { fixture, result } = require('./helpers');
+const { fixture, result, shortPath } = require('./helpers');
 const { SyncOperationManager, SyncBusyError } = require('../out/syncOperation');
 function manager(root, options = {}) { return new SyncOperationManager({ lockRoot: path.join(root, 'locks'), tempRoot: root, ...options }); }
 test('operation isolation and immediate same-process exclusion', t => {
@@ -104,4 +104,31 @@ test('real child processes exclude each other across workspaces and recover afte
     const crash = spawn('crash'); const crashExit = once(crash, 'exit'); const [c] = await once(crash, 'message'); assert.equal(c.status, 'crashed'); await crashExit;
     assert.equal(await manager(root, { isCatiaRunning: async () => true }).recover(), false);
     assert.equal(await manager(root, { isCatiaRunning: async () => false }).recover(), true);
+});
+test('temporary folders use the long name of tempRoot (fs.realpathSync.native expands 8.3 short names)', t => {
+    const root = fixture(t);
+    const native = fs.realpathSync.native;
+    const calls = [];
+    fs.realpathSync.native = (file, ...rest) => { calls.push(file); return native(file, ...rest); };
+    let plain;
+    try { plain = manager(root); } finally { fs.realpathSync.native = native; }
+    assert.ok(calls.includes(root), JSON.stringify(calls));
+    const context = plain.acquire('pull');
+    assert.equal(path.dirname(context.tempDir), native(root));
+    context.close();
+    const short = shortPath(root);
+    if (!short) { t.diagnostic('no 8.3 short name on this volume; the short-path half is skipped'); return; }
+    const viaShort = new SyncOperationManager({ lockRoot: path.join(short, 'locks'), tempRoot: short });
+    const other = viaShort.acquire('pull');
+    assert.equal(path.dirname(other.tempDir), native(root), `${short} -> ${other.tempDir}`);
+    // A lock written with the short spelling (an older version) is still recognised and can be released.
+    other.markExternalRunning(path.join(other.tempDir, 'result.json'), { operationId: other.id, stepId: 'step', kind: 'pull', targetProject: 'Review' });
+    other.close();
+    const ownerFile = path.join(native(root), 'locks', 'active', 'owner.json');
+    const owner = JSON.parse(fs.readFileSync(ownerFile, 'utf8'));
+    fs.writeFileSync(ownerFile, JSON.stringify({ ...owner, tempDir: path.join(short, path.basename(owner.tempDir)),
+        resultPath: path.join(short, path.basename(owner.tempDir), 'result.json') }));
+    assert.equal(viaShort.hasQuarantine(), true);
+    assert.equal(viaShort.releaseQuarantined(), true);
+    assert.ok(!fs.existsSync(path.join(native(root), 'locks', 'active')));
 });

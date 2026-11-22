@@ -17,9 +17,13 @@ export type CatiaExecutor = (invocation: CatiaInvocation, timeoutMs: number) => 
  */
 export interface ExecutionOptions { execute?: CatiaExecutor; runnerPath?: string; bridgeMaster?: string; timeoutMs?: number; log?: (text: string) => void }
 /** catia-run.exe exit codes (bridge-contract 6). */
-export const EXIT = { invalidArguments: 2, catiaNotRunning: 10, noSystemService: 11, executeScriptFailed: 12, bridgeUnavailable: 13, vbaEditorClosed: 14 } as const;
+export const EXIT = {
+    invalidArguments: 2, catiaNotRunning: 10, noSystemService: 11, executeScriptFailed: 12, bridgeUnavailable: 13, vbaEditorClosed: 14,
+    /** Another catia-run.exe holds its mutex; this one stopped before touching CATIA. */
+    runnerBusy: 15
+} as const;
 /** Failures known to happen before anything is written in CATIA: the lock is released at once. */
-const PRE_DISPATCH: (string | number)[] = [2, 10, 11, 13, 14, 'ENOENT', 'EACCES', 'EPERM'];
+const PRE_DISPATCH: (string | number)[] = [2, 10, 11, 13, 14, 15, 'ENOENT', 'EACCES', 'EPERM'];
 /** request.json is limited to 64 MiB by catia-run.exe. */
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 export class CatiaExecutionError extends Error {

@@ -80,6 +80,8 @@ function toVscodeDiagnostic(d: GoDiagnostic, document: vscode.TextDocument): vsc
 export class VbaLinter implements vscode.Disposable {
     private readonly collection: vscode.DiagnosticCollection;
     private readonly timers = new Map<string, NodeJS.Timeout>();
+    /** 文書ごとの Lint の通し番号。最後に始めた Lint の結果だけを反映する */
+    private readonly generations = new Map<string, number>();
     private workspaceRoot: string | undefined;
     /** システムの ANSI コードページ。起動時に 1 回だけ非同期で検出する */
     private readonly systemCodePage: Promise<number>;
@@ -136,11 +138,20 @@ export class VbaLinter implements vscode.Disposable {
             return;
         }
 
+        // await の間に文書が編集・Lint し直し・クローズされたら、古い結果で上書きしない
+        const key = document.uri.toString();
+        const version = document.version;
+        const generation = (this.generations.get(key) ?? 0) + 1;
+        this.generations.set(key, generation);
+
         const text = document.getText();
         const [diags, nonAnsi] = await Promise.all([
             callLint(text, options, this.server, this.outputChannel),
             this.nonAnsiDiagnostics(text, options),
         ]);
+        if (document.isClosed || document.version !== version || this.generations.get(key) !== generation) {
+            return;
+        }
 
         // Go の Lint に失敗したときは、前回の Go の診断を残して VBA010 だけ更新する
         const goDiags = diags === null
@@ -174,6 +185,14 @@ export class VbaLinter implements vscode.Disposable {
 
     /** ドキュメントの診断をクリアする */
     clearDocument(uri: vscode.Uri): void {
+        const key = uri.toString();
+        const timer = this.timers.get(key);
+        if (timer) {
+            clearTimeout(timer);
+            this.timers.delete(key);
+        }
+        // 消さずに進める: 実行中の Lint は捨て、開き直した後の Lint と番号が重ならない
+        this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
         this.collection.delete(uri);
     }
 

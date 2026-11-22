@@ -5,7 +5,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 const { fixture, result } = require('./helpers');
 const { validateCatiaResult, catiaSucceeded, normalizeModuleText } = require('../out/catiaTypes');
-const { createCatiaRequest, runCatiaRequest, bridgeExecutor, buildRequestJson, CatiaExecutionError, REQUEST_FILE_NAME, RESULT_FILE_NAME } = require('../out/catiaExecution');
+const { createCatiaRequest, runCatiaRequest, bridgeExecutor, buildRequestJson, CatiaExecutionError, EXIT, REQUEST_FILE_NAME, RESULT_FILE_NAME } = require('../out/catiaExecution');
 const { SyncOperationManager } = require('../out/syncOperation');
 const bridgeMaster = 'C:\\Users\\Someone\\AppData\\Local\\Cat5Dev\\bridge\\C5D_Bridge-0123abcd.catvba';
 function setup(t) {
@@ -56,8 +56,9 @@ test('missing, malformed or unrelated results quarantine lock and temporary file
         context.close(); assert.ok(fs.existsSync(context.tempDir));
     }
 });
-test('exit codes 2, 10, 11, 13 and 14 release the lock at once and keep the exit code', async t => {
-    for (const code of [2, 10, 11, 13, 14]) {
+test('exit codes 2, 10, 11, 13, 14 and 15 release the lock at once and keep the exit code', async t => {
+    assert.equal(EXIT.runnerBusy, 15);
+    for (const code of [2, 10, 11, 13, 14, 15]) {
         const { context, request } = setup(t);
         await assert.rejects(runCatiaRequest(context, request, { bridgeMaster, execute: async () => exit(code) }),
             e => e instanceof CatiaExecutionError && !e.uncertain && e.exitCode === code && !e.result);

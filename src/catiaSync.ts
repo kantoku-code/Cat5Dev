@@ -8,7 +8,7 @@ import { readFormatterOptions, readProjectSettings, writeTomlProjectKey } from '
 import { OperationContext, SyncBusyError, SyncOperationManager } from './syncOperation';
 import { CatiaExecutionError, EXIT, ExecutionOptions, createCatiaRequest, runCatiaRequest } from './catiaExecution';
 import { BRIDGE_PROJECT_NAME, CatiaModuleText, CatiaRequest, CatiaResult, normalizeModuleText, safeFileName, stripBom } from './catiaTypes';
-import { BridgeFiles } from './bridgeFiles';
+import { BridgeFileError, BridgeFiles } from './bridgeFiles';
 import { PullConflictError, PullRecoveryError, applyPull, captureModules, listPullDeletions } from './pullTransaction';
 
 const moduleExtension = /\.(bas_utf|cls_utf|frm_utf)$/i;
@@ -48,9 +48,13 @@ export class CatiaSync {
             this.output.appendLine(`[${kind}] ${error instanceof Error ? error.stack : String(error)}`);
             const exitCode = error instanceof CatiaExecutionError ? error.exitCode : undefined;
             if (error instanceof SyncBusyError) { this.showBusy(); }
+            else if (exitCode === EXIT.runnerBusy) { void vscode.window.showWarningMessage(t('sync.runnerBusy')); }
             else if (exitCode === EXIT.catiaNotRunning) { void vscode.window.showErrorMessage(t('sync.catiaNotRunning')); }
             else if (exitCode === EXIT.vbaEditorClosed) { void vscode.window.showErrorMessage(t('sync.vbaEditorClosed')); }
-            else if (exitCode === EXIT.bridgeUnavailable) { this.output.show(true); void vscode.window.showErrorMessage(t('sync.bridgeUnavailable')); }
+            // The bridge master could not be prepared (BridgeFiles.prepare): nothing was sent to CATIA; the details are in Output.
+            else if (exitCode === EXIT.bridgeUnavailable || error instanceof BridgeFileError) {
+                this.output.show(true); void vscode.window.showErrorMessage(t('sync.bridgeUnavailable'));
+            }
             else if (error instanceof PullRecoveryError) {
                 void vscode.window.showErrorMessage(t('sync.recoveryFailed', error.recoveryPath, error.unrestored.join(', ')));
                 this.output.show(true);

@@ -54,7 +54,8 @@ export const messages = {
         'sync.lockRecoveryBlocked': '同期ロックを安全に解除できません。実行中の操作が終了しない場合はCATIAを終了し、VSCodeウィンドウを再読み込みしてから復旧コマンドを実行してください。',
         'sync.catiaNotRunning': 'CATIA が起動していません。CATIA を起動してから再実行してください。',
         'sync.bridgeUnavailable': 'Cat5Dev の仲介プロジェクト（C5D_Bridge）を準備できませんでした。詳細は Output を確認してください。解決しない場合は CATIA を再起動してから再実行してください。',
-        'sync.vbaEditorClosed': 'CATIA の VBA エディタ（Alt+F11）を一度開いてから再実行してください。',
+        'sync.vbaEditorClosed': 'CATIA の VBA エディタを一度も開いていないか、VBA プロジェクトが読み込まれていません。VBA エディタ（Alt+F11）を一度開き、対象の VBA プロジェクトが読み込まれていることを確認してから再実行してください。',
+        'sync.runnerBusy': '別の CATIA 操作（catia-run.exe）がまだ実行中です。CATIA で MsgBox などが開いていれば閉じ、しばらく待ってから再実行してください。',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',
@@ -176,7 +177,8 @@ export const messages = {
         'sync.lockRecoveryBlocked': 'The synchronization lock cannot be safely released. If the operation does not finish, close CATIA, reload this VSCode window, and run recovery again.',
         'sync.catiaNotRunning': 'CATIA is not running. Start CATIA and try again.',
         'sync.bridgeUnavailable': 'Cat5Dev could not prepare its bridge project (C5D_Bridge). Check the Output panel for details. If the problem persists, restart CATIA and try again.',
-        'sync.vbaEditorClosed': 'Open the CATIA VBA editor (Alt+F11) once, then try again.',
+        'sync.vbaEditorClosed': 'The CATIA VBA editor has never been opened, or no VBA project is loaded. Open the VBA editor (Alt+F11) once, make sure the target VBA project is loaded, then try again.',
+        'sync.runnerBusy': 'Another CATIA operation (catia-run.exe) is still running. Close any MsgBox in CATIA, wait a moment, then try again.',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',
@@ -298,7 +300,8 @@ export const messages = {
         'sync.lockRecoveryBlocked': '无法安全释放同步锁。如果操作无法结束，请关闭CATIA，重新加载VSCode窗口，然后再次运行恢复命令。',
         'sync.catiaNotRunning': 'CATIA 未启动。请启动 CATIA 后重试。',
         'sync.bridgeUnavailable': 'Cat5Dev 无法准备中介项目（C5D_Bridge）。详情请检查输出面板。如果问题仍然存在，请重新启动 CATIA 后重试。',
-        'sync.vbaEditorClosed': '请先打开一次 CATIA 的 VBA 编辑器（Alt+F11），然后重试。',
+        'sync.vbaEditorClosed': '从未打开过 CATIA 的 VBA 编辑器，或未加载 VBA 项目。请先打开一次 VBA 编辑器（Alt+F11），确认目标 VBA 项目已加载，然后重试。',
+        'sync.runnerBusy': '另一个 CATIA 操作（catia-run.exe）仍在运行。如果 CATIA 中打开了 MsgBox 等，请将其关闭，稍等片刻后重试。',
         // Sidebar & TreeView
         'sidebar.title': 'CATIA V5 VBA',
         'sidebar.modules': 'Modules',

@@ -22,7 +22,7 @@ Error details are logged in VSCode's Output panel (**View** → **Output** in th
 ## Cannot connect to CATIA (Pull / Push / project selection fails)
 
 - If "CATIA is not running. Start CATIA and try again." appears, start CATIA V5 and try again.
-- If "Open the CATIA VBA editor (Alt+F11) once, then try again." appears, open the VBA editor in CATIA once and try again (you may close it afterwards). Until the VBA editor has been opened, Cat5Dev cannot see the VBA projects.
+- If "The CATIA VBA editor has never been opened, or no VBA project is loaded. Open the VBA editor (Alt+F11) once, make sure the target VBA project is loaded, then try again." appears, open the VBA editor in CATIA once, check that the target VBA project is in its project list, and try again (you may close the VBA editor afterwards). Until the VBA editor has been opened, Cat5Dev cannot see the VBA projects. The same message appears when the VBA editor has been opened but no VBA project is loaded.
 - Make sure the target VBA project is open in CATIA. If it is not, "Target project not found" is logged.
 - Make sure `target_project` in `cat5dev.toml` matches the project name in CATIA (case-sensitive).
 - For details, check "CATIA VBA Sync" in the Output panel.
@@ -33,7 +33,7 @@ Cat5Dev could not prepare `C5D_Bridge`, the helper project it loads into CATIA (
 
 1. Check "CATIA VBA Sync" in the Output panel for details.
 2. If a dialog (such as a MsgBox) is open in CATIA, close it, wait a moment and try again. This error can appear while the previous operation has not finished yet.
-3. Make sure `%LOCALAPPDATA%\Cat5Dev\bridge\` is writable (permissions, antivirus software, and so on).
+3. Make sure `%LOCALAPPDATA%\Cat5Dev\bridge\` is writable (permissions, antivirus software, and so on). This message also appears when the `C5D_Bridge` file cannot be prepared in this folder; in that case CATIA is not contacted at all. If the Output panel shows `Bundled bridge not found`, reinstall the extension.
 4. If the problem persists, save your work in CATIA, restart CATIA and try again.
 
 ## A project named `C5D_Bridge` appears in the VBA editor
@@ -56,6 +56,8 @@ For details, see [Files in the `bridge` folder](sync.md#files-in-the-bridge-fold
 ## "Another CATIA operation is running…" or "CATIA completion could not be confirmed" appears
 
 Only one operation can talk to CATIA at a time. Check that you are not running Pull / Push in another VSCode window.
+
+If "Another CATIA operation (catia-run.exe) is still running. Close any MsgBox in CATIA, wait a moment, then try again." appears, the previous operation (`catia-run.exe`) has not finished yet (for example, it is still stopped at a MsgBox in CATIA after you released the sync lock with "Release Lock"). Nothing has been written in CATIA in this case. Close any dialog open in CATIA, wait a moment, and try again. You do not need to restart CATIA.
 
 If the CATIA operation does not finish within 60 seconds (for example, because a MsgBox is left open in CATIA), "CATIA completion could not be confirmed. …" appears and the sync lock is held to prevent double writes.
 

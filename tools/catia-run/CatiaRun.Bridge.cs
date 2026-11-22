@@ -267,7 +267,7 @@ internal sealed class BridgeSession
     {
         this.host = host;
         this.link = link;
-        this.masterFolder = Path.GetDirectoryName(masterPath);
+        this.masterFolder = PathNames.Long(PathNames.Parent(masterPath));
         this.runtime = runtime;
         this.request = request;
         this.resultPath = resultPath;
@@ -323,7 +323,8 @@ internal sealed class BridgeSession
         }
         identified = true;
         bool exact = self[1] == link && self[2] == link;
-        Log("who " + (exact ? "exact" : "ignore-case"), watch);
+        bool ignoreCase = string.Equals(self[1], link, StringComparison.OrdinalIgnoreCase) && string.Equals(self[2], link, StringComparison.OrdinalIgnoreCase);
+        Log("who " + (exact ? "exact" : ignoreCase ? "ignore-case" : "long-name"), watch);
 
         // 7. 単一の確認と残骸の Close（これが終わるまでブリッジにも書かない）
         watch = Stopwatch.StartNew();
@@ -350,7 +351,8 @@ internal sealed class BridgeSession
         List<string[]> names = BridgeText.ParseRecords(projects.Text, 1);
         if (names.Count == 0)
         {
-            err.WriteLine("the VBA editor has not been opened (C5D_RT_ListProjects returned no project)");
+            // VBA エディタを開く前は C5D_Bridge しか見えないため、「未起動」と「プロジェクトが無い」は区別できない（どちらも 14）。
+            err.WriteLine("C5D_RT_ListProjects returned no project: the VBA editor has not been opened, or no VBA project is loaded");
             Log("projects 0", watch);
             return NoVbaEditor;
         }
@@ -375,7 +377,8 @@ internal sealed class BridgeSession
         return WriteResult(result, callFailed ? ExecuteFailed : Ok);
     }
 
-    static bool SamePath(string a, string b) { return string.Equals(a, b, StringComparison.OrdinalIgnoreCase); }
+    /// <summary>大小無視、だめなら両側を長い名前（8.3 短縮名を展開）にして大小無視（PathNames.Same）。</summary>
+    static bool SamePath(string a, string b) { return PathNames.Same(a, b); }
 
     /// <summary>C5D_Who: 1 行目 = Name / DisplayName / FileName、2 行目から = 部品名 / 種類。形式外なら null。</summary>
     static List<string[]> ParseWho(string text)
@@ -482,13 +485,14 @@ internal sealed class BridgeSession
         return true;
     }
 
-    /// <summary>DisplayName が空でなく、フォルダが正本のフォルダで、ファイル名が C5D_Bridge*.catvba。</summary>
+    /// <summary>DisplayName が完全修飾の絶対パス（. / .. を含まない）で、フォルダが正本のフォルダ（長い名前で比べる）で、ファイル名が C5D_Bridge*.catvba。</summary>
     bool IsRemovableWreck(string displayName)
     {
         if (string.IsNullOrEmpty(displayName)) { return false; }
         try
         {
-            return string.Equals(Path.GetDirectoryName(displayName), masterFolder, StringComparison.OrdinalIgnoreCase)
+            PathNames.CheckAbsolute("wreck", displayName);
+            return PathNames.Same(PathNames.Parent(displayName), masterFolder)
                 && WreckFileName.IsMatch(Path.GetFileName(displayName));
         }
         catch (Exception) { return false; }

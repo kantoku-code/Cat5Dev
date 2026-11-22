@@ -22,7 +22,7 @@
 ## 无法连接到 CATIA（Pull / Push / 选择项目失败）
 
 - 如果显示“CATIA 未启动。请启动 CATIA 后重试。”，请启动 CATIA V5 后重试。
-- 如果显示“请先打开一次 CATIA 的 VBA 编辑器（Alt+F11），然后重试。”，请在 CATIA 中打开一次 VBA 编辑器后重试（之后关闭也可以）。在打开 VBA 编辑器之前，本扩展无法看到 VBA 项目。
+- 如果显示“从未打开过 CATIA 的 VBA 编辑器，或未加载 VBA 项目。请先打开一次 VBA 编辑器（Alt+F11），确认目标 VBA 项目已加载，然后重试。”，请在 CATIA 中打开一次 VBA 编辑器，确认项目列表中有目标 VBA 项目后重试（之后关闭 VBA 编辑器也可以）。在打开 VBA 编辑器之前，本扩展无法看到 VBA 项目。即使已打开 VBA 编辑器，如果没有加载任何 VBA 项目，也会显示同样的消息。
 - 请确认目标 VBA 项目已在 CATIA 中打开。未打开时，日志中会记录“Target project not found”。
 - 请确认 `cat5dev.toml` 中的 `target_project` 与 CATIA 中的项目名称一致（区分大小写）。
 - 详细信息请查看输出面板的“CATIA VBA Sync”。
@@ -33,7 +33,7 @@
 
 1. 请查看输出面板的“CATIA VBA Sync”中的详细信息。
 2. 如果 CATIA 中打开了对话框（MsgBox 等），请将其关闭，稍等片刻后重试。上一次处理尚未结束时，也可能出现此错误。
-3. 请确认可以写入 `%LOCALAPPDATA%\Cat5Dev\bridge\`（权限、杀毒软件等）。
+3. 请确认可以写入 `%LOCALAPPDATA%\Cat5Dev\bridge\`（权限、杀毒软件等）。无法在此文件夹中准备 `C5D_Bridge` 的文件时也会显示此消息，此时完全不会与 CATIA 通信。如果输出面板中显示 `Bundled bridge not found`，请重新安装本扩展。
 4. 如果问题仍未解决，请在 CATIA 中保存需要的工作，重新启动 CATIA 后重试。
 
 ## VBA 编辑器中显示名为 `C5D_Bridge` 的项目
@@ -56,6 +56,8 @@
 ## 显示“另一个CATIA操作正在运行…”或“无法确认CATIA操作已完成”
 
 与 CATIA 的通信同时只能执行一个。请确认没有在其他 VSCode 窗口中执行 Pull / Push。
+
+如果显示“另一个 CATIA 操作（catia-run.exe）仍在运行。如果 CATIA 中打开了 MsgBox 等，请将其关闭，稍等片刻后重试。”，说明上一次的处理（`catia-run.exe`）尚未结束（例如通过“解除锁定”解除同步锁后，上一次的处理仍停在 CATIA 的 MsgBox 等处）。此时没有向 CATIA 写入任何内容。请关闭 CATIA 中打开的对话框，稍等片刻后重试。无需重新启动 CATIA。
 
 如果 CATIA 的处理未在 60 秒内结束（例如 CATIA 中的 MsgBox 等一直处于打开状态时），会显示“无法确认CATIA操作已完成。…”，并且为防止重复写入，同步锁会保持保留状态。
 

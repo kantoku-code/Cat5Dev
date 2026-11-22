@@ -389,6 +389,20 @@ test('exit codes 10, 13 and 14 show dedicated messages and release the lock; 2 a
         assert.equal(fs.readFileSync(path.join(root, 'modules', 'C5D_UserModule.bas_utf'), 'utf8'), 'old');
     }
 });
+test('exit 15 (another catia-run.exe is running) is a busy warning, not a CATIA restart, and releases the lock', async t => {
+    for (const kind of ['pull', 'push']) {
+        const { sync, events, root, steps } = setup(t, { exitCode: 15, localFiles: { 'C5D_UserModule.bas_utf': 'changed' } });
+        await sync[kind]();
+        assert.deepEqual(steps, [kind === 'push' ? 'check' : 'pull'], kind);
+        assert.ok(has(events, 'warning', '別の CATIA 操作（catia-run.exe）がまだ実行中です'), `${kind}: ${JSON.stringify(events)}`);
+        assert.ok(!events.some(e => e[0] === 'error'), JSON.stringify(events));
+        assert.ok(!events.some(e => e[1].includes('再起動')), 'no restart of CATIA is suggested');
+        assert.ok(!fs.existsSync(path.join(root, 'locks', 'active')), kind);
+    }
+    const again = setup(t, { choice: 'keep' });
+    await again.sync.pull();
+    assert.deepEqual(again.steps, ['pull'], 'the next operation runs');
+});
 test('the bridge master is prepared once per operation, read-only, and passed as --bridge', async t => {
     const { sync, invocations, bridge, steps, logs } = setup(t, { noTarget: true, selection: 'Review', choice: 'keep' });
     await sync.pull();
@@ -404,13 +418,31 @@ test('the bridge master is prepared once per operation, read-only, and passed as
         assert.equal(path.basename(i.request), 'request.json'); assert.equal(path.basename(i.result), 'result.json');
     }
 });
-test('a bridge that cannot be prepared stops before catia-run.exe with a general error', async t => {
+test('a bridge that cannot be prepared stops before catia-run.exe with the bridge message and opens Output', async t => {
     const missing = setup(t, { choice: 'keep' });
     fs.unlinkSync(path.join(missing.root, 'bundle', 'C5D_Bridge.catvba'));
+    let shown = 0;
+    missing.sync.output.show = () => { shown++; };
     await missing.sync.pull();
     assert.deepEqual(missing.steps, []);
-    assert.ok(has(missing.events, 'error', 'プルに失敗しました'), JSON.stringify(missing.events));
+    assert.ok(has(missing.events, 'error', '仲介プロジェクト（C5D_Bridge）を準備できませんでした'), JSON.stringify(missing.events));
+    assert.equal(missing.events.filter(e => e[0] === 'error').length, 1);
+    assert.equal(shown, 1, 'Output is opened');
+    assert.ok(missing.logs.some(line => line.includes('Bundled bridge not found')), JSON.stringify(missing.logs));
     assert.ok(!fs.existsSync(path.join(missing.root, 'locks', 'active')));
+
+    // A master that is damaged and in use (BridgeFileError from ensureMaster) gets the same message.
+    const locked = setup(t, { choice: 'keep' });
+    locked.bridge.prepare();
+    const master = locked.bridge.masterPath();
+    fs.chmodSync(master, 0o666); fs.writeFileSync(master, 'damaged'); fs.chmodSync(master, 0o444);
+    t.after(() => { try { fs.chmodSync(master, 0o666); } catch { } });
+    const fd = fs.openSync(master, 'r');
+    try { await locked.sync.push(); } finally { fs.closeSync(fd); }
+    assert.deepEqual(locked.steps, []);
+    assert.ok(has(locked.events, 'error', '仲介プロジェクト（C5D_Bridge）を準備できませんでした'), JSON.stringify(locked.events));
+    assert.ok(locked.logs.some(line => line.includes('damaged and in use')), JSON.stringify(locked.logs));
+
     const unconfigured = setup(t, { choice: 'keep', noBridge: true });
     await unconfigured.sync.pull();
     assert.deepEqual(unconfigured.steps, []);

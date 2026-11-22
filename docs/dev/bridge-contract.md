@@ -60,8 +60,9 @@ result.json を検証（validateCatiaResult、形式は今と同じ）←┘
 - 手順:
   1. 同じ名前のファイルがあり、ハッシュが同じなら、そのまま使う（ロックされていてもよい）。
   2. 無ければコピーし、**読み取り専用属性を付け、付いたことを確かめる**。ハッシュも確かめる。
-  3. 名前が同じでハッシュが違う場合（壊れている）: ロックされていなければ消して作り直す。ロックされていれば Push を中止する（エラー表示: 一般的なエラー。CATIA を再起動すれば直る）。
-- `catia-run.exe` には `--bridge` でこの絶対パスを渡す。
+  3. 名前が同じでハッシュが違う場合（壊れている）: ロックされていなければ消して作り直す。ロックされていれば Push を中止する（CATIA を再起動すれば直る）。
+- 正本を用意できないとき（同梱のファイルが無い、フォルダを作れない、コピー・読み取り専用にできない、壊れていて使用中など。`BridgeFileError`）は `catia-run.exe` を呼ばずに中止し、終了コード 13 と同じ「Cat5Dev の仲介プロジェクト（C5D_Bridge）を準備できませんでした」を出して、出力パネル（詳細）を開く。
+- `catia-run.exe` には `--bridge` でこの絶対パスを渡す。フォルダは `fs.realpathSync.native` で長い名前にしたもの（`%LOCALAPPDATA%` が `C:\Users\LONGUS~1\...` のような 8.3 短縮名でも、長い名前を渡す）。`--request` / `--result` の作業フォルダ（`SyncOperationManager` の `tempRoot`。既定は `%TEMP%`）も同じ。
 
 ### 2.2 リンク（C# が作る）
 
@@ -97,7 +98,10 @@ catia-run.exe --bridge <正本の絶対パス> --request <dir>\request.json --re
 catia-run.exe --validate-only --bridge <...> --request <...> --result <...>
 ```
 
-- 3 つのオプションはどれも必須・1 回だけ・順不同。値は絶対パス（`Path.GetFullPath` しても変わらないこと）。それ以外の引数があれば終了コード 2。
+- 3 つのオプションはどれも必須・1 回だけ・順不同。それ以外の引数があれば終了コード 2。
+- 値は完全修飾の絶対パス（`X:\...` か `\\server\share\...`）。次のどれかに当たれば終了コード 2: 相対パス（`request.json`、`C:request.json`、`\Users\...` を含む）、`.` や `..` や空の要素、末尾が空白・ピリオドの要素、`/` などファイル名に使えない文字、`\\?\` / `\\.\`。
+  - `Path.GetFullPath` の結果とは比べない（.NET Framework は 8.3 短縮名を長い名前に展開することがあり、`%TEMP%` が `C:\Users\LONGUS~1\...` のときに全部 2 になっていたため）。8.3 短縮名を含むパスは受け付ける。
+  - C# は検証の後で値を `GetLongPathName` で長い名前にして使う（無いファイルは在る親フォルダまでを展開）。パスを比べるとき（`--request` と `--result` のフォルダ、7 章の自分の特定・残骸のフォルダ・guard）は、そのまま大文字小文字を無視して比べ、違えば両側を長い名前にしてから大文字小文字を無視して比べる（長い名前が同じなら同じファイルなので、別のファイルを Close することはない）。
 - `--request` と `--result` は**同じフォルダ**にあること。Pull / check の `m<i>.txt` もこのフォルダに書く（= TS の `request.directory`）。
 - `--result` のファイルが既にあれば終了コード 2（上書きしない）。
 - `--bridge` の名前が `^C5D_Bridge-[0-9a-f]{8}\.catvba$` に合わない、またはファイルが無いときは終了コード 2。
@@ -105,7 +109,7 @@ catia-run.exe --validate-only --bridge <...> --request <...> --result <...>
 - runtime の本文は **exe に埋め込む**（`/resource:resources\bridge\C5D_Bridge_Runtime.bas,C5D_Bridge_Runtime.bas`。マニフェスト リソース名 `C5D_Bridge_Runtime.bas`）。横置きのファイルや `--runtime` オプションは設けない。
   - 理由: exe と runtime の組み合わせがビルド時に固定され、VSIX の中で食い違わない。置き場所を探す処理も要らない。
   - 期待する runtime の版は、埋め込んだ本文の `Private Const RT_VERSION As String = "c5d-runtime:<n>"` から読む（見つからなければ 13）。
-- 同時に 2 個動かさない: 名前付き Mutex `Local\Cat5Dev.catia-run` を待ち時間 0 で取る。取れなければ終了コード 13（stderr に `another catia-run.exe is running`）。TS の排他ロックの二重の守り。
+- 同時に 2 個動かさない: 名前付き Mutex `Local\Cat5Dev.catia-run` を待ち時間 0 で取る。取れなければ終了コード 15（stderr に `another catia-run.exe is running`。CATIA には触れていない）。TS の排他ロックの二重の守り（ロックを「ロック解除」で外した後も、前の `catia-run.exe` が CATIA の MsgBox などで止まったまま残っているときに起きる）。Mutex を開けないとき（例外）は 13。
 - 出力（どちらも UTF-8、BOM なし）:
   - stdout: 処理の段階ごとに 1 行（人が読むログ。例 `load 512ms`、`close ok 604ms`）。TS は解析しない（出力チャネルに出すだけ）。
   - stderr: エラーの詳細。ExecuteScript の例外は今と同じ `0xHRESULT: メッセージ`。
@@ -200,10 +204,11 @@ runtime の戻り値 `error:<phase>:<number>:<description>`（8.1）を、その
 | 10 | CATIA が起動していない（`GetActiveObject` 失敗） | 無い | 何もしていない | **ロックをすぐ解除**。「CATIA を起動してください」（新設） |
 | 11 | `SystemService` を取得できない | 無い | 何もしていない | **ロックをすぐ解除**。一般的なエラー |
 | 12 | 要求の処理中に `ExecuteScript` が例外になった | 原則ある（書けなかったときだけ無い） | 書いた可能性あり | result があれば今の「一部失敗」。無ければ今と同じ「完了を確認できない」（ロック保留） |
-| 13 | ブリッジを準備できない（リンクを作れない、読み取り専用でない、読み込めない、v2 でない、自分を特定できない、残骸を外せない、runtime を入れられない、Mutex を取れない） | 無い | **利用者のプロジェクトには何もしていない** | **ロックをすぐ解除**。「Cat5Dev の仲介プロジェクトを準備できませんでした」（新設） |
-| 14 | VBA エディタが未起動（`C5D_RT_ListProjects` が 0 件） | 無い | 何もしていない | **ロックをすぐ解除**。「VBA エディタを一度開いてから再実行してください」（新設） |
+| 13 | ブリッジを準備できない（リンクを作れない、読み取り専用でない、読み込めない、v2 でない、自分を特定できない、残骸を外せない、runtime を入れられない、Mutex を開けない） | 無い | **利用者のプロジェクトには何もしていない** | **ロックをすぐ解除**。「Cat5Dev の仲介プロジェクトを準備できませんでした」（新設） |
+| 14 | VBA プロジェクトが見えない（`C5D_RT_ListProjects` が 0 件）。VBA エディタを一度も開いていない、または VBA プロジェクトが読み込まれていない。VBA エディタを開く前は APC から `C5D_Bridge` しか見えないため、この 2 つは区別できない | 無い | 何もしていない | **ロックをすぐ解除**。「VBA エディタを一度も開いていないか、VBA プロジェクトが読み込まれていません。…」（新設） |
+| 15 | 別の `catia-run.exe` が実行中（Mutex を取れない。CATIA に接続する前に止まる） | 無い | 何もしていない | **ロックをすぐ解除**。「別の CATIA 操作（catia-run.exe）がまだ実行中です。…」（警告。CATIA の再起動は求めない） |
 
-- TS の `preDispatch`（`src/catiaExecution.ts`）は `[2, 10, 11, 13, 14, 'ENOENT', 'EACCES', 'EPERM']` にする。
+- TS の `preDispatch`（`src/catiaExecution.ts`）は `[2, 10, 11, 13, 14, 15, 'ENOENT', 'EACCES', 'EPERM']` にする。
 - 13 は「ブリッジにしか書いていない」ことが確かなときだけ使う。利用者のプロジェクトへの呼び出し（`C5D_RT_ReadModule` / `WriteModule` / `DeleteModule`、`ListModules`）を 1 回でも始めた後の異常は 12。
 - タイムアウト（TS が exe を止める）は今と同じく「完了を確認できない」。exe が殺されると finally の Close は走らない → 次回の残骸処理（7 章の手順 6）で外れる。
 - Close に失敗しても終了コードは変えない（stderr に `warning: bridge close failed: ...`）。
@@ -226,24 +231,24 @@ object r = service.GetType().InvokeMember("ExecuteScript", BindingFlags.InvokeMe
 手順:
 
 1. 引数と request.json を検証する（不正なら 2）。`--validate-only` ならここで 0。
-2. Mutex を取る（取れなければ 13）。
+2. Mutex を取る（取れなければ 15、開けなければ 13）。
 3. `Marshal.GetActiveObject("CATIA.Application")`（失敗 10）→ `SystemService`（失敗 11）。
 4. リンクを作り、読み取り専用を確かめる（2.2。失敗 13）。
 5. **読み込み**: `ExecuteScript(link, 2, "C5D_Bridge_Push", "C5D_Version")` → `"c5d-bridge:2"` 以外（例外、v1 の `"c5d-bridge:1"` を含む）なら 13。v1 が返ったときは読み込まれているが `C5D_Self` が無いので Close できない（stderr に `bridge v1 is not supported; restart CATIA` と出す）。
-6. **自分の特定**: `C5D_Who()`（8.3）→ 1 件目の Name が `C5D_Bridge`、DisplayName と FileName がリンクのパスと等しい（序数比較、だめなら大文字小文字を無視）こと。違えば 13（このときは Close もしない: 自分を確かめられないので。読み込まれたままのものは次回の手順 7 で残骸として外れる）。
+6. **自分の特定**: `C5D_Who()`（8.3）→ 1 件目の Name が `C5D_Bridge`、DisplayName と FileName がリンクのパスと等しい（序数比較、だめなら大文字小文字を無視、それでもだめなら両側を長い名前にして大文字小文字を無視。3 章）こと。違えば 13（このときは Close もしない: 自分を確かめられないので。読み込まれたままのものは次回の手順 7 で残骸として外れる）。
 7. **単一の確認**: `C5D_List()`（8.4）。Name が `C5D_Bridge` で自分以外の行（残骸）があれば:
-   - DisplayName のフォルダが正本のフォルダと等しく（大文字小文字を無視）、ファイル名が `^C5D_Bridge.*\.catvba$` なら、**残骸自身のパスで** `ExecuteScript(<残骸の DisplayName>, 2, "C5D_Bridge_Push", "C5D_Self")` → 戻ったオブジェクトを guard（Name = `C5D_Bridge`、DisplayName = 残骸の DisplayName）してから `Close(False)`。
+   - DisplayName が完全修飾の絶対パス（3 章の規則）で、そのフォルダが正本のフォルダと等しく（大文字小文字を無視、だめなら長い名前で。3 章）、ファイル名が `^C5D_Bridge.*\.catvba$` なら、**残骸自身のパスで** `ExecuteScript(<残骸の DisplayName>, 2, "C5D_Bridge_Push", "C5D_Self")` → 戻ったオブジェクトを guard（Name = `C5D_Bridge`、DisplayName = 残骸の DisplayName）してから `Close(False)`。
    - それ以外（フォルダ外の `C5D_Bridge`、DisplayName が空、`C5D_Self` が無い v1 の残骸、Close の失敗、残骸が 5 個を超える）→ 13。
    - 全部外したら、もう一度 `C5D_List()` で自分だけになったことを確かめる（違えば 13）。
    - **この手順が終わるまで、ブリッジにも書き込まない**（同じ実ファイルを 2 つ読み込んで書き込むと CATIA の VBA 全体が 0x800ADF09 で動かなくなり、CATIA の再起動が要るため。2026-11-21 に実機で確認）。
 8. **runtime**: 手順 6 の部品一覧に `C5D_Bridge_Runtime` があれば `C5D_RT_Version()` を呼び、埋め込みの版と同じなら何もしない。無い、または違えば `C5D_Install("C5D_Bridge_Runtime", <埋め込みの本文>)` → `"ok"` を確かめ、`C5D_RT_Version()` が埋め込みの版を返すことを確かめる。どこかで違えば 13。
-9. **VBA エディタの確認**: `C5D_RT_ListProjects()` → `ok` で名前が 0 件なら 14。`error:` なら（kind に関わらず）その失敗を記録し、result.json を書いて 0（5.2）。
+9. **VBA エディタの確認**: `C5D_RT_ListProjects()` → `ok` で名前が 0 件なら 14（VBA エディタが未起動か、プロジェクトが読み込まれていない）。`error:` なら（kind に関わらず）その失敗を記録し、result.json を書いて 0（5.2）。
 10. **要求の処理**（5.1）。`list` は手順 9 の結果をそのまま使う。
 11. m<i>.txt と result.json を書く（5 章）。
 12. **finally（手順 5 で ExecuteScript を呼んだなら必ず）**: `ExecuteScript(link, 2, "C5D_Bridge_Push", "C5D_Self")` → オブジェクトなら次の 3 つを確かめてから `Close(False)`:
     - `Name` = `C5D_Bridge`（序数比較）
-    - `DisplayName` = リンクのパス（大文字小文字を無視）
-    - `VBProject.FileName` = リンクのパス（大文字小文字を無視）
+    - `DisplayName` = リンクのパス（大文字小文字を無視、だめなら長い名前で。3 章）
+    - `VBProject.FileName` = リンクのパス（同上）
     - ひとつでも違えば Close しない（stderr に警告）。手順 6 で自分を特定できていなければ、この finally は行わない。
     - Close の後で同じパスを呼ばない（「マクロ プログラムが不明です」になるだけで、確認にならない）。
 
@@ -359,9 +364,10 @@ ok
 |---|---|
 | `src/catiaTypes.ts` | request / result の型と `validateCatiaResult`（5 章） |
 | `src/catiaExecution.ts` | request.json を書き（4 章）、`catia-run.exe` を呼び（3 章）、result.json を検証する。終了コードを `CatiaExecutionError.exitCode` に持たせ、`preDispatch`（6 章）ならロックをすぐ解除する |
-| `src/catiaSync.ts` | Pull / check で `m<i>.txt` を UTF-8 で読む。Push で本文を `request.modules[].text` に入れる |
-| `src/bridgeFiles.ts` | 正本の用意（2.1）と古いリンク・コピーの掃除（2.3）。排他ロックの中で行う |
-| `src/i18n.ts` | 終了コード 10・13・14 のメッセージ（日・英・中） |
+| `src/catiaSync.ts` | Pull / check で `m<i>.txt` を UTF-8 で読む。Push で本文を `request.modules[].text` に入れる。終了コード 10・13・14・15 と `BridgeFileError`（2.1。13 と同じメッセージ）をそれぞれのメッセージにする |
+| `src/bridgeFiles.ts` | 正本の用意（2.1）と古いリンク・コピーの掃除（2.3）。排他ロックの中で行う。フォルダは `fs.realpathSync.native` で長い名前にする |
+| `src/syncOperation.ts` | 排他ロックと作業フォルダ（`tempRoot` を `fs.realpathSync.native` で長い名前にする。3 章） |
+| `src/i18n.ts` | 終了コード 10・13・14・15 のメッセージ（日・英・中） |
 
 - `cat5dev.toml` の `[project] encoding` は Push / Pull では使わない（4 章）。
 - `.vscodeignore` で `resources/bridge/*.bas` を VSIX から外す（runtime は exe に埋め込んであるため）。`resources/bridge/C5D_Bridge.catvba` は含める。
@@ -446,9 +452,9 @@ node scripts/build-bridge-catvba.js --export-import <dir>           # VBA エデ
 
 | 部分 | ファイル | テスト |
 |---|---|---|
-| `catia-run.exe` | `tools/catia-run/CatiaRun.cs`、`tools/catia-run/CatiaRun.*.cs`、`scripts/build-bridge.js`（コンパイルと runtime の埋め込み） | `tests/catiaRun.test.js`: `--validate-only` で 3・4 章、偽の ExecuteScript で 5〜7 章（CATIA 非接続。csc.exe が無ければ skip） |
+| `catia-run.exe` | `tools/catia-run/CatiaRun.cs`、`tools/catia-run/CatiaRun.*.cs`、`scripts/build-bridge.js`（コンパイルと runtime の埋め込み） | `tests/catiaRun.test.js`: `--validate-only` で 3・4 章（8.3 短縮名を含む）、Mutex を持ったまま実行して 15、偽の ExecuteScript で 5〜7 章（CATIA 非接続。csc.exe が無ければ skip） |
 | VBA | `resources/bridge/*.bas` | `tests/bridgeBas.test.js`: 9.3 の静的検査 |
-| 拡張機能 | 10 章のファイル | `tests/catiaExecution.test.js`、`tests/catiaSync.test.js`、`tests/bridgeFiles.test.js` |
+| 拡張機能 | 10 章のファイル | `tests/catiaExecution.test.js`、`tests/catiaSync.test.js`、`tests/bridgeFiles.test.js`、`tests/syncOperation.test.js` |
 | ブリッジの作り直し | `scripts/build-bridge-catvba.js`、`scripts/lib/catvba-read.js` | `tests/buildBridgeCatvba.test.js` |
 | 実機スモーク | `scripts/smoke-catia.js` | `tests/smokeCatia.test.js`（偽の exe） |
 

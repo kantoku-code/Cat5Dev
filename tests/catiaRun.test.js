@@ -7,8 +7,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const { findCsc, sourceFiles, cscArguments, RESOURCE_NAME } = require('../scripts/build-bridge');
+const { shortPath } = require('./helpers');
 
 const root = path.resolve(__dirname, '..');
 const csc = process.platform === 'win32' ? findCsc() : null;
@@ -94,6 +95,8 @@ public sealed class CatiaRunHarness : IScriptHost
 
     static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--check-paths") { return CheckPaths(args); }
+        if (args.Length > 0 && args[0] == "--hold-mutex") { return HoldMutex(); }
         Dictionary<string, object> scenario = (Dictionary<string, object>)JsonParser.Parse(File.ReadAllText(args[0], Encoding.UTF8));
         List<Dictionary<string, object>> replies = new List<Dictionary<string, object>>();
         foreach (object r in (List<object>)scenario["replies"]) { replies.Add((Dictionary<string, object>)r); }
@@ -112,6 +115,36 @@ public sealed class CatiaRunHarness : IScriptHost
         sb.Append(",\"log\":" + JsonText.Quote(log.ToString()) + ",\"err\":" + JsonText.Quote(err.ToString()) + "}");
         byte[] bytes = new UTF8Encoding(false).GetBytes(sb.ToString());
         using (Stream stdout = Console.OpenStandardOutput()) { stdout.Write(bytes, 0, bytes.Length); }
+        return 0;
+    }
+
+    /// <summary>--check-paths p1 p2 ...: PathNames.CheckAbsolute of each, as a JSON array of booleans.</summary>
+    static int CheckPaths(string[] args)
+    {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 1; i < args.Length; i++)
+        {
+            bool ok = true;
+            try { PathNames.CheckAbsolute("--path", args[i]); } catch (InvalidInputException) { ok = false; }
+            if (i > 1) { sb.Append(','); }
+            sb.Append(ok ? "true" : "false");
+        }
+        Console.Out.Write(sb.Append(']').ToString());
+        return 0;
+    }
+
+    /// <summary>--hold-mutex: owns the catia-run.exe mutex, prints "held" (or "not held"), and keeps it until stdin closes.</summary>
+    static int HoldMutex()
+    {
+        using (System.Threading.Mutex mutex = new System.Threading.Mutex(false, CatiaRun.MutexName))
+        {
+            bool held;
+            try { held = mutex.WaitOne(0); } catch (System.Threading.AbandonedMutexException) { held = true; }
+            Console.Out.WriteLine(held ? "held" : "not held");
+            Console.Out.Flush();
+            Console.In.ReadToEnd();
+            if (held) { mutex.ReleaseMutex(); }
+        }
         return 0;
     }
 }
@@ -270,6 +303,12 @@ test('bad command lines exit 2 before CATIA is touched', { skip }, t => {
         'relative path': ['--bridge', ws.master, '--request', 'request.json', '--result', ws.result],
         'forward slashes': ['--bridge', ws.master.replace(/\\/g, '/'), '--request', ws.request, '--result', ws.result],
         'dot segment': ['--bridge', `${ws.bridgeDir}\\x\\..\\C5D_Bridge-0123abcd.catvba`, '--request', ws.request, '--result', ws.result],
+        'dot-dot in --request': ['--bridge', ws.master, '--request', `${ws.work}\\..\\${path.basename(ws.work)}\\request.json`, '--result', ws.result],
+        'single dot': ['--bridge', ws.master, '--request', `${ws.work}\\.\\request.json`, '--result', ws.result],
+        'relative --bridge': ['--bridge', path.relative(process.cwd(), ws.master), '--request', ws.request, '--result', ws.result],
+        'drive-relative': ['--bridge', ws.master, '--request', ws.request, '--result', ws.result.replace(/^([A-Za-z]:)\\/, '$1')],
+        'root-relative': ['--bridge', ws.master.replace(/^[A-Za-z]:/, ''), '--request', ws.request, '--result', ws.result],
+        'device path': ['--bridge', `\\\\?\\${ws.master}`, '--request', ws.request, '--result', ws.result],
         'trailing space': ['--bridge', ws.master, '--request', ws.request, '--result', `${ws.result} `],
         'different folders': ['--bridge', ws.master, '--request', ws.request, '--result', path.join(ws.dir, 'result.json')],
         'bridge missing': ['--bridge', path.join(ws.bridgeDir, 'C5D_Bridge-89abcdef.catvba'), '--request', ws.request, '--result', ws.result],
@@ -291,6 +330,59 @@ test('bad command lines exit 2 before CATIA is touched', { skip }, t => {
     assert.equal(fs.readFileSync(ws.result, 'utf8'), '{}', 'an existing result is never overwritten');
     assert.equal(run(all).status, 2, 'also without --validate-only');
     assert.equal(fs.readFileSync(ws.result, 'utf8'), '{}');
+});
+
+test('full absolute paths may contain 8.3 short names; relative, dot and device forms are refused', { skip }, () => {
+    const accepted = [
+        'C:\\Users\\LONGUS~1\\AppData\\Local\\Temp\\cat5dev-1\\step\\request.json',
+        'C:\\PROGRA~1\\Cat5Dev\\bridge\\C5D_Bridge-0123abcd.catvba',
+        'c:\\a b\\c~d\\e.json',
+        '\\\\server\\share\\LONGUS~1\\request.json'
+    ];
+    const refused = [
+        '', 'request.json', 'step\\request.json', '.\\request.json', '..\\request.json', 'C:request.json', '\\Users\\x\\request.json',
+        'C:\\', 'C:\\a\\..\\b\\request.json', 'C:\\a\\.\\request.json', 'C:\\a\\\\request.json', 'C:\\a\\..', 'C:/a/request.json',
+        'C:\\a\\request.json ', 'C:\\a\\request.json.', 'C:\\a \\request.json', 'C:\\a\\re:quest.json', 'C:\\a\\*.json', 'C:\\a\\b"c',
+        '\\\\?\\C:\\a\\request.json', '\\\\.\\C:\\a\\request.json', '\\\\server', '\\\\server\\share', '\\\\server\\\\share\\x', '1:\\a\\b'
+    ];
+    const checks = JSON.parse(execFileSync(harnessExe, ['--check-paths', ...accepted, ...refused], { windowsHide: true, encoding: 'utf8' }));
+    assert.deepEqual(checks.slice(0, accepted.length), accepted.map(() => true), 'accepted');
+    refused.forEach((value, i) => assert.equal(checks[accepted.length + i], false, `refused: ${JSON.stringify(value)}`));
+});
+
+test('--validate-only accepts real 8.3 short paths (%TEMP% such as C:\\Users\\LONGUS~1\\...)', { skip }, t => {
+    const ws = workspace(t, base('pull'));
+    const short = shortPath(ws.dir);
+    if (!short) { t.skip('no 8.3 short name on this volume'); return; }
+    const s = p => short + p.slice(ws.dir.length);
+    assert.equal(run(['--validate-only', '--bridge', s(ws.master), '--request', s(ws.request), '--result', s(ws.result)]).status, 0, `short: ${short}`);
+    const mixed = run(['--validate-only', '--bridge', ws.master, '--request', s(ws.request), '--result', ws.result]);
+    assert.equal(mixed.status, 0, `--request short, --result long are the same folder\n${mixed.stderr}`);
+    fs.writeFileSync(ws.result, '{}');
+    assert.equal(run(['--validate-only', '--bridge', s(ws.master), '--request', s(ws.request), '--result', s(ws.result)]).status, 2, 'existing result');
+    assert.equal(run(['--validate-only', '--bridge', s(ws.master), '--request', s(ws.request), '--result', s(ws.request)]).status, 2,
+        'the same file in two spellings');
+});
+
+test('a running catia-run.exe (the mutex is taken) exits 15 before CATIA is touched', { skip }, async t => {
+    const ws = workspace(t, base('list'));
+    const holder = spawn(harnessExe, ['--hold-mutex'], { windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
+    const exited = new Promise(resolve => holder.on('exit', resolve));
+    t.after(async () => { holder.stdin.end(); await exited; });
+    const first = await new Promise((resolve, reject) => {
+        let text = '';
+        holder.stdout.on('data', chunk => { text += chunk; if (text.includes('\n')) resolve(text.trim()); });
+        holder.on('error', reject);
+        holder.on('exit', () => resolve(text.trim()));
+    });
+    // Without the mutex held by the holder, the exe below would go on to GetActiveObject: never run it then.
+    assert.equal(first, 'held', 'the test process must own the mutex');
+    const r = run(['--bridge', ws.master, '--request', ws.request, '--result', ws.result]);
+    assert.equal(r.status, 15, `${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /^another catia-run\.exe is running\r?$/m);
+    assert.match(r.stdout, /^validate list \d+ms\r?\nexit 15 \d+ms/);
+    assert.deepEqual(fs.readdirSync(ws.work), ['request.json']);
+    assert.deepEqual(fs.readdirSync(ws.bridgeDir), ['C5D_Bridge-0123abcd.catvba'], 'no link is made');
 });
 
 // ---- bridge procedure against the fake host
@@ -508,6 +600,47 @@ test('wrecks in the master folder are closed through their own path before anyth
     assert.equal(s.closes.length, 3);
     assert.equal(s.closes[2], s.link);
     assert.match(s.log, /^list 2 wreck\(s\) closed/m);
+});
+
+test('a short (8.3) link and master match the long DisplayName CATIA reports; the guards still hold', { skip }, t => {
+    const ws = workspace(t, base('list'));
+    const short = shortPath(ws.dir);
+    if (!short) { t.skip('no 8.3 short name on this volume'); return; }
+    const s = p => short + p.slice(ws.dir.length);
+    const longLink = path.join(ws.bridgeDir, linkName);
+    const wreck = path.join(ws.bridgeDir, 'C5D_Bridge-0123abcd-0-20261121150000000.catvba');
+    const harness = replies => {
+        const scenario = path.join(ws.dir, `scenario-${counter++}.json`);
+        fs.writeFileSync(scenario, JSON.stringify({ link: s(longLink), master: s(ws.master), request: ws.request, result: ws.result, replies }));
+        const out = JSON.parse(execFileSync(harnessExe, [scenario], { windowsHide: true, encoding: 'utf8', timeout: 20000 }));
+        assert.equal(out.mismatch, null, out.err);
+        assert.equal(out.remaining, 0, `unused replies\n${out.err}`);
+        return out;
+    };
+    // CATIA reports the long names; the link was given in the short form.
+    const ok = harness([
+        { module: PUSH, function: 'C5D_Version', library: s(longLink), string: 'c5d-bridge:2' },
+        { module: PUSH, function: 'C5D_Who', string: `ok\nC5D_Bridge\t${longLink}\t${longLink}\nC5D_Bridge_Push\t1\nC5D_Bridge_Runtime\t1` },
+        { module: PUSH, function: 'C5D_List', string: listText(longLink, [`C5D_Bridge\t${wreck}\t0`]) },
+        { module: PUSH, function: 'C5D_Self', library: wreck, self: { name: 'C5D_Bridge', displayName: wreck, fileName: wreck } },
+        { module: PUSH, function: 'C5D_List', string: listText(longLink) },
+        { module: RT, function: 'C5D_RT_Version', string: RT_VERSION },
+        projectsReply('ok\ntoQI'),
+        { module: PUSH, function: 'C5D_Self', library: s(longLink), self: { name: 'C5D_Bridge', displayName: longLink, fileName: longLink } }
+    ]);
+    assert.equal(ok.exitCode, 0, ok.err);
+    assert.match(ok.log, /^who long-name \d+ms/m);
+    assert.deepEqual(ok.closes, [wreck, longLink], 'the wreck in the master folder (long name) and itself are closed');
+    fs.unlinkSync(ws.result);
+
+    // Another file of the same name in another folder is still not ours.
+    const elsewhere = path.join(ws.work, linkName);
+    const other = harness([
+        { module: PUSH, function: 'C5D_Version', string: 'c5d-bridge:2' },
+        { module: PUSH, function: 'C5D_Who', string: `ok\nC5D_Bridge\t${elsewhere}\t${elsewhere}\nC5D_Bridge_Push\t1` }
+    ]);
+    assert.equal(other.exitCode, 13);
+    assert.deepEqual(other.closes, []);
 });
 
 test('wrecks that cannot be closed safely exit 13 without touching them', { skip }, t => {

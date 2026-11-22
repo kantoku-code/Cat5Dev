@@ -25,6 +25,8 @@ export interface SyncOperationManagerOptions {
 export class SyncBusyError extends Error { constructor() { super('CATIA operation is busy or unsettled'); } }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function code(e: unknown): string | undefined { return (e as NodeJS.ErrnoException)?.code; }
+/** The long, canonical name of an existing path (8.3 short names expanded); the path itself when it cannot be resolved. */
+function nativePath(file: string): string { try { return fs.realpathSync.native(file); } catch { return file; } }
 function alive(pid: number): boolean {
     try { process.kill(pid, 0); return true; } catch (e) { return code(e) !== 'ESRCH'; }
 }
@@ -64,7 +66,8 @@ export class SyncOperationManager {
         const root = path.resolve(options.lockRoot ?? path.join(local, 'Cat5Dev', 'operation-lock'));
         const temp = path.resolve(options.tempRoot ?? os.tmpdir());
         fs.mkdirSync(root, { recursive: true }); fs.mkdirSync(temp, { recursive: true });
-        this.lockRoot = fs.realpathSync(root); this.tempRoot = fs.realpathSync(temp);
+        // realpathSync.native expands 8.3 short names (%TEMP% may be C:\Users\LONGUS~1\...); catia-run.exe gets the long names.
+        this.lockRoot = fs.realpathSync.native(root); this.tempRoot = fs.realpathSync.native(temp);
         this.activePath = path.join(this.lockRoot, 'active');
         this.isProcessAlive = options.isProcessAlive ?? alive;
         this.isCatiaRunning = options.isCatiaRunning ?? catiaRunning;
@@ -199,7 +202,7 @@ export class SyncOperationManager {
     }
     private managedTemp(owner: Pick<Owner, 'id' | 'tempDir'>): boolean {
         return uuid.test(owner.id) && path.resolve(owner.tempDir) === owner.tempDir
-            && path.dirname(owner.tempDir) === this.tempRoot
+            && (path.dirname(owner.tempDir) === this.tempRoot || nativePath(path.dirname(owner.tempDir)) === this.tempRoot)
             && path.basename(owner.tempDir).startsWith(`cat5dev-${owner.id}-`);
     }
     private removeTemp(owner: Owner): void {
