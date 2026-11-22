@@ -121,6 +121,18 @@ export function findNonAnsiRanges(text: string, checker: AnsiCharChecker): NonAn
     return result;
 }
 
+/** 拡張機能の表示言語ごとのコードページ。言語を切り替えると cat5dev.toml の ansi_code_page をこの値にする */
+const LANGUAGE_CODE_PAGES = {
+    ja: 932,   // 日本語（Shift-JIS）
+    en: 1252,  // 英語（Windows-1252。英語版 CATIA の実機では未確認）
+    zh: 936,   // 簡体字中国語（GBK）
+} as const;
+
+/** 拡張機能の表示言語（ja / en / zh）に対応するコードページ */
+export function codePageForLanguage(lang: keyof typeof LANGUAGE_CODE_PAGES): number {
+    return LANGUAGE_CODE_PAGES[lang];
+}
+
 /** システムの ANSI コードページを検出できなかったときに、表示言語（VSCode の env.language など）から推定する */
 export function estimateCodePageFromLanguage(language: string | undefined): number {
     const lang = (language ?? '').toLowerCase();
@@ -128,6 +140,7 @@ export function estimateCodePageFromLanguage(language: string | undefined): numb
         return /^zh-(tw|hk|mo)|hant/.test(lang) ? 950 : 936;
     }
     if (lang.startsWith('ko')) { return 949; }
+    if (lang.startsWith('en')) { return LANGUAGE_CODE_PAGES.en; }
     // 日本語、その他・不明は 932（この拡張機能の主な利用環境）
     return 932;
 }

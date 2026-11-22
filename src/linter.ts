@@ -232,18 +232,27 @@ export function registerLinter(
         })
     );
 
-    // 保存時（cat5dev.toml の変更を検知して全ファイル再 Lint）
+    // 保存時（cat5dev.toml の保存は下の FileSystemWatcher が拾って全ファイル再 Lint する）
     disposables.push(
         vscode.workspace.onDidSaveTextDocument((doc) => {
-            if (doc.fileName.endsWith('cat5dev.toml')) {
-                linter.relintAll(selector);
-                return;
-            }
             if (vscode.languages.match(selector, doc)) {
                 linter.lintNow(doc);
             }
         })
     );
+
+    // cat5dev.toml が変わったら全ファイル再 Lint（エディタでの保存も、言語切り替えなど拡張機能による書き換えも拾う）
+    const tomlFolder = vscode.workspace.workspaceFolders?.[0];
+    if (tomlFolder) {
+        const tomlWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(tomlFolder, 'cat5dev.toml')
+        );
+        const relint = () => linter.relintAll(selector);
+        tomlWatcher.onDidChange(relint);
+        tomlWatcher.onDidCreate(relint);
+        tomlWatcher.onDidDelete(relint);
+        disposables.push(tomlWatcher);
+    }
 
     // ファイルを閉じたとき診断をクリア
     disposables.push(

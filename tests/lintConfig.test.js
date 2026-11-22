@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fixture } = require('./helpers');
-const { readFormatterOptions, readProjectSettings, tomlTemplate } = require('../out/lintConfig');
+const {
+    readFormatterOptions, readLintOptions, readProjectSettings, tomlTemplate, writeTomlKey, writeTomlProjectKey,
+} = require('../out/lintConfig');
 
 function writeToml(t, content) {
     const root = fixture(t);
@@ -59,4 +61,68 @@ test('a leftover [project] encoding is ignored without error', t => {
     const root = writeToml(t, '[project]\ntarget_project = "Review"\nlanguage = "ja"\nencoding = "shift_jis"\n');
     assert.deepEqual(readProjectSettings(root), { targetProject: 'Review', language: 'ja' });
     assert.deepEqual(readProjectSettings(writeToml(t, undefined)), { targetProject: '', language: '' });
+});
+
+// ---------- writeTomlKey ----------
+
+const readToml = root => fs.readFileSync(path.join(root, 'cat5dev.toml'), 'utf-8');
+
+test('writeTomlKey replaces only the key in the given section and keeps comments and other lines', t => {
+    const root = writeToml(t, [
+        '# header',
+        '[project]',
+        'ansi_code_page = 1',
+        '[lint.rules]',
+        '# comment (0 = auto)',
+        'ansi_code_page = 0',
+        'goto = false',
+        '',
+    ].join('\n'));
+    writeTomlKey(root, 'lint.rules', 'ansi_code_page', '1252');
+    assert.equal(readToml(root), [
+        '# header',
+        '[project]',
+        'ansi_code_page = 1',
+        '[lint.rules]',
+        '# comment (0 = auto)',
+        'ansi_code_page = 1252',
+        'goto = false',
+        '',
+    ].join('\n'));
+});
+
+test('writeTomlKey adds the key right after the section header when the key is missing', t => {
+    const root = writeToml(t, '[lint]\nenabled = true\n[lint.rules]\ngoto = false\n[formatter]\nenabled = false\n');
+    writeTomlKey(root, 'lint.rules', 'ansi_code_page', '936');
+    assert.equal(readToml(root), '[lint]\nenabled = true\n[lint.rules]\nansi_code_page = 936\ngoto = false\n[formatter]\nenabled = false\n');
+    assert.equal(readLintOptions(root).ansi_code_page, 936);
+});
+
+test('writeTomlKey appends the section when it is missing, and does nothing without cat5dev.toml', t => {
+    const root = writeToml(t, '[lint]\nenabled = true\n\n');
+    writeTomlKey(root, 'lint.rules', 'ansi_code_page', '1252');
+    assert.equal(readToml(root), '[lint]\nenabled = true\n\n[lint.rules]\nansi_code_page = 1252\n');
+    assert.equal(readLintOptions(root).ansi_code_page, 1252);
+
+    const empty = writeToml(t, undefined);
+    writeTomlKey(empty, 'lint.rules', 'ansi_code_page', '1252');
+    assert.equal(fs.existsSync(path.join(empty, 'cat5dev.toml')), false);
+});
+
+test('writeTomlProjectKey still writes a quoted string into [project]', t => {
+    const root = writeToml(t, '[project]\ntarget_project = ""\nlanguage = "ja"\n');
+    writeTomlProjectKey(root, 'language', 'en');
+    assert.deepEqual(readProjectSettings(root), { targetProject: '', language: 'en' });
+    assert.match(readToml(root), /^language = "en"$/m);
+});
+
+test('switching the template language and the code page together gives the expected pair', t => {
+    for (const [from, to, codePage] of [['ja', 'en', 1252], ['en', 'zh', 936], ['zh', 'ja', 932]]) {
+        const root = writeToml(t, tomlTemplate(from).replace(/^\[lint\]\nenabled = false/m, '[lint]\nenabled = true'));
+        writeTomlProjectKey(root, 'language', to);
+        writeTomlKey(root, 'lint.rules', 'ansi_code_page', String(codePage));
+        assert.equal(readProjectSettings(root).language, to);
+        assert.equal(readLintOptions(root).ansi_code_page, codePage, `${from} -> ${to}`);
+        assert.equal((readToml(root).match(/^ansi_code_page = /gm) ?? []).length, 1);
+    }
 });

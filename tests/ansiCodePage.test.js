@@ -7,6 +7,7 @@ const { fixture } = require('./helpers');
 const {
     AnsiCharChecker, getAnsiCharChecker, findNonAnsiRanges, iconvNameForCodePage, SUPPORTED_CODE_PAGES,
     estimateCodePageFromLanguage, parseAcpFromRegOutput, detectSystemAnsiCodePage, NON_ANSI_DIAGNOSTIC_CODE,
+    codePageForLanguage,
 } = require('../out/ansiCodePage');
 const { readLintOptions, tomlTemplate } = require('../out/lintConfig');
 
@@ -109,7 +110,7 @@ test('detection uses the registry value, and falls back to the display language 
     assert.equal(failed.codePage, 936);
     assert.equal(failed.source, 'fallback');
     assert.equal(failed.reason, 'reg failed');
-    assert.equal((await detectSystemAnsiCodePage('en', async () => 'nothing')).codePage, 932);
+    assert.equal((await detectSystemAnsiCodePage('en', async () => 'nothing')).codePage, 1252);
 });
 
 test('fallback code page is estimated from the display language', () => {
@@ -117,8 +118,19 @@ test('fallback code page is estimated from the display language', () => {
     assert.equal(estimateCodePageFromLanguage('zh-cn'), 936);
     assert.equal(estimateCodePageFromLanguage('zh-tw'), 950);
     assert.equal(estimateCodePageFromLanguage('ko'), 949);
-    assert.equal(estimateCodePageFromLanguage('en'), 932);
+    assert.equal(estimateCodePageFromLanguage('en'), 1252);
+    assert.equal(estimateCodePageFromLanguage('en-us'), 1252);
+    assert.equal(estimateCodePageFromLanguage('de'), 932);
     assert.equal(estimateCodePageFromLanguage(undefined), 932);
+});
+
+test('each extension language has its own code page', () => {
+    assert.equal(codePageForLanguage('ja'), 932);
+    assert.equal(codePageForLanguage('en'), 1252);
+    assert.equal(codePageForLanguage('zh'), 936);
+    for (const lang of ['ja', 'en', 'zh']) {
+        assert.ok(getAnsiCharChecker(codePageForLanguage(lang)), lang);
+    }
 });
 
 // ---------- 設定（cat5dev.toml） ----------
@@ -148,13 +160,13 @@ test('non_ansi_character can be disabled and ansi_code_page can be set', t => {
 });
 
 test('generated template contains non_ansi_character and ansi_code_page for every language', t => {
-    for (const lang of ['ja', 'en', 'zh']) {
+    for (const [lang, codePage] of [['ja', 932], ['en', 1252], ['zh', 936]]) {
         const text = tomlTemplate(lang);
         assert.match(text, /^non_ansi_character = true$/m, lang);
-        assert.match(text, /^ansi_code_page = 0$/m, lang);
+        assert.match(text, new RegExp(`^ansi_code_page = ${codePage}$`, 'm'), lang);
         const opts = readLintOptions(writeToml(t, text.replace(/^\[lint\]\nenabled = false/m, '[lint]\nenabled = true')));
         assert.equal(opts.non_ansi_character, true, lang);
-        assert.equal(opts.ansi_code_page, 0, lang);
+        assert.equal(opts.ansi_code_page, codePage, lang);
         assert.equal(opts.unmatched_blocks, true, lang);
     }
 });

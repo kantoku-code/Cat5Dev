@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { readProjectSettings, writeTomlProjectKey } from './lintConfig';
+import { readProjectSettings, writeTomlKey, writeTomlProjectKey } from './lintConfig';
+import { codePageForLanguage } from './ansiCodePage';
 
 export type Language = 'ja' | 'en' | 'zh';
 
@@ -33,7 +34,10 @@ export async function setLanguage(lang: Language): Promise<void> {
 
     const tomlPath = path.join(workspaceFolders[0].uri.fsPath, 'cat5dev.toml');
     if (fs.existsSync(tomlPath)) {
-        writeTomlProjectKey(workspaceFolders[0].uri.fsPath, 'language', lang);
+        const root = workspaceFolders[0].uri.fsPath;
+        writeTomlProjectKey(root, 'language', lang);
+        // VBA010 の判定コードページも言語に合わせる（ja = 932 / en = 1252 / zh = 936）
+        writeTomlKey(root, 'lint.rules', 'ansi_code_page', String(codePageForLanguage(lang)));
     } else {
         // Fallback to updating VSCode configuration if toml doesn't exist
         await vscode.workspace.getConfiguration('cat5dev').update('language', lang, vscode.ConfigurationTarget.Workspace);

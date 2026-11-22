@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Language } from './i18n';
+import { codePageForLanguage } from './ansiCodePage';
 
 export interface LintOptions {
     option_explicit: boolean;
@@ -286,47 +287,51 @@ export function readProjectSettings(workspaceRoot: string): { targetProject: str
     return { targetProject, language };
 }
 
-/** cat5dev.toml の [project] セクションの指定キーの値を書き換える（コメント・他行を保持） */
-export function writeTomlProjectKey(workspaceRoot: string, key: string, value: string): void {
+/**
+ * cat5dev.toml の [section] の key を `key = rawValue` に書き換える（コメント・他行を保持）。
+ * rawValue は TOML の値をそのまま書く（文字列なら呼び出し側で "..." を付ける）。
+ * キーが無ければセクション見出しの直後に、セクションも無ければ末尾に追加する。toml が無ければ何もしない。
+ */
+export function writeTomlKey(workspaceRoot: string, section: string, key: string, rawValue: string): void {
     const tomlPath = path.join(workspaceRoot, 'cat5dev.toml');
     if (!fs.existsSync(tomlPath)) { return; }
 
+    const newLine = `${key} = ${rawValue}`;
     const lines = fs.readFileSync(tomlPath, 'utf-8').split(/\r?\n/);
-    let inProject = false;
+    const sectionOf = (line: string): string | undefined => line.trim().match(/^\[([^\]]+)\]$/)?.[1].trim();
+
+    let inSection = false;
     let written = false;
     let result = lines.map(line => {
-        const secMatch = line.trim().match(/^\[([^\]]+)\]$/);
-        if (secMatch) { inProject = secMatch[1].trim() === 'project'; }
-        if (inProject && !written) {
+        const sec = sectionOf(line);
+        if (sec !== undefined) { inSection = sec === section; }
+        if (inSection && !written) {
             const eqIdx = line.indexOf('=');
             if (eqIdx >= 0 && line.substring(0, eqIdx).trim() === key) {
                 written = true;
-                return `${key} = "${value}"`;
+                return newLine;
             }
         }
         return line;
     });
 
     if (!written) {
-        const newResult: string[] = [];
-        let projectFound = false;
-        for (const line of result) {
-            newResult.push(line);
-            const secMatch = line.trim().match(/^\[([^\]]+)\]$/);
-            if (secMatch && secMatch[1].trim() === 'project') {
-                newResult.push(`${key} = "${value}"`);
-                projectFound = true;
-            }
-        }
-        if (projectFound) {
-            result = newResult;
+        const headerIdx = result.findIndex(line => sectionOf(line) === section);
+        if (headerIdx >= 0) {
+            result.splice(headerIdx + 1, 0, newLine);
         } else {
-            result.push('[project]');
-            result.push(`${key} = "${value}"`);
+            // 末尾の空行の後ろにまとめて付ける
+            while (result.length > 0 && result[result.length - 1].trim() === '') { result.pop(); }
+            result = [...result, '', `[${section}]`, newLine, ''];
         }
     }
 
     fs.writeFileSync(tomlPath, result.join('\n'), 'utf-8');
+}
+
+/** cat5dev.toml の [project] セクションの指定キーの値（文字列）を書き換える（コメント・他行を保持） */
+export function writeTomlProjectKey(workspaceRoot: string, key: string, value: string): void {
+    writeTomlKey(workspaceRoot, 'project', key, `"${value}"`);
 }
 
 const tomlComments = {
@@ -344,7 +349,7 @@ const tomlComments = {
         unmatchedParens: '# 括弧の不一致をエラーとして報告',
         unmatchedBlocks: '# End If / End Sub / End Function 等の欠落をエラーとして報告',
         nonAnsiCharacter: '# CATIA の VBA（Windows の ANSI コードページ）で表せない文字を警告 (Push すると ? などに置き換わるため)',
-        ansiCodePage: '# non_ansi_character の判定に使うコードページ (0 = システムの設定を自動検出、932 = 日本語、936 = 簡体字中国語 など)\n# [project] の旧 encoding とは別の設定です',
+        ansiCodePage: '# non_ansi_character の判定に使うコードページ (932 = 日本語、1252 = 英語、936 = 簡体字中国語、0 = システムの設定を自動検出 など)\n# 言語を切り替えると、その言語の値 (ja = 932 / en = 1252 / zh = 936) に書き換わります\n# [project] の旧 encoding とは別の設定です',
         formatterEnabled: '# フォーマッターの有効/無効',
         indentSize: '# インデントのスペース数',
         capitalizeKeywords: '# VBA キーワードを大文字化 (If, Dim, Sub 等)',
@@ -375,7 +380,7 @@ const tomlComments = {
         unmatchedParens: '# Report mismatched parentheses as an error',
         unmatchedBlocks: '# Report missing End If / End Sub / End Function etc. as an error',
         nonAnsiCharacter: '# Warn about characters that CATIA VBA (the Windows ANSI code page) cannot represent (Push replaces them with ? or similar)',
-        ansiCodePage: '# Code page used by non_ansi_character (0 = detect the system setting, 932 = Japanese, 936 = Simplified Chinese, etc.)\n# Not related to the former [project] encoding setting',
+        ansiCodePage: '# Code page used by non_ansi_character (932 = Japanese, 1252 = English, 936 = Simplified Chinese, 0 = detect the system setting, etc.)\n# Switching the language rewrites this to the value for that language (ja = 932 / en = 1252 / zh = 936)\n# Not related to the former [project] encoding setting',
         formatterEnabled: '# Enable or disable the formatter entirely',
         indentSize: '# Number of spaces per indentation level',
         capitalizeKeywords: '# Capitalize VBA keywords (If, Dim, Sub, etc.)',
@@ -406,7 +411,7 @@ const tomlComments = {
         unmatchedParens: '# 将括号不匹配报告为错误',
         unmatchedBlocks: '# 将缺少 End If / End Sub / End Function 等报告为错误',
         nonAnsiCharacter: '# 对 CATIA 的 VBA（Windows 的 ANSI 代码页）无法表示的字符发出警告 (Push 后会被替换为 ? 等字符)',
-        ansiCodePage: '# non_ansi_character 判断所用的代码页 (0 = 自动检测系统设置，936 = 简体中文，932 = 日语 等)\n# 与旧版 [project] 的 encoding 设置无关',
+        ansiCodePage: '# non_ansi_character 判断所用的代码页 (936 = 简体中文，932 = 日语，1252 = 英语，0 = 自动检测系统设置 等)\n# 切换语言时会改写为该语言对应的值 (ja = 932 / en = 1252 / zh = 936)\n# 与旧版 [project] 的 encoding 设置无关',
         formatterEnabled: '# 启用或禁用格式化程序',
         indentSize: '# 每个缩进级别的空格数',
         capitalizeKeywords: '# 自动大写 VBA 关键字 (If, Dim, Sub 等)',
@@ -474,7 +479,7 @@ ${c.nonAnsiCharacter}
 non_ansi_character = ${l.non_ansi_character}
 
 ${c.ansiCodePage}
-ansi_code_page = ${l.ansi_code_page}
+ansi_code_page = ${codePageForLanguage(lang)}
 
 [formatter]
 ${c.formatterEnabled}
