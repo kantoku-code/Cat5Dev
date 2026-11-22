@@ -53,7 +53,7 @@ max_function_lines   = 300
 unmatched_parens     = true
 unmatched_blocks     = true
 non_ansi_character   = true
-ansi_code_page       = 0     # VBA010 判断所用的代码页（0 = 自动检测）
+ansi_code_page       = 932   # VBA010 判断所用的代码页（切换语言时会改写。0 = 自动检测）
 ```
 
 ### VBA010: CATIA 的 VBA 无法表示的字符
@@ -71,9 +71,11 @@ MsgBox "完成🙂"   ' 对 🙂 发出警告：Push 后会变成 ?
 #### 判断所用的代码页
 通过 `[lint.rules]` 的 `ansi_code_page` 指定。
 
+由 `CATIA: Initialize Project (cat5dev.toml)` 生成的 `cat5dev.toml` 中会写入与显示语言对应的值（日语 = 932 / 英语 = 1252 / 中文 = 936）。通过 🌐 按钮切换显示语言时，该值也会改写为新语言对应的值（手动填写的值和 `0` 也会被覆盖）。英语的 1252（Windows-1252）尚未在英文版 CATIA 实机上确认。
+
 | 值 | 行为 |
 |----|------|
-| `0`（默认） | 使用本机系统的 ANSI 代码页。扩展启动时仅读取一次注册表 `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` 中的 `ACP`。读取失败时，根据 VSCode 的显示语言推定（中文（简体）→ 936、中文（繁体）→ 950、韩语 → 949、其他 → 932） |
+| `0`（没有该键时的默认值） | 使用本机系统的 ANSI 代码页。扩展启动时仅读取一次注册表 `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` 中的 `ACP`。读取失败时，根据 VSCode 的显示语言推定（中文（简体）→ 936、中文（繁体）→ 950、韩语 → 949、英语 → 1252、其他 → 932） |
 | `936`、`932` 等 | 使用指定的代码页。运行 CATIA 的电脑与编辑此工作区的电脑系统代码页不同时请指定。也可以写成 `"cp936"` 或 `"auto"`（= `0`） |
 
 - 所用的代码页会在输出面板“CATIA VBA Sync”中记录一行，例如 `[vba-lint] 系统的 ANSI 代码页: 936 …`。

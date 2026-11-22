@@ -75,7 +75,7 @@ max_function_lines = 300
 unmatched_parens = true
 unmatched_blocks = true
 non_ansi_character = true
-ansi_code_page = 0           # code page used by VBA010 (0 = detect automatically)
+ansi_code_page = 932         # code page used by VBA010 (rewritten when you switch the language; 0 = detect automatically)
 
 [formatter]
 enabled = false              # true to enable the formatter
@@ -111,6 +111,8 @@ See [Lint and Formatter](lint-format.md#vba-lint).
 
 `ansi_code_page` is the code page used only by VBA010, which warns about characters that Push replaces with `?` (see [VBA010](lint-format.md#vba010-characters-that-catia-vba-cannot-represent)). It is a different setting from the former `encoding` in `[project]` above and does not change how Push / Pull work.
 
+When you switch the display language with the 🌐 button, `ansi_code_page` is rewritten together with `language` to the value for that language (`ja` = 932 / `en` = 1252 / `zh` = 936; see [Display language](#display-language)).
+
 ### [formatter]
 See [Lint and Formatter](lint-format.md#vba-formatter).
 
@@ -130,6 +132,7 @@ See [Lint and Formatter](lint-format.md#vba-formatter).
 Notifications and dialog messages can be shown in Japanese, English, or Chinese (Simplified). Switch with the 🌐 button at the top of the panel (`CATIA: Switch Language`).
 
 - After switching, messages appear in the new language immediately (no reload needed).
+- If `cat5dev.toml` exists, `ansi_code_page` in `[lint.rules]` (the code page used by VBA010) is also rewritten: Japanese = 932 / English = 1252 / Chinese = 936. A value you wrote by hand, or `0` (detect automatically), is overwritten too, so set it again after switching if you need a different value. The English value 1252 has not yet been confirmed on an English CATIA installation.
 - Tree labels (Modules, etc.), command names, and Lint messages (except VBA010) are not translated.
 
 The language is determined in this order:

@@ -75,7 +75,7 @@ max_function_lines = 300
 unmatched_parens = true
 unmatched_blocks = true
 non_ansi_character = true
-ansi_code_page = 0           # VBA010 判断所用的代码页（0 = 自动检测）
+ansi_code_page = 932         # VBA010 判断所用的代码页（切换语言时会改写。0 = 自动检测）
 
 [formatter]
 enabled = false              # true 为启用格式化程序
@@ -111,6 +111,8 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 
 `ansi_code_page` 是仅供 VBA010（对 Push 后会被替换为 `?` 的字符发出警告）判断使用的代码页（参见 [VBA010](lint-format.md#vba010-catia-的-vba-无法表示的字符)）。它与上文 `[project]` 中旧的 `encoding` 是不同的设置，不会影响 Push / Pull 的行为。
 
+通过 🌐 按钮切换显示语言时，`ansi_code_page` 会与 `language` 一起改写为该语言对应的值（`ja` = 932 / `en` = 1252 / `zh` = 936，参见 [显示语言](#显示语言)）。
+
 ### [formatter]
 请参阅 [Lint 与格式化程序](lint-format.md#vba-格式化程序)。
 
@@ -130,6 +132,7 @@ breadcrumbs_sort = "name"    # 面包屑导航的排序方式 position / name / 
 通知和对话框的消息可以用日语、英语、中文（简体）显示。通过面板顶部的 🌐 按钮（`CATIA: Switch Language`）切换。
 
 - 切换后消息会立即使用新语言（无需重新加载）。
+- 如果存在 `cat5dev.toml`，`[lint.rules]` 的 `ansi_code_page`（VBA010 判断所用的代码页）也会改写为：日语 = 932 / 英语 = 1252 / 中文 = 936。手动填写的值和 `0`（自动检测）也会被覆盖，如需使用其他值，请在切换后重新填写。英语的 1252 尚未在英文版 CATIA 实机上确认。
 - 树视图的显示名称（Modules 等）、命令名称和 Lint 消息（VBA010 除外）不会被翻译。
 
 语言按以下顺序确定。

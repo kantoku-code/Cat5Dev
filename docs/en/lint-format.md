@@ -53,7 +53,7 @@ max_function_lines   = 300
 unmatched_parens     = true
 unmatched_blocks     = true
 non_ansi_character   = true
-ansi_code_page       = 0     # code page used by VBA010 (0 = detect automatically)
+ansi_code_page       = 932   # code page used by VBA010 (rewritten when you switch the language; 0 = detect automatically)
 ```
 
 ### VBA010: Characters that CATIA VBA cannot represent
@@ -77,9 +77,11 @@ MsgBox "Done🙂"   ' warning on 🙂: Push turns it into ?
 #### Code page used for the check
 Set it with `ansi_code_page` in `[lint.rules]`.
 
+The `cat5dev.toml` created by `CATIA: Initialize Project (cat5dev.toml)` contains the value for the display language (Japanese = 932 / English = 1252 / Chinese = 936). When you switch the display language with the 🌐 button, this value is rewritten to the value for the new language (a value you wrote by hand, or `0`, is overwritten too). The English value 1252 (Windows-1252) has not yet been confirmed on an English CATIA installation.
+
 | Value | Behavior |
 |-------|----------|
-| `0` (default) | Uses the system ANSI code page of this PC. When the extension starts, it reads `ACP` under the registry key `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` once. If that fails, it estimates the code page from the VSCode display language (Chinese (Simplified) → 936, Chinese (Traditional) → 950, Korean → 949, others → 932) |
+| `0` (default when the key is absent) | Uses the system ANSI code page of this PC. When the extension starts, it reads `ACP` under the registry key `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` once. If that fails, it estimates the code page from the VSCode display language (Chinese (Simplified) → 936, Chinese (Traditional) → 950, Korean → 949, English → 1252, others → 932) |
 | `932`, `936`, etc. | Uses the specified code page. Set this when the PC running CATIA and the PC editing this workspace have different system code pages. You can also write `"cp936"` or `"auto"` (= `0`) |
 
 - The code page in use is logged as one line in the "CATIA VBA Sync" output panel, such as `[vba-lint] System ANSI code page: 932 …`.

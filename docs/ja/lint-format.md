@@ -51,7 +51,7 @@ max_function_lines   = 300
 unmatched_parens     = true
 unmatched_blocks     = true
 non_ansi_character   = true
-ansi_code_page       = 0     # VBA010 の判定に使うコードページ（0 = 自動検出）
+ansi_code_page       = 932   # VBA010 の判定に使うコードページ（言語の切り替えで書き換わる。0 = 自動検出）
 ```
 
 ### VBA010: CATIA の VBA で表せない文字
@@ -75,9 +75,11 @@ MsgBox "完了しました🙂"   ' 🙂 に警告: Push すると ? になる
 #### 判定に使うコードページ
 `[lint.rules]` の `ansi_code_page` で決めます。
 
+`CATIA: Initialize Project (cat5dev.toml)` で作る `cat5dev.toml` には、表示言語に合わせた値（日本語 = 932 / 英語 = 1252 / 中国語 = 936）が書かれます。🌐 ボタンで表示言語を切り替えると、この値も切り替えた言語の値に書き換わります（手で書いた値や `0` も上書きされます）。英語の 1252（Windows-1252）は、英語版 CATIA の実機ではまだ確かめていません。
+
 | 値 | 動作 |
 |----|------|
-| `0`（既定） | この PC のシステムの ANSI コードページを使います。拡張機能の起動時に 1 回だけ、レジストリ `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` の `ACP` を読み取ります。読み取れなかった場合は VSCode の表示言語から推定します（中国語（簡体字）→ 936、中国語（繁体字）→ 950、韓国語 → 949、それ以外 → 932） |
+| `0`（キーが無いときの既定） | この PC のシステムの ANSI コードページを使います。拡張機能の起動時に 1 回だけ、レジストリ `HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage` の `ACP` を読み取ります。読み取れなかった場合は VSCode の表示言語から推定します（中国語（簡体字）→ 936、中国語（繁体字）→ 950、韓国語 → 949、英語 → 1252、それ以外 → 932） |
 | `932` / `936` など | 指定したコードページを使います。CATIA を動かす PC と、このワークスペースを編集する PC とでシステムのコードページが違う場合に指定します。`"cp936"` や `"auto"`（= `0`）とも書けます |
 
 - 使ったコードページは出力パネル「CATIA VBA Sync」に `[vba-lint] システムの ANSI コードページ: 932 …` のように 1 行記録されます。
