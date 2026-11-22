@@ -17,7 +17,7 @@ CATIA の VBA プロジェクトと VSCode の間でモジュールをやり取�
 | **モジュールツリー** | サイドパネルにモジュールを種類別に表示。名前変更・削除・パスのコピー | [同期](sync.md#モジュールツリー) |
 | **IntelliSense** | CATIA API を含むコード補完、ホバー、定義へ移動、引数のヒント、存在しないメンバーの検出 | [IntelliSense](intellisense.md) |
 | **シンボルナビゲーション** | アウトライン、パンくずリスト、`Ctrl+Shift+O` でプロシージャへ移動 | [IntelliSense](intellisense.md#シンボルナビゲーション) |
-| **VBA Lint** | `Option Explicit` 漏れ、未使用変数、`End If` の書き忘れなど 9 種類のルール（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-lint) |
+| **VBA Lint** | `Option Explicit` 漏れ、未使用変数、`End If` の書き忘れ、CATIA の VBA で表せない文字など 10 種類のルール（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-lint) |
 | **VBA フォーマッタ** | キーワードの大文字化、インデント、空白・空行の整理（既定は無効） | [Lint とフォーマッタ](lint-format.md#vba-フォーマッタ) |
 | **多言語表示** | 日本語・English・简体中文 | [設定](configuration.md#表示言語) |
 
@@ -92,6 +92,19 @@ Push は CATIA のメモリ上の VBA プロジェクトに書き込むだけで
 VSCode から Push した後は、CATIA の VBA エディタで保存してください（`Ctrl+S`）。
 
 また、Push では **VSCode 側に無いモジュールを CATIA から削除するかどうか** を確認されることがあります。内容をよく確認してから選んでください（[同期](sync.md#pushvscode--catia)）。
+
+---
+
+## CATIA の VBA で表せない文字（VBA010）
+
+CATIA の VBA はコードを Windows の ANSI コードページで保持するため、そのコードページで表せない文字（絵文字など）は Push すると `?` などの別の文字に置き換わります。Lint ルール VBA010 `non_ansi_character` は、そのような文字を Push の前に警告します（Lint を有効にしている場合）。
+
+- 判定に使うコードページは、`cat5dev.toml` の `[lint.rules]` の `ansi_code_page` です。`CATIA: Initialize Project (cat5dev.toml)` で作る `cat5dev.toml` には、表示言語に合わせた値（日本語 = 932 / 英語 = 1252（Windows-1252）/ 中国語 = 936）が書かれます。`0` にするとシステムの ANSI コードページを自動で検出します。
+- 🌐 ボタン（`CATIA: Switch Language`）で表示言語を切り替えると、`language` と一緒に `ansi_code_page` も切り替えた言語の値に書き換わります（手で書いた値や `0` も上書きされます）。切り替えるとすぐに Lint し直して反映されます。
+- 英語の 1252 は、英語版 CATIA の実機ではまだ確かめていません。
+- `ansi_code_page` は Lint の判定だけに使う設定で、Push / Pull の動作には影響しません。0.7.0 で廃止された `[project]` の `encoding` とは別物です。
+
+詳しくは [VBA010](lint-format.md#vba010-catia-の-vba-で表せない文字) と [表示言語](configuration.md#表示言語) を参照してください。
 
 ---
 

@@ -17,7 +17,7 @@ It transfers modules between a CATIA VBA project and VSCode, so you can edit the
 | **Module tree** | Shows modules by type in a side panel. Rename, delete, and copy path | [Sync](docs/en/sync.md#module-tree) |
 | **IntelliSense** | Code completion including the CATIA API, hover, Go to Definition, parameter hints, and detection of nonexistent members | [IntelliSense](docs/en/intellisense.md) |
 | **Symbol navigation** | Outline, breadcrumbs, and `Ctrl+Shift+O` to jump to a procedure | [IntelliSense](docs/en/intellisense.md#symbol-navigation) |
-| **VBA Lint** | 9 rules, such as missing `Option Explicit`, unused variables, and missing `End If` (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-lint) |
+| **VBA Lint** | 10 rules, such as missing `Option Explicit`, unused variables, missing `End If`, and characters that CATIA VBA cannot represent (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-lint) |
 | **VBA Formatter** | Keyword capitalization, indentation, and whitespace / blank line cleanup (disabled by default) | [Lint and Formatter](docs/en/lint-format.md#vba-formatter) |
 | **Multilingual UI** | 日本語, English, 简体中文 | [Configuration](docs/en/configuration.md#display-language) |
 
@@ -92,6 +92,19 @@ Push only writes to the VBA project in CATIA's memory. **If you close CATIA with
 After pushing from VSCode, save in the CATIA VBA editor (`Ctrl+S`).
 
 Push may also ask **whether to delete modules from CATIA that do not exist in VSCode**. Check the list carefully before you choose (see [Sync](docs/en/sync.md#push-vscode--catia)).
+
+---
+
+## Characters That CATIA VBA Cannot Represent (VBA010)
+
+CATIA VBA stores code in the Windows ANSI code page, so characters that this code page cannot represent (emoji, etc.) are replaced with `?` or another character when you Push. The lint rule VBA010 `non_ansi_character` warns you about such characters before you Push (when Lint is enabled).
+
+- The code page used for the check is `ansi_code_page` in `[lint.rules]` of `cat5dev.toml`. The `cat5dev.toml` created by `CATIA: Initialize Project (cat5dev.toml)` contains the value for the display language: Japanese = 932 / English = 1252 (Windows-1252) / Chinese = 936. `0` detects the system ANSI code page automatically.
+- When you switch the display language with the 🌐 button (`CATIA: Switch Language`), `ansi_code_page` is rewritten together with `language` to the value for the new language (a value you wrote by hand, or `0`, is overwritten too). Lint runs again right away with the new value.
+- The English value 1252 has not yet been confirmed on an English CATIA installation.
+- `ansi_code_page` is used only for the lint check and does not change how Push / Pull work. It is different from `encoding` in `[project]`, which was removed in 0.7.0.
+
+For details, see [VBA010](docs/en/lint-format.md#vba010-characters-that-catia-vba-cannot-represent) and [Display language](docs/en/configuration.md#display-language).
 
 ---
 

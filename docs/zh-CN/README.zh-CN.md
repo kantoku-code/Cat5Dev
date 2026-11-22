@@ -17,7 +17,7 @@ Cat5Dev 是一款用于在 VSCode 中开发 CATIA V5 VBA 宏的扩展。
 | **模块树** | 在侧边面板中按类型显示模块。支持重命名、删除、复制路径 | [同步](sync.md#模块树) |
 | **IntelliSense** | 包括 CATIA API 在内的代码补全、悬停、转到定义、参数提示、检测不存在的成员 | [IntelliSense](intellisense.md) |
 | **符号导航** | 大纲、面包屑导航、通过 `Ctrl+Shift+O` 跳转到过程 | [IntelliSense](intellisense.md#符号导航) |
-| **VBA Lint** | 缺少 `Option Explicit`、未使用的变量、遗漏 `End If` 等 9 种规则（默认禁用） | [Lint 与格式化程序](lint-format.md#vba-lint) |
+| **VBA Lint** | 缺少 `Option Explicit`、未使用的变量、遗漏 `End If`、CATIA 的 VBA 无法表示的字符等 10 种规则（默认禁用） | [Lint 与格式化程序](lint-format.md#vba-lint) |
 | **VBA 格式化程序** | 关键字大写、缩进、整理空白与空行（默认禁用） | [Lint 与格式化程序](lint-format.md#vba-格式化程序) |
 | **多语言显示** | 日本語、English、简体中文 | [配置](configuration.md#显示语言) |
 
@@ -92,6 +92,19 @@ Push 只会写入 CATIA 内存中的 VBA 项目。**如果不保存就关闭 CAT
 从 VSCode 执行 Push 后，请在 CATIA 的 VBA 编辑器中保存（`Ctrl+S`）。
 
 此外，Push 时可能会询问 **是否从 CATIA 中删除 VSCode 端不存在的模块**。请仔细确认内容后再做选择（参见 [同步](sync.md#pushvscode--catia)）。
+
+---
+
+## CATIA 的 VBA 无法表示的字符（VBA010）
+
+CATIA 的 VBA 以 Windows 的 ANSI 代码页保存代码，因此该代码页无法表示的字符（表情符号等）在 Push 时会被替换为 `?` 等其他字符。Lint 规则 VBA010 `non_ansi_character` 会在 Push 之前对这类字符发出警告（需启用 Lint）。
+
+- 判断所用的代码页由 `cat5dev.toml` 中 `[lint.rules]` 的 `ansi_code_page` 指定。由 `CATIA: Initialize Project (cat5dev.toml)` 生成的 `cat5dev.toml` 中会写入与显示语言对应的值（日语 = 932 / 英语 = 1252（Windows-1252）/ 中文 = 936）。设为 `0` 时会自动检测系统的 ANSI 代码页。
+- 通过 🌐 按钮（`CATIA: Switch Language`）切换显示语言时，`ansi_code_page` 会与 `language` 一起改写为新语言对应的值（手动填写的值和 `0` 也会被覆盖）。切换后会立即重新执行 Lint 并反映结果。
+- 英语的 1252 尚未在英文版 CATIA 实机上确认。
+- `ansi_code_page` 是仅用于 Lint 判断的设置，不会影响 Push / Pull 的行为。它与 0.7.0 中废弃的 `[project]` 的 `encoding` 是不同的设置。
+
+详情请参见 [VBA010](lint-format.md#vba010-catia-的-vba-无法表示的字符) 和 [显示语言](configuration.md#显示语言)。
 
 ---
 
