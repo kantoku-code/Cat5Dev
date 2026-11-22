@@ -39,6 +39,7 @@ bin/*-wal
 bin/*-shm
 
 *.vsix
+/vsix
 /temp
 /.cat5dev-pull-*
 /out
