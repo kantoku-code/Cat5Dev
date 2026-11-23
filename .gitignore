@@ -47,7 +47,7 @@ bin/*-shm
 /modules
 /catia-vba.json
 /.catia-vba-push-cache.json
-cat5dev.toml
+/cat5dev.toml
 
 
 # Build outputs (bin/vba-ls.exe 等は npm run compile:go、bin/catia-run.exe は npm run compile:bridge で生成)
