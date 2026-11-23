@@ -186,12 +186,12 @@ func checkNestingDepth(lines []string, opts LintOptions) []Diagnostic {
 	var diags []Diagnostic
 	depth := 0
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
+	for _, st := range logicalStatements(lines) {
+		i := st.line
+		kind := kindNormal
+		if !st.singleIf {
+			kind = classifyLine(st.text)
 		}
-		kind := classifyLine(trimmed)
 		switch kind {
 		case kindStarter:
 			depth++
@@ -317,11 +317,178 @@ func checkUnmatchedParens(lines []string, opts LintOptions) []Diagnostic {
 	return diags
 }
 
+// ---------- 論理文（VBA006 / VBA009 共通） ----------
+
+// logicalStmt は構造（ブロックの開始・終了）を判定するための 1 文。
+// コメントは除き、文字列リテラルは "" に置き換えてある。
+type logicalStmt struct {
+	line     int    // 文が始まる物理行（0 始まり）
+	text     string // トリム済みのコード
+	singleIf bool   // 単一行 If（If c Then stmt）。行の残りの文もこれに含む
+}
+
+// structuralCode は行のコメントを除き、文字列リテラルを "" に置き換えたコードを返す。
+// 2 つ目の戻り値は、コメントが " _" で終わり次の行もコメントの続きになるかどうか。
+func structuralCode(line string) (string, bool) {
+	var b strings.Builder
+	commentCont := false
+	for _, s := range parseSegments(line) {
+		switch s.kind {
+		case segCode:
+			b.WriteString(s.text)
+		case segString:
+			b.WriteString(`""`)
+		case segComment:
+			commentCont = endsWithContinuation(s.text)
+		}
+	}
+	return strings.TrimSpace(b.String()), commentCont
+}
+
+// endsWithContinuation は text が空白 + "_" で終わるかどうかを返す
+func endsWithContinuation(text string) bool {
+	t := strings.TrimRight(text, " \t")
+	if !strings.HasSuffix(t, "_") {
+		return false
+	}
+	t = t[:len(t)-1]
+	return t == "" || strings.HasSuffix(t, " ") || strings.HasSuffix(t, "\t")
+}
+
+// logicalStatements は行を構造判定用の文に分ける。
+//   - 継続行（末尾 _）は結合する（文の行は先頭の物理行）
+//   - コロン区切りは別の文に分ける（:= は分けない）
+//   - 単一行 If は行の残りをまとめて 1 文にする（If a Then For ...: Next の Next を浮かせない）
+//   - 条件付きコンパイル（#If）は最初の分岐だけを対象にし、#ElseIf / #Else の分岐は読み飛ばす
+func logicalStatements(lines []string) []logicalStmt {
+	type ccFrame struct {
+		parentActive bool
+		branch       int
+	}
+	var cc []ccFrame
+	active := func() bool {
+		if len(cc) == 0 {
+			return true
+		}
+		f := cc[len(cc)-1]
+		return f.parentActive && f.branch == 0
+	}
+
+	var out []logicalStmt
+	commentCont := false
+	for i := 0; i < len(lines); i++ {
+		if commentCont {
+			// 前の行のコメントが " _" で続いている
+			commentCont = endsWithContinuation(lines[i])
+			continue
+		}
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "#") {
+			tok, _ := firstToken(trimmed[1:])
+			switch strings.ToLower(tok) {
+			case "if":
+				cc = append(cc, ccFrame{parentActive: active()})
+			case "elseif", "else":
+				if len(cc) > 0 {
+					cc[len(cc)-1].branch++
+				}
+			case "end":
+				if len(cc) > 0 {
+					cc = cc[:len(cc)-1]
+				}
+			}
+			continue
+		}
+
+		start := i
+		code, cont := structuralCode(lines[i])
+		commentCont = cont
+		for strings.HasSuffix(code, "_") && isContinuationLine(strings.TrimSpace(lines[i])) && i+1 < len(lines) {
+			code = strings.TrimSpace(strings.TrimSuffix(code, "_"))
+			i++
+			next, cont := structuralCode(lines[i])
+			commentCont = cont
+			code += " " + next
+		}
+		if code == "" || !active() {
+			continue
+		}
+		out = append(out, splitStatements(start, code)...)
+	}
+	return out
+}
+
+// splitStatements は 1 論理行のコードをコロンで文に分ける
+func splitStatements(line int, code string) []logicalStmt {
+	var parts []string
+	var cur strings.Builder
+	for k := 0; k < len(code); k++ {
+		ch := code[k]
+		if ch == ':' && !(k+1 < len(code) && code[k+1] == '=') {
+			if p := strings.TrimSpace(cur.String()); p != "" {
+				parts = append(parts, p)
+			}
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(ch)
+	}
+	if p := strings.TrimSpace(cur.String()); p != "" {
+		parts = append(parts, p)
+	}
+
+	var out []logicalStmt
+	for k, p := range parts {
+		if first, _ := firstToken(p); strings.EqualFold(first, "if") {
+			rest := strings.Join(parts[k:], ": ")
+			if isSingleLineIfCode(rest) {
+				out = append(out, logicalStmt{line: line, text: rest, singleIf: true})
+				break
+			}
+		}
+		out = append(out, logicalStmt{line: line, text: p})
+	}
+	return out
+}
+
+// isSingleLineIfCode は（コメント・文字列除去済みの）If 文が単一行 If かどうかを返す。
+// 最後の Then の後ろに文があれば単一行 If。
+func isSingleLineIfCode(code string) bool {
+	locs := reThen.FindAllStringIndex(code, -1)
+	if len(locs) == 0 {
+		return false
+	}
+	return strings.TrimSpace(code[locs[len(locs)-1][1]:]) != ""
+}
+
 // ---------- VBA009: End 忘れ ----------
 
 type blockFrame struct {
 	line    int
 	keyword string
+}
+
+func isProcKeyword(kw string) bool {
+	return kw == "sub" || kw == "function" || kw == "property"
+}
+
+// blockKeyword は文の先頭キーワード（アクセス修飾子を除く）を小文字で返す
+func blockKeyword(text string) (string, string) {
+	tok, rest := firstToken(text)
+	low := strings.ToLower(tok)
+	for low == "public" || low == "private" || low == "friend" || low == "static" || low == "global" {
+		tok, rest = firstToken(strings.TrimSpace(rest))
+		low = strings.ToLower(tok)
+	}
+	return low, strings.TrimSpace(rest)
+}
+
+func orphanCloserMessage(kw string) string {
+	switch kw {
+	case "for", "do", "while":
+		return fmt.Sprintf("対応する %s のない %s です", openerFor(kw), closerFor(kw))
+	}
+	return fmt.Sprintf("対応する開始ブロックのない '%s' です", closerFor(kw))
 }
 
 func checkUnmatchedBlocks(lines []string, opts LintOptions) []Diagnostic {
@@ -331,101 +498,68 @@ func checkUnmatchedBlocks(lines []string, opts LintOptions) []Diagnostic {
 	var diags []Diagnostic
 	var stack []blockFrame
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "'") {
+	missing := func(f blockFrame) {
+		diags = append(diags, errDiag(f.line, 0, f.line, -1, "VBA009",
+			fmt.Sprintf("'%s' がありません（開始: %d 行目）", closerFor(f.keyword), f.line+1)))
+	}
+	// closeBlock は kw の閉じを処理する。
+	// 一番上が違っても下に対応する開始があれば、間のブロックを閉じ忘れとして報告してそこまで戻す。
+	// プロシージャの境界は越えない。対応する開始がなければ閉じだけを報告し、スタックは変えない。
+	closeBlock := func(line int, kw string) {
+		j := -1
+		for idx := len(stack) - 1; idx >= 0; idx-- {
+			if stack[idx].keyword == kw {
+				j = idx
+				break
+			}
+			if isProcKeyword(stack[idx].keyword) && !isProcKeyword(kw) {
+				break
+			}
+		}
+		if j < 0 {
+			diags = append(diags, errDiag(line, 0, line, -1, "VBA009", orphanCloserMessage(kw)))
+			return
+		}
+		for idx := len(stack) - 1; idx > j; idx-- {
+			missing(stack[idx])
+		}
+		stack = stack[:j]
+	}
+
+	for _, st := range logicalStatements(lines) {
+		if st.singleIf {
 			continue
 		}
-
-		first, rest := firstToken(trimmed)
-		low := strings.ToLower(first)
-
-		// アクセス修飾子をスキップして実際のキーワードを得る
-		actualLow := low
-		actualRest := rest
-		if low == "public" || low == "private" || low == "friend" || low == "static" {
-			tok, r := firstToken(strings.TrimSpace(rest))
-			actualLow = strings.ToLower(tok)
-			actualRest = r
-		}
-
-		switch actualLow {
-		case "sub", "function":
-			stack = append(stack, blockFrame{i, actualLow})
-		case "property":
-			stack = append(stack, blockFrame{i, "property"})
-		case "if":
-			if !isSingleLineIf(trimmed) {
-				stack = append(stack, blockFrame{i, "if"})
+		kw, rest := blockKeyword(st.text)
+		switch kw {
+		case "sub", "function", "property":
+			// プロシージャは入れ子にならない。前のプロシージャの閉じ忘れはここで報告して持ち越さない
+			for _, f := range stack {
+				missing(f)
 			}
-		case "for":
-			stack = append(stack, blockFrame{i, "for"})
-		case "do":
-			stack = append(stack, blockFrame{i, "do"})
-		case "while":
-			stack = append(stack, blockFrame{i, "while"})
-		case "with":
-			stack = append(stack, blockFrame{i, "with"})
-		case "select":
-			stack = append(stack, blockFrame{i, "select"})
-		case "type", "enum":
-			stack = append(stack, blockFrame{i, actualLow})
+			stack = append(stack[:0], blockFrame{st.line, kw})
+		case "if", "for", "do", "while", "with", "select", "type", "enum":
+			stack = append(stack, blockFrame{st.line, kw})
 		case "end":
-			nextTok, _ := firstToken(strings.TrimSpace(actualRest))
-			nextLow := strings.ToLower(nextTok)
-			expected := endKeywordFor(nextLow)
-			if expected == "" {
-				break
+			nextTok, _ := firstToken(rest)
+			if expected := endKeywordFor(strings.ToLower(nextTok)); expected != "" {
+				closeBlock(st.line, expected)
 			}
-			if len(stack) == 0 {
-				diags = append(diags, errDiag(i, 0, i, -1, "VBA009",
-					fmt.Sprintf("対応する開始ブロックのない '%s %s' です", first, nextTok)))
-				break
-			}
-			top := stack[len(stack)-1]
-			if top.keyword != expected {
-				diags = append(diags, errDiag(i, 0, i, -1, "VBA009",
-					fmt.Sprintf("'%s %s' が想定されましたが '%s %s' があります（開始: %d 行目）",
-						openerFor(top.keyword), closerFor(top.keyword),
-						first, nextTok, top.line+1)))
-			}
-			stack = stack[:len(stack)-1]
 		case "next":
-			if len(stack) == 0 || stack[len(stack)-1].keyword != "for" {
-				if len(stack) == 0 {
-					diags = append(diags, errDiag(i, 0, i, -1, "VBA009",
-						"対応する For のない Next です"))
-				}
-				// スタック不一致でも Pop して続行
-			} else {
-				stack = stack[:len(stack)-1]
+			// Next i, j は 2 つ閉じる
+			for n := strings.Count(rest, ",") + 1; n > 0; n-- {
+				closeBlock(st.line, "for")
 			}
 		case "loop":
-			if len(stack) == 0 || stack[len(stack)-1].keyword != "do" {
-				if len(stack) == 0 {
-					diags = append(diags, errDiag(i, 0, i, -1, "VBA009",
-						"対応する Do のない Loop です"))
-				}
-			} else {
-				stack = stack[:len(stack)-1]
-			}
+			closeBlock(st.line, "do")
 		case "wend":
-			if len(stack) == 0 || stack[len(stack)-1].keyword != "while" {
-				if len(stack) == 0 {
-					diags = append(diags, errDiag(i, 0, i, -1, "VBA009",
-						"対応する While のない Wend です"))
-				}
-			} else {
-				stack = stack[:len(stack)-1]
-			}
+			closeBlock(st.line, "while")
 		}
 	}
 
 	// スタックに残ったものはすべて End 忘れ
-	for _, frame := range stack {
-		diags = append(diags, errDiag(frame.line, 0, frame.line, -1, "VBA009",
-			fmt.Sprintf("'%s %s' がありません（開始: %d 行目）",
-				openerFor(frame.keyword), closerFor(frame.keyword), frame.line+1)))
+	for _, f := range stack {
+		missing(f)
 	}
 
 	return diags
