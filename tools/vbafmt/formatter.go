@@ -217,6 +217,11 @@ func classifyLine(trimmed string) lineKind {
 		return kindHeader
 	}
 
+	// EndIf は End If と同じ
+	if firstLow == "endif" {
+		return kindEnder
+	}
+
 	// End 系
 	if firstLow == "end" {
 		// End Select は -2
@@ -272,11 +277,16 @@ func classifyLine(trimmed string) lineKind {
 		return kindStarter
 	}
 
-	// Public/Private/Friend/Static + Sub/Function/Property/Enum/Type/Class → starter
-	if firstLow == "public" || firstLow == "private" || firstLow == "friend" ||
-		firstLow == "static" || firstLow == "global" {
-		nextTok, _ := firstToken(strings.TrimSpace(rest))
-		nextLow := strings.ToLower(nextTok)
+	// Public/Private/Friend/Static/Global（複数可: Public Static Function）
+	// + Sub/Function/Property/Enum/Type/Class → starter
+	// Static x As Long（静的ローカル変数）や Private Declare ... は normal のまま
+	if isModifier(firstLow) {
+		nextLow, r := firstLow, rest
+		for isModifier(nextLow) {
+			var nextTok string
+			nextTok, r = firstToken(r)
+			nextLow = strings.ToLower(nextTok)
+		}
 		if nextLow == "sub" || nextLow == "function" || nextLow == "property" ||
 			nextLow == "enum" || nextLow == "type" || nextLow == "class" {
 			return kindStarter
@@ -316,6 +326,11 @@ func isSingleLineIf(line string) bool {
 		return false
 	}
 	return true
+}
+
+// isModifier はプロシージャ・型の宣言の前に付く修飾子かどうかを返す（小文字で渡す）
+func isModifier(low string) bool {
+	return low == "public" || low == "private" || low == "friend" || low == "static" || low == "global"
 }
 
 // firstToken は行の最初のトークン (識別子) と残りの文字列を返す

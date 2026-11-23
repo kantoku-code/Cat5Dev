@@ -265,3 +265,136 @@ End Sub
 		t.Fatalf("3 行目に 1 件のはず: %+v", d)
 	}
 }
+
+// Rem コメントの中のコロンで文を分けない
+func TestVBA009_RemCommentWithColon(t *testing.T) {
+	src := `Sub A()
+    Rem TODO: For each item, check it
+    x = 1: Rem note: If later Then
+    rem lower: Do
+    REM upper: While x
+ErrH: Rem label: With obj
+    Rem say "hi": For i = 1 To 3
+End Sub
+`
+	assertNoVBA009(t, src)
+	if d := vba006(src, 1); len(d) != 0 {
+		t.Fatalf("VBA006 が出ないはず: %+v", d)
+	}
+	// 文字列の中の Rem はコメントではない
+	assertNoVBA009(t, `Sub A()
+    x = "Rem: For": For i = 1 To 2: Next
+End Sub
+`)
+}
+
+// Remove や RemX は Rem ではなくコードとして読む
+func TestVBA009_RemPrefixedIdentifierIsCode(t *testing.T) {
+	assertNoVBA009(t, `Sub A()
+    Remove = 1: For i = 1 To 2: Next
+    RemX = 2: If a Then: End If
+End Sub
+`)
+
+	src := `Sub A()
+    Remove = 1: For i = 1 To 2
+End Sub
+`
+	d := vba009(src)
+	if len(d) != 1 || d[0].Line != 1 || d[0].Message != "'Next' がありません（開始: 2 行目）" {
+		t.Fatalf("想定外の診断: %+v", d)
+	}
+}
+
+// Rem ... _ は次の行もコメントの続き
+func TestVBA009_RemCommentContinuation(t *testing.T) {
+	src := `Sub A()
+    Rem comment continues _
+        If x Then
+    x = 1: Rem also continues: _
+        For i = 1 To 3
+    y = 2
+End Sub
+`
+	assertNoVBA009(t, src)
+}
+
+// #EndIf（空白なし）でも条件付きコンパイルを閉じる。後ろの本当の End If 忘れは報告する
+func TestVBA009_HashEndIfWithoutSpace(t *testing.T) {
+	src := `#If VBA7 Then
+Private Function GetPtr() As LongPtr
+#Else
+Private Function GetPtr() As Long
+#EndIf
+    GetPtr = 0
+End Function
+
+Sub B()
+    If x Then
+        y = 1
+End Sub
+`
+	d := vba009(src)
+	if len(d) != 1 || d[0].Line != 9 || d[0].Message != "'End If' がありません（開始: 10 行目）" {
+		t.Fatalf("想定外の診断: %+v", d)
+	}
+}
+
+// EndIf（空白なし）は End If と同じ
+func TestVBA009_EndIfWithoutSpace(t *testing.T) {
+	src := `Sub A()
+    If x Then
+        y = 1
+    EndIf
+    If z Then
+        y = 2
+    endif
+End Sub
+`
+	assertNoVBA009(t, src)
+	if d := vba006(src, 2); len(d) != 0 {
+		t.Fatalf("VBA006 が出ないはず: %+v", d)
+	}
+}
+
+// 修飾子が複数あるプロシージャ（Public Static Function）も 1 段として数える
+func TestVBA006_MultipleModifiers(t *testing.T) {
+	src := `Public Static Function F() As Long
+    Static n As Long
+    If a Then
+        If b Then
+            F = n
+        End If
+    End If
+End Function
+
+Sub G()
+    If a Then
+    End If
+End Sub
+`
+	d := vba006(src, 2)
+	if len(d) != 1 || d[0].Line != 3 || d[0].Message != "ネストの深さが 2 を超えています（現在 3）" {
+		t.Fatalf("4 行目に 1 件のはず: %+v", d)
+	}
+	assertNoVBA009(t, src)
+}
+
+// Static x As Long（静的ローカル変数）や Private Declare は深さに影響しない
+func TestVBA006_StaticLocalAndDeclareDoNotNest(t *testing.T) {
+	src := `Private Declare PtrSafe Function GetTickCount Lib "kernel32" () As Long
+Public Declare Function GetTickCount2 Lib "kernel32" () As Long
+
+Sub A()
+    Static x As Long
+    Static y As Long
+    If a Then
+        x = 1
+    End If
+End Sub
+`
+	if d := vba006(src, 2); len(d) != 0 {
+		t.Fatalf("VBA006 が出ないはず: %+v", d)
+	}
+	assertNoVBA009(t, src)
+}

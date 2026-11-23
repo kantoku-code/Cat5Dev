@@ -328,21 +328,54 @@ type logicalStmt struct {
 }
 
 // structuralCode は行のコメントを除き、文字列リテラルを "" に置き換えたコードを返す。
+// コメントは ' 以降に加え、文の先頭（行頭またはコロンの直後）の Rem 以降も含む。
+// Rem の後ろのコロンは区切りとして扱わない。
 // 2 つ目の戻り値は、コメントが " _" で終わり次の行もコメントの続きになるかどうか。
 func structuralCode(line string) (string, bool) {
 	var b strings.Builder
-	commentCont := false
+	offset := 0       // line 内でのセグメントの開始位置
+	stmtStart := true // 文の先頭（行頭またはコロンの直後で、まだトークンがない）
 	for _, s := range parseSegments(line) {
 		switch s.kind {
 		case segCode:
-			b.WriteString(s.text)
+			for k := 0; k < len(s.text); k++ {
+				ch := s.text[k]
+				if ch == ':' && !(k+1 < len(s.text) && s.text[k+1] == '=') {
+					stmtStart = true
+					b.WriteByte(ch)
+					continue
+				}
+				if ch == ' ' || ch == '\t' {
+					b.WriteByte(ch)
+					continue
+				}
+				if stmtStart && isRemAt(s.text, k) {
+					return strings.TrimSpace(b.String()), endsWithContinuation(line[offset+k:])
+				}
+				stmtStart = false
+				b.WriteByte(ch)
+			}
 		case segString:
+			stmtStart = false
 			b.WriteString(`""`)
 		case segComment:
-			commentCont = endsWithContinuation(s.text)
+			return strings.TrimSpace(b.String()), endsWithContinuation(s.text)
 		}
+		offset += len(s.text)
 	}
-	return strings.TrimSpace(b.String()), commentCont
+	return strings.TrimSpace(b.String()), false
+}
+
+// isRemAt は text[k:] が単独のトークン Rem（大文字小文字を問わない）で始まるかどうかを返す。
+// Remove や RemX は Rem ではない。セグメントの終わり（文字列・コメントが続く）は区切りとみなす。
+func isRemAt(text string, k int) bool {
+	if k+3 > len(text) || !strings.EqualFold(text[k:k+3], "rem") {
+		return false
+	}
+	if k > 0 && isIdentPart(rune(text[k-1])) {
+		return false
+	}
+	return k+3 == len(text) || !isIdentPart(rune(text[k+3]))
 }
 
 // endsWithContinuation は text が空白 + "_" で終わるかどうかを返す
@@ -359,7 +392,7 @@ func endsWithContinuation(text string) bool {
 //   - 継続行（末尾 _）は結合する（文の行は先頭の物理行）
 //   - コロン区切りは別の文に分ける（:= は分けない）
 //   - 単一行 If は行の残りをまとめて 1 文にする（If a Then For ...: Next の Next を浮かせない）
-//   - 条件付きコンパイル（#If）は最初の分岐だけを対象にし、#ElseIf / #Else の分岐は読み飛ばす
+//   - 条件付きコンパイル（#If）は最初の分岐だけを対象にし、#ElseIf / #Else の分岐は読み飛ばす（#End If / #EndIf で閉じる）
 func logicalStatements(lines []string) []logicalStmt {
 	type ccFrame struct {
 		parentActive bool
@@ -392,7 +425,7 @@ func logicalStatements(lines []string) []logicalStmt {
 				if len(cc) > 0 {
 					cc[len(cc)-1].branch++
 				}
-			case "end":
+			case "end", "endif":
 				if len(cc) > 0 {
 					cc = cc[:len(cc)-1]
 				}
@@ -545,6 +578,9 @@ func checkUnmatchedBlocks(lines []string, opts LintOptions) []Diagnostic {
 			if expected := endKeywordFor(strings.ToLower(nextTok)); expected != "" {
 				closeBlock(st.line, expected)
 			}
+		case "endif":
+			// EndIf は End If と同じ
+			closeBlock(st.line, "if")
 		case "next":
 			// Next i, j は 2 つ閉じる
 			for n := strings.Count(rest, ",") + 1; n > 0; n-- {
