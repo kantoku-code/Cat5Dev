@@ -16,6 +16,7 @@ CLAUDE.md
 LSP_PLAN.md
 cat5dev.toml
 **/*.vsix
+vsix/**
 bin/*-journal
 bin/*-wal
 bin/*-shm
