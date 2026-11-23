@@ -3,7 +3,7 @@
     "displayName": "CATIA V5 VBA",
     "icon": "resources/catia-icon.png",
     "description": "We provide support for CATIA V5 VBA macro development",
-    "version": "0.7.1",
+    "version": "0.7.2",
     "repository": {
         "type": "git",
         "url": "https://github.com/kantoku-code/Cat5Dev.git"
