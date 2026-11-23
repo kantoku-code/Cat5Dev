@@ -95,6 +95,9 @@ The `cat5dev.toml` created by `CATIA: Initialize Project (cat5dev.toml)` contain
 - Messages of VBA001–VBA009 are always shown in Japanese, regardless of the display language setting. VBA010 messages follow the display language (Japanese, English, or Chinese).
 - VBA005 checks only the first variable of a `Dim` statement (only `a` in `Dim a, b`). It covers `Dim` inside procedures; `Private` / `Public` / `Static` declarations are not checked.
 - VBA006 counts the procedure itself as one level. `Select Case` counts as two levels.
+- VBA006 and VBA009 check statement by statement. Statements separated by colons (`:`), such as `For i = 1 To 3: x = i: Next`, and statements split over several lines with line continuation (` _`) are handled correctly.
+- VBA006 and VBA009 check only the first branch of a conditional compilation block (`#If` … `#End If`) and skip the `#ElseIf` / `#Else` branches. A `Function` declared in both `#If VBA7 Then` and `#Else` is not counted twice.
+- VBA009 reports a block that is not closed on the line where it starts ("'End If' がありません（開始: n 行目）"). One missing closer does not cause errors in later blocks or procedures.
 - Nonexistent member detection (source `vba-ls`) is a separate feature from Lint. See [IntelliSense](intellisense.md#nonexistent-member-detection).
 
 ---

@@ -89,6 +89,9 @@ MsgBox "完成🙂"   ' 对 🙂 发出警告：Push 后会变成 ?
 - 无论显示语言如何设置，VBA001～VBA009 的消息始终以日语显示。VBA010 的消息会按照显示语言（日语、英语、中文）显示。
 - VBA005 只检查 `Dim` 中的第一个变量（`Dim a, b` 中只检查 `a`）。检查对象是过程内的 `Dim`，不包括 `Private` / `Public` / `Static` 声明。
 - VBA006 将过程本身计为 1 层。`Select Case` 计为 2 层。
+- VBA006 和 VBA009 按语句进行判断。用冒号（`:`）分隔的语句（如 `For i = 1 To 3: x = i: Next`）以及用续行符（` _`）拆成多行的语句都能正确处理。
+- VBA006 和 VBA009 只判断条件编译（`#If` ～ `#End If`）的第一个分支，跳过 `#ElseIf` / `#Else` 分支。即使在 `#If VBA7 Then` 和 `#Else` 中都声明了 `Function`，也不会重复计数。
+- VBA009 在未闭合块的起始行报告"'End If' がありません（開始: n 行目）"。一处遗漏的闭合不会波及后面的块或过程。
 - 检测不存在的成员（来源 `vba-ls`）是与 Lint 不同的功能。请参阅 [IntelliSense](intellisense.md#检测不存在的成员)。
 
 ---
